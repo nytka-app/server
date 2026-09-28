@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "OmiPlatform.Ingest": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

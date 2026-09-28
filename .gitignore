@@ -1,0 +1,23 @@
+.env
+*.env
+!.env.example
+
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+TestResults/
+*.user
+*.suo
+*.userprefs
+.vs/
+.idea/
+.vscode/
+*.DotSettings.user
+
+.DS_Store
+
+# Private, never committed: the denylist the hooks read, and personal agent notes.
+.private-terms
+CLAUDE.local.md

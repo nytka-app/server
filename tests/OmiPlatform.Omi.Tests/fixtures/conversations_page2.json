@@ -1,0 +1,16 @@
+[
+  {
+    "id": "conv-3",
+    "created_at": "2026-09-21T09:00:00Z",
+    "started_at": "2026-09-21T09:00:00Z",
+    "finished_at": "2026-09-21T09:04:00Z",
+    "structured": {
+      "title": "Morning walk thoughts",
+      "overview": "Reflecting on a book chapter.",
+      "category": "philosophy",
+      "action_items": [],
+      "events": []
+    },
+    "transcript_segments": null
+  }
+]

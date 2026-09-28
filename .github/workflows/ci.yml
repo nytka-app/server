@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release
+      # Storage tests start Postgres through Testcontainers; the hosted runner has Docker.
+      - run: dotnet test --no-build -c Release
+
+  secrets:
+    runs-on: ubuntu-latest
+    # On pull requests gitleaks-action lists the PR's commits through the API.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Prints short hashes only: echoing the offending address would publish it in the log.
+      - name: Every commit uses a GitHub noreply address
+        run: |
+          bad=$(git log --format='%h %ae%n%h %ce' \
+            | grep -vE ' ([^ @]+@users\.noreply\.github\.com|noreply@github\.com)$' || true)
+          if [ -n "$bad" ]; then
+            echo "Commits with an address that is not a GitHub noreply one:"
+            echo "$bad" | cut -d' ' -f1 | sort -u
+            exit 1
+          fi
