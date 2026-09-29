@@ -19,6 +19,8 @@ public sealed record SessionState(DateTime? ProcessedThroughAt, DateTime LastRec
 
 public sealed record PendingChunk(long FirstSeq, int FrameCount, DateTime ReceivedAt, byte[] Body);
 
+public sealed record PendingSummary(long PendingChunks, DateTime? OldestPendingAt);
+
 public sealed class ChunkStore(NpgsqlDataSource dataSource)
 {
     /// <summary>
@@ -161,5 +163,17 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
                 where session_id = @session and body is not null and not (first_seq = any(@seenFirstSeqs)))
             """,
             new { session, seenFirstSeqs }, cancellationToken: ct));
+    }
+
+    /// <summary>Chunks whose audio the pipeline has not finished with, and when the oldest arrived.</summary>
+    public async Task<PendingSummary> PendingAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleAsync<PendingSummary>(new CommandDefinition(
+            """
+            select count(*) as PendingChunks, min(received_at) as OldestPendingAt
+            from audio_chunks where body is not null
+            """,
+            cancellationToken: ct));
     }
 }

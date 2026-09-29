@@ -3,6 +3,12 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
+public sealed record ConversationSummary(Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview);
+
+public sealed record ConversationHeader(Guid Id, DateTime StartedAt, DateTime EndedAt, string Status);
+
+public sealed record SegmentRow(long Id, DateTime StartedAt, DateTime EndedAt, string Text);
+
 public sealed class ConversationStore(NpgsqlDataSource dataSource)
 {
     /// <summary>Every assignment holds this lock, so two batches never open two conversations for one stretch of talk.</summary>
@@ -59,5 +65,59 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         return await connection.ExecuteAsync(new CommandDefinition(
             "update conversations set status = 'closed', updated_at = @now where status = 'open' and ended_at < @endedBefore",
             new { endedBefore, now }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Newest first by start. The preview joins the first segments' text; the caller trims it.
+    /// </summary>
+    public async Task<IReadOnlyList<ConversationSummary>> ListAsync(DateTimeOffset? before, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
+            """
+            select c.id as Id, c.started_at as StartedAt, c.ended_at as EndedAt, c.status as Status,
+                   coalesce(p.text, '') as Preview
+            from conversations c
+            left join lateral (
+                select string_agg(f.text, ' ' order by f.started_at) as text
+                from (select s.text, s.started_at from segments s
+                      where s.conversation_id = c.id
+                      order by s.started_at limit 20) f
+            ) p on true
+            where cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz)
+            order by c.started_at desc, c.id desc
+            limit @limit
+            """,
+            new { before, limit }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    public async Task<ConversationHeader?> GetAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<ConversationHeader>(new CommandDefinition(
+            "select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status from conversations where id = @id",
+            new { id }, cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<SegmentRow>> SegmentsAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<SegmentRow>(new CommandDefinition(
+            """
+            select id as Id, started_at as StartedAt, ended_at as EndedAt, text as Text
+            from segments where conversation_id = @id
+            order by started_at, id
+            """,
+            new { id }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    /// <summary>Deletes the conversation; its batches, segments and speech audio go with it (on delete cascade).</summary>
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "delete from conversations where id = @id", new { id }, cancellationToken: ct)) > 0;
     }
 }

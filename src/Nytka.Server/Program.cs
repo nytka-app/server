@@ -57,6 +57,8 @@ app.MapHealth();
 var api = app.MapGroup("/api/v1").AddEndpointFilter<BearerTokenFilter>();
 api.MapInfo();
 api.MapChunks();
+api.MapConversations();
+api.MapStatus();
 
 app.Run();
 

@@ -13,6 +13,8 @@ public sealed record PendingBatch(long Id, Guid ConversationId, DateTime Started
 
 public sealed record NewSegment(DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text);
 
+public sealed record BatchRow(long Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Error, string? Response);
+
 public sealed class BatchStore(NpgsqlDataSource dataSource)
 {
     /// <summary>Inserts a pending batch and its speech audio inside the caller's transaction.</summary>
@@ -98,5 +100,28 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
         await connection.ExecuteAsync(new CommandDefinition(
             "update transcription_batches set status = 'failed', error = @error where id = @id and status = 'pending'",
             new { id, error }, cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<BatchRow>> ListForConversationAsync(Guid conversationId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<BatchRow>(new CommandDefinition(
+            """
+            select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status, error as Error,
+                   response::text as Response
+            from transcription_batches where conversation_id = @conversationId
+            order by started_at, id
+            """,
+            new { conversationId }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    /// <summary>The error of the most recently created failed batch, if any.</summary>
+    public async Task<string?> LastErrorAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<string?>(new CommandDefinition(
+            "select error from transcription_batches where status = 'failed' order by created_at desc, id desc limit 1",
+            cancellationToken: ct));
     }
 }
