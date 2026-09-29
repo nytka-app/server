@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Options;
+using Nytka.Audio.Vad;
 using Nytka.Server;
 using Nytka.Server.Api;
 using Nytka.Server.Auth;
 using Nytka.Server.Jobs;
+using Nytka.Server.Pipeline;
 using Nytka.Server.Transcription;
 using Nytka.Storage;
 using Serilog;
@@ -32,6 +34,10 @@ builder.Services.AddSingleton<Scheduler>();
 builder.Services.AddHostedService<JobRunnerService>();
 builder.Services.AddHostedService<SchedulerService>();
 builder.Services.AddHttpClient<TranscriptionClient>(client => client.Timeout = TranscriptionClient.Timeout);
+
+// One model for the process; the job runner runs one job at a time, and Silero is not thread-safe.
+builder.Services.AddSingleton<IVoiceActivityDetector>(_ => new SileroVad());
+builder.Services.AddScoped<IJobHandler, ProcessSessionHandler>();
 
 var app = builder.Build();
 

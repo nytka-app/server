@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
+using Nytka.Audio.Vad;
 using Nytka.Server.Jobs;
 using Nytka.Server.Transcription;
 
@@ -39,6 +40,15 @@ public sealed class NytkaApiFactory(
 
     public Task<int> RunJobsAsync() => Get<JobRunner>().RunDueJobsAsync(CancellationToken.None);
 
+    public async Task UploadAsync(IEnumerable<byte[]> chunks)
+    {
+        var client = CreateAuthorizedClient();
+        foreach (var chunk in chunks)
+        {
+            (await client.PostAsync("/api/v1/chunks", TestChunks.Content(chunk))).EnsureSuccessStatusCode();
+        }
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         var settings = new Dictionary<string, string?>
@@ -69,6 +79,8 @@ public sealed class NytkaApiFactory(
 
             // The last primary-handler registration wins: every test host talks to the fake.
             s.AddHttpClient<TranscriptionClient>().ConfigurePrimaryHttpMessageHandler(Stt.CreateHandler);
+
+            s.AddSingleton<IVoiceActivityDetector, EnergyVad>();
 
             services?.Invoke(s);
         });

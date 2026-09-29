@@ -18,6 +18,8 @@ public static class StorageServiceCollectionExtensions
 
         services.AddSingleton<ChunkStore>();
         services.AddSingleton<JobQueue>();
+        services.AddSingleton<ConversationStore>();
+        services.AddSingleton<BatchStore>();
 
         return services;
     }

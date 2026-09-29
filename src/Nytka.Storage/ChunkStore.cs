@@ -11,6 +11,14 @@ public enum StoreOutcome
     Overlap,
 }
 
+/// <summary>
+/// <see cref="ProcessedEndSeq"/> is one past the last frame of the processed chunks (null when none
+/// is left): where the next chunk should start.
+/// </summary>
+public sealed record SessionState(DateTime? ProcessedThroughAt, DateTime LastReceivedAt, long? ProcessedEndSeq);
+
+public sealed record PendingChunk(long FirstSeq, int FrameCount, DateTime ReceivedAt, byte[] Body);
+
 public sealed class ChunkStore(NpgsqlDataSource dataSource)
 {
     /// <summary>
@@ -88,5 +96,70 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
         var sessions = await connection.QueryAsync<Guid>(new CommandDefinition(
             "select distinct session_id from audio_chunks where body is not null", cancellationToken: ct));
         return sessions.ToList();
+    }
+
+    public async Task<SessionState?> GetSessionAsync(Guid session, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<SessionState>(new CommandDefinition(
+            """
+            select s.processed_through_at as ProcessedThroughAt,
+                   s.last_received_at     as LastReceivedAt,
+                   (select max(c.first_seq + c.frame_count) from audio_chunks c
+                    where c.session_id = s.id and c.body is null) as ProcessedEndSeq
+            from capture_sessions s
+            where s.id = @session
+            """,
+            new { session }, cancellationToken: ct));
+    }
+
+    /// <summary>Chunks that still hold audio, in sequence order.</summary>
+    public async Task<IReadOnlyList<PendingChunk>> LoadPendingAsync(Guid session, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var chunks = await connection.QueryAsync<PendingChunk>(new CommandDefinition(
+            """
+            select first_seq as FirstSeq, frame_count as FrameCount, received_at as ReceivedAt, body as Body
+            from audio_chunks
+            where session_id = @session and body is not null
+            order by first_seq
+            limit @limit
+            """,
+            new { session, limit }, cancellationToken: ct));
+        return chunks.ToList();
+    }
+
+    /// <summary>
+    /// Moves the session's processed point and drops the audio of used chunks that lie wholly
+    /// before it. A chunk that reaches past the point keeps its body for the next run.
+    /// </summary>
+    public async Task MarkProcessedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid session, DateTimeOffset processedThrough,
+        long[] usedFirstSeqs, DateTimeOffset now, CancellationToken ct)
+    {
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update capture_sessions set processed_through_at = @processedThrough where id = @session",
+            new { session, processedThrough }, transaction, cancellationToken: ct));
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update audio_chunks set body = null, processed_at = @now
+            where session_id = @session and body is not null
+              and first_seq = any(@usedFirstSeqs) and last_time <= @processedThrough
+            """,
+            new { session, processedThrough, usedFirstSeqs, now }, transaction, cancellationToken: ct));
+    }
+
+    /// <summary>True when chunks with audio arrived that the caller has not seen.</summary>
+    public async Task<bool> HasPendingBeyondAsync(Guid session, long[] seenFirstSeqs, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            """
+            select exists (
+                select 1 from audio_chunks
+                where session_id = @session and body is not null and not (first_seq = any(@seenFirstSeqs)))
+            """,
+            new { session, seenFirstSeqs }, cancellationToken: ct));
     }
 }
