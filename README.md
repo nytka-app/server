@@ -51,7 +51,7 @@ server behind (step 4); setting one up is not counted.
    proxy with HTTPS in front, or set `NYTKA_BIND` in `.env` to an address on your VPN (Tailscale,
    WireGuard) and run `docker compose up -d` again.
 
-5. Give the app the server's address and the token; `grep Nytka__AdminToken .env` shows it again.
+5. Give the app the server's address and the token; `grep '^Nytka__AdminToken=' .env` shows it again.
    Behind a proxy the address is `https://…`. On a VPN it is `http://<that address>:8080`, and the
    app's private-network switch, which allows plain HTTP, has to be on. The phone side continues in
    [Nytka for Android](https://github.com/nytka-app/android#first-run-about-5-minutes).
@@ -111,7 +111,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
 - **Environment only.** The admin token, the transcription URL, the API keys and the four
   `Nytka__Llm__` tuning values cannot be changed from the app or the API. `GET /api/v1/settings`
   shows the URL without any `user:password@`, and shows an API key as `isSet: true` or `false`,
-  never its value; a `PATCH` naming one gets `409`. No key reaches the database.
+  never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
   `Nytka__Memories__*` and `Nytka__Search__Dictionary` are checked when first used, so type them as
@@ -231,7 +231,7 @@ never hold transcript text or a response body.
 
 A task is something the wearer has to do, taken from a summary. Its text carries its deadline: there
 are no due dates and no hand-made tasks. Tick, reopen, edit or delete a task in the Tasks tab, or with
-`PATCH` and `DELETE` on `/api/v1/tasks/{id}`. A later summary never adds a deleted task again, and
+`PATCH` and `DELETE` on `/api/v1/tasks/{id}`. A later summary never adds a deleted task again with the same wording, and
 never removes or rewrites one you touched. `GET /api/v1/tasks` lists open or done tasks, newest
 first, with the title and day of their conversation.
 
@@ -244,7 +244,7 @@ each stored summary the server asks the model for up to five new memories of up 
 `Nytka__Memories__UserName`, so facts about other speakers stay out. Without a name, "you" is the
 person wearing the pendant.
 
-- A fact the server already holds is not added again, even one you deleted. Extraction never rewrites
+- A fact the server already holds is not added again with the same wording, even one you deleted. Extraction never rewrites
   a memory you edited or added yourself.
 - Add, edit and delete memories in the Memories tab, or with `POST`, `PATCH` and `DELETE` on
   `/api/v1/memories`. Adding text you deleted earlier brings the memory back; text a live memory
@@ -573,16 +573,16 @@ endpoint, the language model or a webhook receiver.
 
 ## Upgrading
 
-Download the Compose file again, then pull the new image and restart:
+Download the Compose file again under a new name, compare it with yours, then pull the new image and restart:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/nytka-app/server/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/nytka-app/server/main/docker-compose.yml -o docker-compose.new.yml
 docker compose pull && docker compose up -d
 ```
 
 Compose passes each variable to the server by name, so a file from an older release does not pass the
 newer ones: `Nytka__Llm__*` in `.env` would do nothing. Older files also gave `Nytka__Conversations__Gap`
-and `Nytka__Audio__RetentionDays` a value, which locked both in the app. Merge your own changes into
+and `Nytka__Audio__RetentionDays` a value, which locked both in the app: delete those two lines from an `.env` copied from the old template. The new file needs server image 0.4.0 or later; if you pin an older tag, take the Compose file from that tag's URL instead. Merge your own changes into
 the new file.
 
 The server applies new database migrations at start, and a database from v0.1 migrates without losing
