@@ -27,7 +27,7 @@ public sealed class SearchDictionaryTests(DictionaryPostgresFixture db) : IClass
         var lexemes = await connection.ExecuteScalarAsync<string[]>("select ts_lexize('nytka_uk', 'зустрічами')");
 
         Assert.Contains("зустріч", lexemes!);
-        Assert.Equal("uk", await Search.SetupDictionaryAsync(default));
+        Assert.Equal("uk", await Search.SetupDictionaryAsync(SearchStore.UkHunspell, default));
     }
 
     [DictionaryFact]

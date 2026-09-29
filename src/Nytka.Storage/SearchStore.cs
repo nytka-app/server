@@ -16,6 +16,8 @@ public sealed record SearchHitRow(
 /// </summary>
 public sealed class SearchStore(IConfiguration configuration) : IDisposable
 {
+    public const string Simple = "simple";
+    public const string UkHunspell = "uk_hunspell";
     public const string Conversation = "conversation";
     public const string Memory = "memory";
 
@@ -69,7 +71,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ConfigFileError)
         {
             // The dictionary files went away while the server ran: fall back to simple, then ask again.
-            await SetupDictionaryAsync(ct);
+            await SetupDictionaryAsync(Simple, ct);
             return await QueryAsync(terms, conversations, memories, limit, offset, ct);
         }
     }
@@ -133,15 +135,15 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     }
 
     /// <summary>
-    /// Runs <c>nytka_search_setup()</c>: loads the Ukrainian dictionary when the files are there, falls back to
-    /// <c>simple</c> when not, and clears the vectors if that changed the mapping. Returns <c>uk</c> or
-    /// <c>simple</c>.
+    /// Runs <c>nytka_search_setup(dictionary)</c>: <see cref="Simple"/> or <see cref="UkHunspell"/>, the latter used
+    /// only when the dictionary files load. Clears the vectors if the mapping changed. Returns the mode in effect,
+    /// <c>uk</c> or <c>simple</c>.
     /// </summary>
-    public async Task<string> SetupDictionaryAsync(CancellationToken ct)
+    public async Task<string> SetupDictionaryAsync(string dictionary, CancellationToken ct)
     {
         await using var connection = await DataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteScalarAsync<string>(new CommandDefinition(
-            "select nytka_search_setup()", commandTimeout: 0, cancellationToken: ct)) ?? "simple";
+            "select nytka_search_setup(@dictionary)", new { dictionary }, commandTimeout: 0, cancellationToken: ct)) ?? Simple;
     }
 
     /// <summary>

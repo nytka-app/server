@@ -159,6 +159,18 @@ public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public void The_dictionary_setting_defaults_to_simple_and_takes_only_its_two_values()
+    {
+        var definition = _server.Get<Nytka.Server.Settings.SettingsService>().Find("search.dictionary");
+
+        Assert.NotNull(definition);
+        Assert.Equal("simple", definition.Default);
+        Assert.Equal("Nytka__Search__Dictionary", definition.EnvironmentVariable);
+        Assert.Null(definition.Validate("uk_hunspell"));
+        Assert.NotNull(definition.Validate("ukrainian"));
+    }
+
+    [Fact]
     public async Task Escapes_the_transcript_and_keeps_only_the_mark_tag()
     {
         await SearchSeed.ConversationAsync(

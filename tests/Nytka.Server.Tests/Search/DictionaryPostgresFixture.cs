@@ -47,6 +47,8 @@ public sealed class DictionaryPostgresFixture : IAsyncLifetime
         new DatabaseMigrator(_container.GetConnectionString(), NullLogger<DatabaseMigrator>.Instance).Run();
         DataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
         Search = SearchSeed.StoreFor(_container.GetConnectionString());
+        // Opt-in, as `search.dictionary = uk_hunspell` does when the server starts.
+        await Search.SetupDictionaryAsync(SearchStore.UkHunspell, default);
     }
 
     public async Task DisposeAsync()

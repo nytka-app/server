@@ -22,6 +22,11 @@ public sealed class SearchFallbackTests
         using var search = SearchSeed.StoreFor(connectionString);
 
         var (_, logs) = await container.GetLogsAsync();
+        Assert.DoesNotContain("Ukrainian dictionary not loaded", logs); // the default asks for nothing
+
+        // Asked for and missing: it warns and falls back.
+        Assert.Equal("simple", await search.SetupDictionaryAsync(SearchStore.UkHunspell, default));
+        (_, logs) = await container.GetLogsAsync();
         Assert.Contains("Ukrainian dictionary not loaded", logs);
 
         // Exact and prefix matches still work; the base form of an inflected word does not.
@@ -29,12 +34,13 @@ public sealed class SearchFallbackTests
         await SearchSeed.IndexAsync(search);
         Assert.Single(await search.SearchAsync(["зустріч"], true, false, 10, 0, default));
         Assert.Empty(await search.SearchAsync(["рік"], true, false, 10, 0, default));
-        Assert.Equal("simple", await search.SetupDictionaryAsync(default));
 
-        // Mounted later: the next start switches, the indexer makes the vectors again, and text from before is found.
+        // Mounted later: the files alone change nothing (it is opt-in); the setting switches, the indexer makes the
+        // vectors again, and text from before is found.
         await container.CopyAsync(await File.ReadAllBytesAsync(Dictionary.Dict), $"{DictionaryPostgresFixture.TsearchData}/uk_ua.dict");
         await container.CopyAsync(await File.ReadAllBytesAsync(Dictionary.Affix), $"{DictionaryPostgresFixture.TsearchData}/uk_ua.affix");
-        Assert.Equal("uk", await search.SetupDictionaryAsync(default));
+        Assert.Equal("simple", await search.SetupDictionaryAsync(SearchStore.Simple, default));
+        Assert.Equal("uk", await search.SetupDictionaryAsync(SearchStore.UkHunspell, default));
         await SearchSeed.IndexAsync(search);
         Assert.Single(await search.SearchAsync(["рік"], true, false, 10, 0, default));
 
@@ -42,7 +48,7 @@ public sealed class SearchFallbackTests
         await container.ExecAsync(["rm", $"{DictionaryPostgresFixture.TsearchData}/uk_ua.dict", $"{DictionaryPostgresFixture.TsearchData}/uk_ua.affix"]);
         await SearchSeed.ConversationAsync(data, SearchSeed.T0.AddHours(1), segments: ["Нова зустріч"]);
         await search.SearchAsync(["зустріч"], true, false, 10, 0, default);
-        Assert.Equal("simple", await search.SetupDictionaryAsync(default));
+        Assert.Equal("simple", await search.SetupDictionaryAsync(SearchStore.UkHunspell, default));
         await SearchSeed.IndexAsync(search);
         Assert.Empty(await search.SearchAsync(["рік"], true, false, 10, 0, default));
         Assert.Equal(2, (await search.SearchAsync(["зустріч"], true, false, 10, 0, default)).Count);

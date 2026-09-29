@@ -1,13 +1,13 @@
 -- Full-text search over transcripts, titles, summaries and memories (docs/specs/v0.4.md, Search).
 --
--- The text search configuration `nytka` sends ASCII words through english_stem and Cyrillic words
--- through the Ukrainian Hunspell dictionary `nytka_uk`, then `simple`. The dictionary needs two files
--- Postgres reads from $SHAREDIR/tsearch_data (uk_ua.dict, uk_ua.affix). Postgres loads a dictionary
--- once per session, about 65 MB each, so no ordinary write may touch the configuration: the `search`
--- columns are plain and nullable, and one background indexer in the server, on its own small
--- connection pool, fills them (a row with a null `search` is not searchable yet). This migration must
--- apply without the files (an external Postgres): nytka_search_setup() then maps Cyrillic to `simple`
--- and raises a WARNING.
+-- The text search configuration `nytka` sends ASCII words through english_stem and everything else
+-- through `simple` (exact words, plus prefix matching in the query). Opt-in, the setting
+-- `search.dictionary = uk_hunspell` puts the Ukrainian Hunspell dictionary `nytka_uk` in front of
+-- `simple` for Cyrillic words; it needs two files Postgres reads from $SHAREDIR/tsearch_data
+-- (uk_ua.dict, uk_ua.affix). Postgres loads a dictionary once per session, about 65 MB each, so no
+-- ordinary write may touch the configuration: the `search` columns are plain and nullable, and one
+-- background indexer in the server, on its own small connection pool, fills them (a row with a null
+-- `search` is not searchable yet). This migration applies with or without the files.
 
 -- The columns below take a lock on hot tables; give up rather than queue behind a long transaction.
 set local lock_timeout = '5s';
@@ -45,11 +45,13 @@ create trigger memories_search_stale
     before update of text on memories
     for each row execute function nytka_search_stale();
 
--- Returns 'uk' when Cyrillic words go through the dictionary, 'simple' when they match exactly. When
--- the mapping changes every vector was made under the old one, so they are cleared and the indexer
--- makes them again. The server calls it at start and whenever indexing fails; by hand:
--- `select nytka_search_setup();`.
-create function nytka_search_setup() returns text
+-- `dictionary` is the setting: 'simple' (the default) or 'uk_hunspell'. Returns 'uk' when Cyrillic words
+-- go through the dictionary and 'simple' when they match exactly, which is also the answer, with a
+-- WARNING, when 'uk_hunspell' is asked for and the files do not load. When the mapping changes every
+-- vector was made under the old one, so they are cleared and the indexer makes them again. The server
+-- calls it at start, when the setting changes and when indexing fails; by hand:
+-- `select nytka_search_setup('uk_hunspell');`.
+create function nytka_search_setup(dictionary text default 'simple') returns text
 language plpgsql
 as $$
 declare
@@ -67,16 +69,20 @@ begin
             alter mapping for asciiword, asciihword, hword_asciipart with english_stem;
     end if;
 
-    begin
-        if not exists (select 1 from pg_ts_dict where dictname = 'nytka_uk' and pg_ts_dict_is_visible(oid)) then
-            create text search dictionary nytka_uk (template = ispell, dictfile = uk_ua, afffile = uk_ua);
-        end if;
-        -- Postgres reads the files on first use, so a dictionary that exists proves nothing.
-        perform ts_lexize('nytka_uk', 'зустріч');
-        loaded := true;
-    exception when others then
-        failure := sqlerrm;
-    end;
+    if dictionary = 'uk_hunspell' then
+        begin
+            if not exists (select 1 from pg_ts_dict where dictname = 'nytka_uk' and pg_ts_dict_is_visible(oid)) then
+                create text search dictionary nytka_uk (template = ispell, dictfile = uk_ua, afffile = uk_ua);
+            end if;
+            -- Postgres reads the files on first use, so a dictionary that exists proves nothing.
+            perform ts_lexize('nytka_uk', 'зустріч');
+            loaded := true;
+        exception when others then
+            failure := sqlerrm;
+        end;
+    elsif dictionary <> 'simple' then
+        raise exception 'Unknown search dictionary: %', dictionary;
+    end if;
 
     select exists (
         select 1 from pg_ts_config_map m join pg_ts_dict d on d.oid = m.mapdict
@@ -94,7 +100,9 @@ begin
             changed := true;
         end if;
         drop text search dictionary if exists nytka_uk;
-        raise warning 'Ukrainian dictionary not loaded: %; Cyrillic words match exactly', failure;
+        if dictionary = 'uk_hunspell' then
+            raise warning 'Ukrainian dictionary not loaded: %; Cyrillic words match exactly', failure;
+        end if;
     end if;
 
     if changed then

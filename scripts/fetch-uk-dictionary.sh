@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Fetches the Ukrainian Hunspell dictionary (dict_uk, Andriy Rysin and others) that Nytka's full-text search
-# uses, and lays it out the way Postgres wants it: tsearch_data/uk_ua.dict and tsearch_data/uk_ua.affix, which
+# Fetches the Ukrainian Hunspell dictionary (dict_uk, Andriy Rysin and others) for Nytka's optional Ukrainian
+# search, and lays it out the way Postgres wants it: tsearch_data/uk_ua.dict and tsearch_data/uk_ua.affix, which
 # are uk_UA.dic and uk_UA.aff renamed. docker-compose.yml mounts that directory into the Postgres container.
 #
-# The files are never committed, bundled or redistributed by Nytka: they come from the upstream release at
-# the moment you run this, onto your own machine. Search works without them (Cyrillic words then match
-# exactly), so this step is optional.
+# It is opt-in twice: you accept the licence caveat below with --accept-licence, and you set
+# Nytka__Search__Dictionary=uk_hunspell (search.dictionary). Without either, search matches Cyrillic words
+# exactly or by prefix, which needs no dictionary.
 #
-# LICENCE, read before you run it. Upstream says two different things (brown-uk/dict_uk at v6.8.6):
+# The files are never committed, bundled or redistributed by Nytka: they come from the upstream release at
+# the moment you run this, onto your own machine.
+#
+# LICENCE CAVEAT. Upstream says two different things (brown-uk/dict_uk at v6.8.6):
 #   - The Hunspell package's own README (distr/hunspell/header/README_uk_UA.txt, saved next to the files)
 #     says the dictionary is licensed under GPL 3.0 or above, LGPL 2.1 or above and MPL 1.1; the
 #     distr/hunspell/README.md says MPL 1.1.
@@ -17,7 +20,7 @@
 # Personal, non-commercial self-hosting is covered either way. For commercial use, or any redistribution of
 # the files, ask the upstream authors first. This is not legal advice. See NOTICE.
 #
-#   scripts/fetch-uk-dictionary.sh [--force] [target-dir]
+#   scripts/fetch-uk-dictionary.sh --accept-licence [--force] [target-dir]
 #
 # target-dir defaults to tsearch_data/ at the repository root. Without --force an existing pair is
 # left alone. Needs curl, unzip, iconv and sha256sum or shasum.
@@ -30,9 +33,26 @@ README_SHA256=4634b0a40900cbb4bca4d758cbe6884834745414950d5761eaf0e4d935092b37
 README_URL="https://raw.githubusercontent.com/brown-uk/dict_uk/v${VERSION}/distr/hunspell/header/README_uk_UA.txt"
 
 force=0
-if [ "${1:-}" = "--force" ]; then
-  force=1
-  shift
+accepted=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --accept-licence) accepted=1; shift ;;
+    --force) force=1; shift ;;
+    *) break ;;
+  esac
+done
+
+if [ "$accepted" = 0 ]; then
+  cat >&2 <<'MSG'
+Licence caveat: the Ukrainian Hunspell dictionary (dict_uk v6.8.6) is offered under two statements that upstream
+does not reconcile. Its Hunspell package says GPL 3+, LGPL 2.1+ and MPL 1.1; the project README says the
+dictionary data are CC BY-NC-SA 4.0 (non-commercial, share-alike). Personal self-hosting is fine either way;
+for commercial use or redistribution, ask the upstream authors (https://github.com/brown-uk/dict_uk).
+Nytka does not include or redistribute the files; this script downloads them onto your machine. See NOTICE.
+
+Run again with --accept-licence to fetch them.
+MSG
+  exit 2
 fi
 target="${1:-$(cd "$(dirname "$0")/.." && pwd)/tsearch_data}"
 
