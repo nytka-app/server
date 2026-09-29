@@ -3,11 +3,18 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
-public sealed record ConversationSummary(Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview);
+/// <summary><paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.</summary>
+public sealed record ConversationSummary(
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus);
 
-public sealed record ConversationHeader(Guid Id, DateTime StartedAt, DateTime EndedAt, string Status);
+public sealed record ConversationHeader(
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt);
 
-public sealed record SegmentRow(long Id, DateTime StartedAt, DateTime EndedAt, string Text);
+public sealed record SegmentRow(long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker);
+
+/// <summary>What <c>/status</c> reports about the AI runs: how many wait, and the newest failed and finished ones.</summary>
+public sealed record AiRunStatus(long Pending, string? FailedMessage, DateTime? FailedAt, DateTime? FinishedAt);
 
 public sealed class ConversationStore(NpgsqlDataSource dataSource)
 {
@@ -70,13 +77,15 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// Newest first by start. The preview joins the first segments' text; the caller trims it.
     /// </summary>
-    public async Task<IReadOnlyList<ConversationSummary>> ListAsync(DateTimeOffset? before, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<ConversationSummary>> ListAsync(
+        DateTimeOffset? before, DateTimeOffset? since, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
             """
             select c.id as Id, c.started_at as StartedAt, c.ended_at as EndedAt, c.status as Status,
-                   coalesce(p.text, '') as Preview
+                   coalesce(p.text, '') as Preview, coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary,
+                   c.ai_status as AiStatus
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -84,11 +93,12 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                       where s.conversation_id = c.id
                       order by s.started_at limit 20) f
             ) p on true
-            where cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz)
+            where (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
+              and (cast(@since as timestamptz) is null or c.started_at >= cast(@since as timestamptz))
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { before, limit }, cancellationToken: ct));
+            new { before, since, limit }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -96,7 +106,12 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<ConversationHeader>(new CommandDefinition(
-            "select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status from conversations where id = @id",
+            """
+            select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status,
+                   coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
+                   ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt
+            from conversations where id = @id
+            """,
             new { id }, cancellationToken: ct));
     }
 
@@ -105,7 +120,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<SegmentRow>(new CommandDefinition(
             """
-            select id as Id, started_at as StartedAt, ended_at as EndedAt, text as Text
+            select id as Id, started_at as StartedAt, ended_at as EndedAt, text as Text, speaker as Speaker
             from segments where conversation_id = @id
             order by started_at, id
             """,
@@ -119,5 +134,132 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             "delete from conversations where id = @id", new { id }, cancellationToken: ct)) > 0;
+    }
+
+    /// <summary>Sets the title the user chose, or clears it (null) so the generated one shows. False when the conversation is gone.</summary>
+    public async Task<bool> SetTitleAsync(Guid id, string? title, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "update conversations set title = @title, updated_at = @now where id = @id",
+            new { id, title, now }, cancellationToken: ct)) > 0;
+    }
+
+    /// <summary>
+    /// Ids of the closed conversations that need a run: never run and ended since
+    /// <paramref name="backfillSince"/>; done or skipped with a segment newer than the last run; or
+    /// failed fewer than <paramref name="maxFailures"/> times, the last one before
+    /// <paramref name="retryBefore"/>. Newest first.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> DueForEnrichmentAsync(
+        DateTimeOffset backfillSince, DateTimeOffset retryBefore, int maxFailures, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var ids = await connection.QueryAsync<Guid>(new CommandDefinition(
+            """
+            select c.id from conversations c
+            where c.status = 'closed' and (
+                (c.ai_status = 'none' and c.ended_at >= @backfillSince)
+                or (c.ai_status in ('done', 'skipped')
+                    and exists (select 1 from segments s
+                                where s.conversation_id = c.id and s.id > coalesce(c.ai_through_segment_id, 0)))
+                or (c.ai_status = 'failed' and c.ai_failures < @maxFailures and c.ai_updated_at <= @retryBefore))
+            order by c.ended_at desc, c.id
+            limit @limit
+            """,
+            new { backfillSince, retryBefore, maxFailures, limit }, cancellationToken: ct));
+        return ids.ToList();
+    }
+
+    /// <summary>Marks the conversation as waiting for a run; a forced run also forgets earlier failures. False when it is gone.</summary>
+    public async Task<bool> MarkEnrichmentPendingAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, bool resetFailures, CancellationToken ct) =>
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update conversations
+            set ai_status = 'pending', ai_failures = case when @resetFailures then 0 else ai_failures end
+            where id = @id
+            """,
+            new { id, resetFailures }, transaction, cancellationToken: ct)) > 0;
+
+    /// <summary>
+    /// Stores a finished run, inside the caller's transaction: the title and summary, the segment
+    /// the run read up to, and no failures. False when the conversation is gone.
+    /// </summary>
+    public async Task<bool> StoreEnrichmentAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? title, string? summary,
+        long? throughSegmentId, DateTimeOffset now, CancellationToken ct) =>
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update conversations
+            set ai_title = @title, ai_summary = @summary, ai_status = 'done', ai_message = null,
+                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0
+            where id = @id
+            """,
+            new { id, title, summary, throughSegmentId, now }, transaction, cancellationToken: ct)) > 0;
+
+    /// <summary>A run that had nothing to summarize. The title, summary and tasks of an earlier run stay.</summary>
+    public async Task SkipEnrichmentAsync(Guid id, long? throughSegmentId, string message, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update conversations
+            set ai_status = 'skipped', ai_message = @message, ai_updated_at = @now, ai_through_segment_id = @throughSegmentId
+            where id = @id
+            """,
+            new { id, message, throughSegmentId, now }, cancellationToken: ct));
+    }
+
+    /// <summary>Records a run that failed its last attempt and adds one to the failed rounds.</summary>
+    public async Task FailEnrichmentAsync(Guid id, string message, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update conversations
+            set ai_status = 'failed', ai_message = @message, ai_updated_at = @now, ai_failures = ai_failures + 1
+            where id = @id
+            """,
+            new { id, message, now }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// The newest failure is the newest row that failed and has not finished since: a failed row, or a
+    /// pending one (a retry keeps the failure's message and time until a run finishes). A pending or
+    /// skipped row's message can also be <paramref name="skippedMessage"/>, which is no failure.
+    /// </summary>
+    public async Task<AiRunStatus> AiRunStatusAsync(string skippedMessage, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleAsync<AiRunStatus>(new CommandDefinition(
+            """
+            select (select count(*) from conversations where ai_status = 'pending') as Pending,
+                   f.ai_message as FailedMessage, f.ai_updated_at as FailedAt,
+                   (select max(ai_updated_at) from conversations where ai_status in ('done', 'skipped')) as FinishedAt
+            from (select 1) one
+            left join lateral (
+                select ai_message, ai_updated_at from conversations
+                where ai_status in ('failed', 'pending') and ai_message is not null and ai_message <> @skippedMessage
+                order by ai_updated_at desc nulls last
+                limit 1) f on true
+            """,
+            new { skippedMessage }, cancellationToken: ct));
+    }
+
+    /// <summary>True when the newest <paramref name="count"/> finished runs all failed (and there are that many).</summary>
+    public async Task<bool> RecentRunsAllFailedAsync(int count, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var statuses = await connection.QueryAsync<string>(new CommandDefinition(
+            """
+            select ai_status from conversations
+            where ai_status in ('done', 'skipped', 'failed') and ai_updated_at is not null
+            order by ai_updated_at desc
+            limit @count
+            """,
+            new { count }, cancellationToken: ct));
+        var list = statuses.ToList();
+        return list.Count == count && list.All(s => s == "failed");
     }
 }
