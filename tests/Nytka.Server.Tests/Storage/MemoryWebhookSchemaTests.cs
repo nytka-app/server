@@ -37,38 +37,38 @@ public sealed class MemoryWebhookSchemaTests(PostgresFixture db) : IAsyncLifetim
         return id;
     }
 
-    private Task InsertMemory(string fingerprint, string source = "ai", Guid? conversation = null) =>
+    private Task InsertMemory(string fingerprint, string source = "ai", Guid? conversation = null, string text = "Anna is my sister") =>
         db.ExecuteAsync(
             """
             insert into memories (id, text, fingerprint, source, conversation_id, created_at, updated_at)
-            values (@id, 'Anna is my sister', @fingerprint, @source, @conversation, @T0, @T0)
+            values (@id, @text, @fingerprint, @source, @conversation, @T0, @T0)
             """,
-            new { id = Guid.CreateVersion7(), fingerprint, source, conversation, T0 });
+            new { id = Guid.CreateVersion7(), text, fingerprint, source, conversation, T0 });
 
     private Task InsertRun(Guid conversation, string status = "pending") =>
         db.ExecuteAsync(
             "insert into memory_runs (conversation_id, status, updated_at) values (@conversation, @status, @T0)",
             new { conversation, status, T0 });
 
-    private async Task<Guid> InsertWebhook()
+    private async Task<Guid> InsertWebhook(string url = "https://example.test/hook", string[]? events = null)
     {
         var id = Guid.CreateVersion7();
         await db.ExecuteAsync(
             """
             insert into webhooks (id, url, secret, events, created_at, updated_at)
-            values (@id, 'https://example.test/hook', 'whsec_x', array['*'], @T0, @T0)
+            values (@id, @url, 'whsec_x', @events, @T0, @T0)
             """,
-            new { id, T0 });
+            new { id, url, events = events ?? ["*"], T0 });
         return id;
     }
 
-    private Task InsertDelivery(Guid webhook, string status = "pending") =>
+    private Task InsertDelivery(Guid webhook, string status = "pending", Guid? eventId = null) =>
         db.ExecuteAsync(
             """
             insert into webhook_deliveries (id, webhook_id, event_id, event_type, payload, status, created_at)
             values (@id, @webhook, @eventId, 'ping', '{}'::jsonb, @status, @T0)
             """,
-            new { id = Guid.CreateVersion7(), webhook, eventId = Guid.CreateVersion7(), status, T0 });
+            new { id = Guid.CreateVersion7(), webhook, eventId = eventId ?? Guid.CreateVersion7(), status, T0 });
 
     private static async Task<string> SqlStateOf(Func<Task> statement) =>
         (await Assert.ThrowsAsync<PostgresException>(statement)).SqlState;
@@ -250,6 +250,83 @@ public sealed class MemoryWebhookSchemaTests(PostgresFixture db) : IAsyncLifetim
         Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from webhook_deliveries"));
     }
 
+    [Theory]
+    [InlineData(300, null)]
+    [InlineData(301, CheckViolation)]
+    public async Task A_memory_text_is_at_most_300_characters(int length, string? sqlState)
+    {
+        var text = new string('a', length);
+
+        if (sqlState is null)
+        {
+            await InsertMemory("fact", text: text);
+        }
+        else
+        {
+            Assert.Equal(sqlState, await SqlStateOf(() => InsertMemory("fact", text: text)));
+        }
+    }
+
+    [Fact]
+    public async Task A_delivery_event_is_unique_per_webhook()
+    {
+        var webhook = await InsertWebhook();
+        var eventId = Guid.CreateVersion7();
+        await InsertDelivery(webhook, eventId: eventId);
+        await InsertDelivery(await InsertWebhook(), eventId: eventId);
+
+        Assert.Equal(UniqueViolation, await SqlStateOf(() => InsertDelivery(webhook, eventId: eventId)));
+    }
+
+    [Fact]
+    public async Task A_delivery_insert_can_skip_a_repeated_event()
+    {
+        var webhook = await InsertWebhook();
+        var eventId = Guid.CreateVersion7();
+        await InsertDelivery(webhook, eventId: eventId);
+
+        await db.ExecuteAsync(
+            """
+            insert into webhook_deliveries (id, webhook_id, event_id, event_type, created_at)
+            values (@id, @webhook, @eventId, 'ping', @T0)
+            on conflict (webhook_id, event_id) do nothing
+            """,
+            new { id = Guid.CreateVersion7(), webhook, eventId, T0 });
+
+        Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from webhook_deliveries"));
+    }
+
+    [Fact]
+    public async Task A_webhook_needs_at_least_one_event() =>
+        Assert.Equal(CheckViolation, await SqlStateOf(() => InsertWebhook(events: [])));
+
+    [Theory]
+    [InlineData("http://example.test/hook", true)]
+    [InlineData("https://example.test/hook", true)]
+    [InlineData("ftp://example.test/hook", false)]
+    [InlineData("example.test/hook", false)]
+    public async Task A_webhook_url_is_http_or_https(string url, bool accepted)
+    {
+        if (accepted)
+        {
+            await InsertWebhook(url);
+        }
+        else
+        {
+            Assert.Equal(CheckViolation, await SqlStateOf(() => InsertWebhook(url)));
+        }
+    }
+
+    [Fact]
+    public async Task A_webhook_url_is_at_most_2048_characters()
+    {
+        await InsertWebhook("https://example.test/" + new string('a', 2048 - 21));
+
+        Assert.Equal(
+            CheckViolation,
+            await SqlStateOf(() => InsertWebhook("https://example.test/" + new string('a', 2048 - 20))));
+    }
+
     [Fact]
     public async Task Reset_empties_the_memory_and_webhook_tables()
     {
@@ -267,6 +344,7 @@ public sealed class MemoryWebhookSchemaTests(PostgresFixture db) : IAsyncLifetim
 
     [Theory]
     [InlineData("memories_live", "id DESC", "WHERE (deleted_at IS NULL)")]
+    [InlineData("memories_by_conversation", "(conversation_id)", "WHERE (conversation_id IS NOT NULL)")]
     [InlineData("webhook_deliveries_by_webhook", "webhook_id, created_at DESC", "created_at DESC)")]
     public async Task Indexes_the_way_the_lists_read(string index, string columns, string ending)
     {

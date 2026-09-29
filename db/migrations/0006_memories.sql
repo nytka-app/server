@@ -7,7 +7,7 @@ set local lock_timeout = '5s';
 -- deleted fact does not come back. A memory goes with the conversation it was taken from.
 create table memories (
     id              uuid        primary key,
-    text            text        not null,
+    text            text        not null check (length(text) <= 300),
     fingerprint     text        not null unique,
     source          text        not null check (source in ('ai', 'user')),
     conversation_id uuid        null references conversations (id) on delete cascade,
@@ -18,6 +18,9 @@ create table memories (
 );
 
 create index memories_live on memories (id desc) where deleted_at is null;
+
+-- Deleting a conversation cascades here.
+create index memories_by_conversation on memories (conversation_id) where conversation_id is not null;
 
 -- One row per conversation the extraction has looked at. through_segment_id is the highest
 -- segments.id it read, so a run repeated over the same speech ends quietly.
