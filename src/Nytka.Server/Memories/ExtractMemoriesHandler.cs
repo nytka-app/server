@@ -68,7 +68,9 @@ public sealed class ExtractMemoriesHandler(
         {
             var run = await memories.GetRunAsync(conversationId, ct);
             var covered = input.LastSegmentId is null || run?.ThroughSegmentId >= input.LastSegmentId;
-            var candidates = covered ? [] : await AskAsync(input, ct);
+            // A conversation too short for tasks has no lasting facts either (see EnrichConversationHandler.BriefWords).
+            var brief = EnrichConversationHandler.IsBrief(input.Segments.Sum(s => EnrichConversationHandler.Words(s.Text)));
+            var candidates = covered || brief ? [] : await AskAsync(input, ct);
             await ApplyAsync(conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, ct);
             return JobOutcome.Done;
         }
@@ -89,18 +91,19 @@ public sealed class ExtractMemoriesHandler(
     private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ExtractionInput input, CancellationToken ct)
     {
         var lines = TranscriptText.Render(input.Segments.Select(s =>
-            new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)));
+            new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)), UserTimeZone.Resolve(settings));
         var windows = TranscriptWindows.Split(lines, llmOptions.CurrentValue.MaxInputChars);
         var known = await memories.NewestAsync(KnownMemories, ct);
         var listed = known.Select(k => k.Id).ToHashSet();
-        var system = SystemMessage(llmOptions.CurrentValue.OutputLanguage);
+        var zone = UserTimeZone.Resolve(settings);
+        var system = SystemMessage(llmOptions.CurrentValue.OutputLanguage, UserTimeZone.Name(zone));
         var userName = MemorySettings.UserName(settings);
 
         var pooled = new List<MemoryCandidate>();
         foreach (var window in windows)
         {
             var answer = LlmJson.Parse<Answer>(await llm.CompleteJsonAsync(
-                new LlmRequest(SchemaName, Schema, system, UserMessage(input, userName, known, window)), ct));
+                new LlmRequest(SchemaName, Schema, system, UserMessage(input, userName, known, window, zone)), ct));
             foreach (var candidate in answer.Memories)
             {
                 var text = Cut(candidate.Text);
@@ -138,27 +141,27 @@ public sealed class ExtractMemoriesHandler(
         await transaction.CommitAsync(ct);
     }
 
-    public static string SystemMessage(string outputLanguage) =>
-        Prompt(string.Equals(outputLanguage, "auto", StringComparison.OrdinalIgnoreCase) ? "the language of the conversation" : outputLanguage);
+    public static string SystemMessage(string outputLanguage, string timeZone = UserTimeZone.Default) =>
+        Prompt(string.Equals(outputLanguage, "auto", StringComparison.OrdinalIgnoreCase) ? "the language of the conversation" : outputLanguage, timeZone);
 
-    private static string Prompt(string outputLanguage) =>
+    private static string Prompt(string outputLanguage, string timeZone) =>
         $"""
         You read a transcript of a conversation and pick out lasting facts about one person, called "you" below.
-        A lasting fact is true beyond this conversation: who you are, your family, friends, home, work, health,
-        habits, preferences, goals and commitments.
-        Never report one-off events, tasks, plans for a single day or other people's affairs.
+        A lasting fact is about you, stays true beyond this conversation, and comes from you saying it about yourself or from someone saying it about you and you confirming it: who you are, your family, friends, home, work, health, habits, preferences, goals and commitments.
+        Never report facts about other speakers or third parties, one-off events, tasks, plans for a single day, or what someone else said they would do. A fact about another person counts only as your relation to them (for example, that a named person is your sister).
         Lines labelled "Wearer" are yours. Other speaker labels may differ between parts of the transcript; the user message says who "you" is.
+        Times and dates are in the time zone {timeZone}. Write dates in a fact as absolute dates, never as "tomorrow" or "Friday".
         Write each fact as one short sentence, at most {MaxTextLength} characters, in {outputLanguage}.
         Return at most {MaxMemoriesPerRun} facts, none that a known memory already states. When a fact updates a
         known memory, set "replaces" to that memory's id, otherwise to null. Return an empty list when there is
         nothing lasting.
         """;
 
-    public static string UserMessage(ExtractionInput input, string? userName, IReadOnlyList<KnownMemory> known, string transcript)
+    public static string UserMessage(ExtractionInput input, string? userName, IReadOnlyList<KnownMemory> known, string transcript, TimeZoneInfo? zone = null)
     {
         var message = new StringBuilder();
         message.Append("Conversation: ").Append(string.IsNullOrWhiteSpace(input.Title) ? "(untitled)" : input.Title).Append('\n');
-        message.Append("Date: ").Append(input.StartedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)).Append('\n');
+        message.Append("Date: ").Append(ConversationPrompt.LocalDate(new DateTimeOffset(input.StartedAt, TimeSpan.Zero), zone)).Append('\n');
         message.Append("\"You\" is ").Append(userName ?? "the person wearing the pendant").Append(".\n\n");
         message.Append("Known memories (id: text):\n");
         message.Append(known.Count == 0 ? "(none)" : string.Join('\n', known.Select(k => $"{k.Id}: {k.Text}")));

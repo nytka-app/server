@@ -75,6 +75,8 @@ public abstract class MemoryTestBase : IAsyncLifetime
 {
     protected static readonly Guid Conversation = Guid.Parse("018f0000-0000-7000-8000-000000000001");
     protected static readonly Guid Other = Guid.Parse("018f0000-0000-7000-8000-000000000002");
+    /// <summary>Past the word count under which a conversation is too short for memories.</summary>
+    protected static readonly string Filler = string.Join(' ', Enumerable.Repeat("and then we talked about the week", 10));
     protected static readonly DateTime Start = new(2026, 9, 29, 9, 0, 0, DateTimeKind.Utc);
 
     protected MemoryTestBase(PostgresFixture db, Action<IDictionary<string, string?>>? configure = null, bool withLlm = true)
@@ -117,9 +119,10 @@ public abstract class MemoryTestBase : IAsyncLifetime
             insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker)
             values (@a, 1, @start, @start, 'My sister Olena lives in Lviv.', 'Anna'),
                    (@a, 1, @start + interval '5 seconds', @start, 'I run every morning.', null),
+                   (@a, 1, @start + interval '10 seconds', @start, @filler, null),
                    (@b, 2, @start, @start, 'Second conversation.', null);
             """,
-            new { a = Conversation, b = Other, start = Start });
+            new { a = Conversation, b = Other, start = Start, filler = Filler });
     }
 
     public Task DisposeAsync()

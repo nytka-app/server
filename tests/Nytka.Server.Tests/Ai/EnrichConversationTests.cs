@@ -55,10 +55,10 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         Assert.Contains("\"additionalProperties\": false", request.SchemaJson, StringComparison.Ordinal);
         var start = Now.AddMinutes(-6);
         Assert.Equal(
-            $"Date: 2026-09-29\n\nTranscript:\n[{start:HH:mm:ss}] Anna: {Talk}\n[{start.AddSeconds(1):HH:mm:ss}] {Talk}",
+            $"Date: 2026-09-29 Tuesday\n\nTranscript:\n[{start:HH:mm:ss}] Anna: {Talk}\n[{start.AddSeconds(1):HH:mm:ss}] {Talk}",
             request.User);
         Assert.Contains("language the conversation is in", request.System, StringComparison.Ordinal);
-        Assert.Contains("tasks the wearer has to do", request.System, StringComparison.Ordinal);
+        Assert.Contains("committed to do, or was asked to do", request.System, StringComparison.Ordinal);
         Assert.Contains("speaker label may differ", request.System, StringComparison.Ordinal);
         Assert.Contains("labelled \"Wearer\"", request.System, StringComparison.Ordinal);
     }
@@ -89,6 +89,36 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         await TickAndRun();
 
         Assert.Contains("Write the title, the summary and the tasks in uk.", Assert.Single(Llm.Requests).System, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_time_zone_setting_shifts_the_times_and_the_date_and_is_named_in_the_prompt()
+    {
+        StartServer(settings => settings["Nytka:User:TimeZone"] = "Pacific/Kiritimati"); // UTC+14: the next day
+        await Seed(Talk);
+
+        await TickAndRun();
+
+        var request = Assert.Single(Llm.Requests);
+        var start = Now.AddMinutes(-6).ToOffset(TimeSpan.FromHours(14));
+        Assert.StartsWith($"Date: {start:yyyy-MM-dd dddd}\n\nTranscript:\n[{start:HH:mm:ss}] ", request.User, StringComparison.Ordinal);
+        Assert.Contains("time zone Pacific/Kiritimati", request.System, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_conversation_between_the_skip_and_the_brief_limit_gets_a_one_line_summary_and_no_tasks()
+    {
+        var id = await Seed(string.Join(' ', Enumerable.Repeat("word", 30)));
+        Llm.Respond = _ => FakeLlm.Answer("Short chat", "A short chat.", "Call Ben");
+
+        await TickAndRun();
+
+        var request = Assert.Single(Llm.Requests);
+        Assert.Contains("Return no tasks", request.System, StringComparison.Ordinal);
+        var ai = await Ai(id);
+        Assert.Equal("done", ai.AiStatus);
+        Assert.Equal("A short chat.", ai.AiSummary);
+        Assert.Empty(await Tasks(id));
     }
 
     [Fact]

@@ -178,11 +178,44 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
         Assert.Equal("memories", request.SchemaName);
         Assert.Contains("\"required\": [\"text\", \"replaces\"]", request.SchemaJson);
         Assert.Contains("Conversation: Lunch with Anna", request.User);
-        Assert.Contains("Date: 2026-09-29", request.User);
+        Assert.Contains("Date: 2026-09-29 Tuesday", request.User);
         Assert.Contains("\"You\" is Yehor.", request.User);
         Assert.Contains($"{Id(1)}: I live in Kyiv.", request.User);
         Assert.Contains("[09:00:00] Anna: My sister Olena lives in Lviv.\n[09:00:05] I run every morning.", request.User);
         Assert.Contains("the language of the conversation", request.System);
+    }
+
+    [Fact]
+    public async Task The_time_zone_setting_shifts_the_times_and_is_named_in_the_prompt()
+    {
+        using var kyiv = new NytkaApiFactory(Db, s => s["Nytka:User:TimeZone"] = "Europe/Kyiv", s => s.AddSingleton<ILlmClient>(Llm));
+
+        await Publish(kyiv);
+        await kyiv.RunJobsAsync();
+
+        var request = Assert.Single(Llm.Requests);
+        Assert.Contains("[12:00:00] Anna: My sister Olena lives in Lviv.", request.User); // 09:00 UTC, UTC+3 in September
+        Assert.Contains("time zone Europe/Kyiv", request.System);
+    }
+
+    [Fact]
+    public void The_prompt_limits_facts_to_lasting_ones_about_you()
+    {
+        var system = ExtractMemoriesHandler.SystemMessage("auto");
+
+        Assert.Contains("about you, stays true beyond this conversation", system);
+        Assert.Contains("Never report facts about other speakers or third parties, one-off events", system);
+    }
+
+    [Fact]
+    public async Task A_conversation_too_short_for_memories_is_marked_done_without_a_call()
+    {
+        await Seed(1, "I live in Kyiv.", conversation: Other);
+
+        await Extract(Other);
+
+        Assert.Empty(Llm.Requests);
+        Assert.Equal("done", await Db.ScalarAsync<string>("select status from memory_runs where conversation_id = @Other", new { Other }));
     }
 
     [Fact]
@@ -231,7 +264,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
         await Publish(small);
         await small.RunJobsAsync();
 
-        Assert.Equal(2, Llm.Requests.Count);
+        Assert.Equal(3, Llm.Requests.Count); // the filler segment is a window of its own
         Assert.Equal(["Runs daily.", "Sister in Lviv."], (await Texts()).Order());
     }
 

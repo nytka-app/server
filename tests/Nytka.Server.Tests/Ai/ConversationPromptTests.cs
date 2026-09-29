@@ -24,12 +24,54 @@ public class ConversationPromptTests
         Assert.Contains(expected, ConversationPrompt.System(language), StringComparison.Ordinal);
 
     [Fact]
-    public void The_user_message_gives_the_date_in_utc_and_the_transcript()
+    public void The_user_message_gives_the_date_in_utc_by_default_and_the_transcript()
     {
         var started = new DateTimeOffset(2026, 9, 29, 23, 30, 0, TimeSpan.FromHours(-3));
 
-        Assert.Equal("Date: 2026-09-30\n\nTranscript:\nline", ConversationPrompt.User(started, "line"));
+        Assert.Equal("Date: 2026-09-30 Wednesday\n\nTranscript:\nline", ConversationPrompt.User(started, "line"));
         Assert.Contains("part 2 of 3", ConversationPrompt.User(started, "line", 2, 3), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_date_is_the_local_one_in_the_users_zone()
+    {
+        var started = new DateTimeOffset(2026, 9, 29, 22, 30, 0, TimeSpan.Zero);
+        var kyiv = TimeZoneInfo.FindSystemTimeZoneById("Europe/Kyiv");
+
+        Assert.StartsWith("Date: 2026-09-30 Wednesday", ConversationPrompt.User(started, "line", zone: kyiv), StringComparison.Ordinal);
+        Assert.StartsWith("Date: 2026-09-30 Wednesday", ConversationPrompt.UserForMerge(started, [], kyiv), StringComparison.Ordinal);
+        Assert.StartsWith("Date: 2026-09-29 Tuesday", ConversationPrompt.User(started, "line"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_system_message_names_the_zone_and_forbids_invented_deadlines()
+    {
+        var system = ConversationPrompt.System("auto", "Europe/Kyiv");
+
+        Assert.Contains("time zone Europe/Kyiv", system, StringComparison.Ordinal);
+        Assert.Contains("against the conversation's date", system, StringComparison.Ordinal);
+        Assert.Contains("never invent one", system, StringComparison.Ordinal);
+        Assert.Contains("time zone Europe/Kyiv", ConversationPrompt.SystemForMerge("auto", "Europe/Kyiv"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tasks_are_what_the_wearer_committed_to_or_was_asked_to_do()
+    {
+        var system = ConversationPrompt.System("auto");
+
+        Assert.Contains("committed to do, or was asked to do", system, StringComparison.Ordinal);
+        Assert.Contains("what other people said they would do", system, StringComparison.Ordinal);
+        Assert.Contains("When no line is labelled \"Wearer\"", system, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_brief_conversation_gets_a_one_sentence_summary_and_no_tasks()
+    {
+        var system = ConversationPrompt.System("auto", brief: true);
+
+        Assert.Contains("summary of one sentence", system, StringComparison.Ordinal);
+        Assert.Contains("Return no tasks", system, StringComparison.Ordinal);
+        Assert.DoesNotContain("A task is", system, StringComparison.Ordinal);
     }
 
     [Theory]

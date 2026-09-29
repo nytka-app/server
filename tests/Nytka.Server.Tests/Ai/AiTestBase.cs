@@ -8,9 +8,11 @@ namespace Nytka.Server.Tests.Ai;
 /// <summary>A test host with the fake model and a recording event subscriber, and the seeding the AI tests share.</summary>
 public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
 {
-    /// <summary>25 words: enough to be worth a summary.</summary>
+    /// <summary>64 words: past <see cref="EnrichConversationHandler.BriefWords"/>, so worth tasks and a full summary.</summary>
     protected const string Talk =
-        "we talked about the trip to the coast and what to pack for the long weekend away from town with the whole family";
+        "we talked about the trip to the coast and what to pack for the long weekend away from town with the whole family "
+        + "and then we went through the route, the stops for coffee, who drives first, where we sleep on the way, "
+        + "what the weather will do, and how much money we should put aside for the fuel and the food on the road";
 
     protected PostgresFixture Db => db;
 

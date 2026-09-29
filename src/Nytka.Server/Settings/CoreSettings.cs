@@ -11,6 +11,7 @@ public sealed class CoreSettings : ISettingsGroup
         new("stt.language", SettingType.Language, "auto", SettingValidators.Language),
         new("conversations.gap", SettingType.Duration, "00:02:00",
             SettingValidators.Duration(TimeSpan.FromSeconds(30), TimeSpan.FromHours(1))),
+        new(Ai.UserTimeZone.Key, SettingType.String, Ai.UserTimeZone.Default, Ai.UserTimeZone.Validate),
         new("audio.retentionDays", SettingType.Int, "14", SettingValidators.Int(0, 3650)),
     ];
 }

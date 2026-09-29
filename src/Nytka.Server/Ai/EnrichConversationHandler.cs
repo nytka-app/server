@@ -4,6 +4,7 @@ using Npgsql;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Ai;
@@ -21,6 +22,7 @@ public sealed class EnrichConversationHandler(
     NpgsqlDataSource dataSource,
     ILlmClient llm,
     IOptionsMonitor<LlmOptions> options,
+    SettingsService settings,
     IEventPublisher events,
     TimeProvider time,
     ILogger<EnrichConversationHandler> logger) : IJobHandler
@@ -31,6 +33,13 @@ public sealed class EnrichConversationHandler(
 
     /// <summary>Failed rounds (of three attempts each) after which the scan stops retrying.</summary>
     public const int MaxFailedRounds = 3;
+
+    /// <summary>
+    /// Below this many words (about 25 seconds of speech) a conversation has no room for a task or a lasting
+    /// fact: it gets a title and a one-sentence summary, and no task or memory run. Three times
+    /// <see cref="MinWords"/>, under which nothing is summarized at all.
+    /// </summary>
+    public const int BriefWords = 60;
 
     public const string TooShort = "Too short to summarize.";
 
@@ -69,11 +78,12 @@ public sealed class EnrichConversationHandler(
                 : JobOutcome.RunAgain(Wait);
         }
 
-        var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text)));
+        var zone = UserTimeZone.Resolve(settings);
+        var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text)), zone);
         ConversationAnswer answer;
         try
         {
-            answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, ct);
+            answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, IsBrief(segments.Sum(s => Words(s.Text))), ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -117,7 +127,7 @@ public sealed class EnrichConversationHandler(
 
     /// <summary>One call for a transcript that fits a window; one per window and a merge call for a longer one.</summary>
     private async Task<ConversationAnswer> AskAsync(
-        DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, CancellationToken ct)
+        DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief, CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -130,17 +140,19 @@ public sealed class EnrichConversationHandler(
             throw new LlmException("The conversation is too long to summarize.");
         }
 
-        var system = ConversationPrompt.System(llmOptions.OutputLanguage);
+        var zoneName = UserTimeZone.Name(zone);
+        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief);
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
-            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count), ct));
+            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone), ct));
         }
 
-        return parts.Count == 1
+        var answer = parts.Count == 1
             ? parts[0]
             : await CompleteAsync(
-                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage), ConversationPrompt.UserForMerge(startedAt, parts), ct);
+                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName), ConversationPrompt.UserForMerge(startedAt, parts, zone), ct);
+        return brief ? answer with { Tasks = [] } : answer;
     }
 
     private async Task<ConversationAnswer> CompleteAsync(string system, string user, CancellationToken ct) =>
@@ -187,7 +199,9 @@ public sealed class EnrichConversationHandler(
     /// <summary>A client error other than 429: retrying with the same request and key cannot help.</summary>
     private static bool IsPermanent(LlmException error) => error.StatusCode is >= 400 and < 500 and not 429;
 
-    private static int Words(string text) => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+    public static bool IsBrief(int words) => words < BriefWords;
+
+    public static int Words(string text) => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
 
     private static EnrichPayload Payload(JobRecord job) => JsonSerializer.Deserialize<EnrichPayload>(job.Payload)!;
 }

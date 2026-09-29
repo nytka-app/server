@@ -26,6 +26,12 @@ public class TranscriptTextTests
             TranscriptText.Render([new(new DateTimeOffset(2026, 9, 29, 11, 5, 9, TimeSpan.FromHours(3)), null, "Hello")]));
 
     [Fact]
+    public void Times_are_in_the_given_zone_across_midnight() =>
+        Assert.Equal(
+            ["[01:05:09] Hello"],
+            TranscriptText.Render([new(new DateTimeOffset(2026, 9, 29, 22, 5, 9, TimeSpan.Zero), null, "Hello")], TimeZoneInfo.FindSystemTimeZoneById("Europe/Kyiv")));
+
+    [Fact]
     public void Hours_use_the_24_hour_clock() =>
         Assert.Equal(
             ["[23:59:59] late", "[00:00:00] early"],
