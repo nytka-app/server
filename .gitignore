@@ -21,3 +21,6 @@ TestResults/
 # Private, never committed: the denylist the hooks read, and personal agent notes.
 .private-terms
 CLAUDE.local.md
+
+# The Ukrainian dictionary is fetched by scripts/fetch-uk-dictionary.sh, never committed.
+/tsearch_data/

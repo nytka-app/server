@@ -66,6 +66,27 @@ URL, key and model.
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | Image tag |
 
+## Ukrainian search (optional)
+
+`GET /api/v1/search` and the `search` MCP tool find text in transcripts, titles, summaries and memories. By
+default (`Nytka__Search__Dictionary=simple`) a word matches exactly or by prefix, so `зустріч` finds
+"зустрічами" but `рік` does not find "року". The opt-in Ukrainian Hunspell dictionary fixes that:
+
+```bash
+scripts/fetch-uk-dictionary.sh --accept-licence   # fills ./tsearch_data (Compose mounts it if present)
+docker compose up -d                              # then set Nytka__Search__Dictionary=uk_hunspell
+```
+
+Check it with `select ts_lexize('nytka_uk', 'зустрічами');`. Without the files the setting has no effect
+and the server logs a warning. Changing the setting re-indexes in the background: rows are found again
+a few seconds later, or minutes on a large archive. New text is searchable a few seconds after it is written.
+For an external Postgres, copy `uk_ua.dict` and `uk_ua.affix` into `pg_config --sharedir`/tsearch_data.
+
+**Licence caveat.** The dictionary's Hunspell package says GPL 3+, LGPL 2.1+ and MPL 1.1, while the project
+README puts the dictionary data under CC BY-NC-SA 4.0 (non-commercial). Nytka never ships the files; you fetch
+them onto your machine and accept that with the flag. See `NOTICE`; ask the upstream authors before
+commercial use or redistribution.
+
 ## Transcription endpoints
 
 The server sends each batch of speech as a WAV file (16 kHz, mono, 16-bit) in `multipart/form-data`

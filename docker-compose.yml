@@ -10,6 +10,18 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # The Ukrainian search dictionary, optional: run scripts/fetch-uk-dictionary.sh to fill ./tsearch_data.
+      # Without the files Postgres still starts and search matches Cyrillic words exactly.
+      - ./tsearch_data:/nytka-dictionary:ro
+    # Links the dictionary files into the stock image's tsearch_data when they exist, then starts Postgres as usual.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for f in uk_ua.dict uk_ua.affix; do
+          if [ -s /nytka-dictionary/$$f ]; then ln -sf /nytka-dictionary/$$f /usr/local/share/postgresql/tsearch_data/$$f; fi
+        done
+        exec docker-entrypoint.sh postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nytka -d nytka"]
       interval: 10s
