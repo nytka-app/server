@@ -14,12 +14,16 @@ public class MigrationTests(PostgresFixture db)
         await using var connection = await db.DataSource.OpenConnectionAsync();
 
         var tables = await connection.QueryAsync<string>(
-            "select table_name from information_schema.tables where table_schema = 'public' order by table_name");
+            "select table_name from information_schema.tables where table_schema = 'public'");
 
-        Assert.Equal(
-            ["audio_chunks", "capture_sessions", "conversations", "diagnostics", "jobs", "schemaversions",
-             "segments", "speech_audio", "transcription_batches"],
-            tables);
+        // Later versions add tables, so this asks only for the ones v0.1 shipped.
+        Assert.Superset(
+            new HashSet<string>
+            {
+                "audio_chunks", "capture_sessions", "conversations", "diagnostics", "jobs", "schemaversions",
+                "segments", "speech_audio", "transcription_batches",
+            },
+            tables.ToHashSet());
     }
 
     [Fact]
