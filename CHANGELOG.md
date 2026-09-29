@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/nytka-app/server/compare/v0.4.1...v0.5.0) (2026-09-29)
+
+
+### Features
+
+* **server:** keep speaker_id and is_user, name voices as people (v0.6) ([#35](https://github.com/nytka-app/server/issues/35)) ([9fbf156](https://github.com/nytka-app/server/commit/9fbf156555d314eeb47d5ec76dfaf96fe53df00e))
+
 ## [0.4.1](https://github.com/nytka-app/server/compare/v0.4.0...v0.4.1) (2026-09-29)
 
 
