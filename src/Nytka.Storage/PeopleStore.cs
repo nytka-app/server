@@ -22,6 +22,8 @@ public sealed record PersonRow(Guid Id, string Name, DateTime CreatedAt, string[
 
 public enum PersonWrite { Ok, NotFound, NameTaken }
 
+public sealed record UnnamedVoice(string SpeakerId, string? Label, int Segments, DateTime LastSeenAt);
+
 /// <summary>People: names given to the voices a transcription provider tells apart (<c>people</c>, <c>person_voices</c>).</summary>
 public sealed class PeopleStore(NpgsqlDataSource dataSource)
 {
@@ -130,5 +132,44 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
         return await connection.ExecuteAsync(new CommandDefinition(
             "delete from person_voices where person_id = @id and speaker_id = @speakerId",
             new { id, speakerId }, cancellationToken: ct)) == 1;
+    }
+
+    /// <summary>The voices heard in segments that no person owns and that are not the wearer's, busiest first.</summary>
+    public async Task<IReadOnlyList<UnnamedVoice>> UnnamedVoicesAsync(int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<UnnamedVoice>(new CommandDefinition(
+            """
+            select s.speaker_id as SpeakerId,
+                   (array_agg(s.speaker order by s.started_at desc, s.id desc))[1] as Label,
+                   count(*)::int as Segments,
+                   max(s.started_at) as LastSeenAt
+            from segments s
+            where s.speaker_id is not null and s.is_user is not true
+              and not exists (select 1 from person_voices pv where pv.speaker_id = s.speaker_id)
+            group by s.speaker_id
+            order by count(*) desc, max(s.started_at) desc, s.speaker_id
+            limit @limit
+            """, new { limit }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>Moves every voice of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
+    public async Task<PersonWrite> MergeAsync(Guid id, Guid intoId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var found = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            "select count(*)::int from people where id in (@id, @intoId)", new { id, intoId }, transaction, cancellationToken: ct));
+        if (found != 2)
+        {
+            return PersonWrite.NotFound;
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update person_voices set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
+            "delete from people where id = @id", new { id }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return PersonWrite.Ok;
     }
 }

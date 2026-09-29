@@ -44,6 +44,8 @@ builder.Services.AddSingleton<Scheduler>();
 builder.Services.AddHostedService<JobRunnerService>();
 builder.Services.AddHostedService<SchedulerService>();
 builder.Services.AddHttpClient<TranscriptionClient>(client => client.Timeout = TranscriptionClient.Timeout);
+builder.Services.AddHttpClient<VoiceprintClient>(client => client.Timeout = VoiceprintClient.Timeout)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 // One model for the process; the Audio lane runs one job at a time, and Silero is not thread-safe.
 builder.Services.AddSingleton<IVoiceActivityDetector>(_ => new SileroVad());
