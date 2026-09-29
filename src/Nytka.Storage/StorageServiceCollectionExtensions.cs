@@ -21,6 +21,12 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<ConversationStore>();
         services.AddSingleton<BatchStore>();
         services.AddSingleton<DiagnosticsStore>();
+        services.AddSingleton<TokenStore>();
+        services.AddSingleton<SettingStore>();
+        services.AddSingleton<TaskStore>();
+        services.AddSingleton<MemoryStore>();
+        services.AddSingleton<SearchStore>();
+        services.AddSingleton<WebhookStore>();
 
         return services;
     }

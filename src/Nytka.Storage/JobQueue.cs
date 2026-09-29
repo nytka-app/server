@@ -4,6 +4,16 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
+/// <summary>Which kinds of job a consumer takes: only the listed ones, or every kind but them.</summary>
+public readonly record struct JobKindFilter(IReadOnlyCollection<string> Kinds, bool Exclude)
+{
+    public static JobKindFilter Any => new([], true);
+
+    public static JobKindFilter Only(IEnumerable<string> kinds) => new([.. kinds], false);
+
+    public static JobKindFilter Except(IEnumerable<string> kinds) => new([.. kinds], true);
+}
+
 public sealed class JobQueue(NpgsqlDataSource dataSource)
 {
     /// <summary>
@@ -30,10 +40,10 @@ public sealed class JobQueue(NpgsqlDataSource dataSource)
             transaction, cancellationToken: ct));
 
     /// <summary>
-    /// Leases the next due job until <c>now + lease</c> and counts the attempt. A job whose lease
-    /// ran out (the process died mid-job) is due again.
+    /// Leases the next due job of the given kinds until <c>now + lease</c> and counts the attempt. A
+    /// job whose lease ran out (the process died mid-job) is due again.
     /// </summary>
-    public async Task<JobRecord?> DequeueAsync(DateTimeOffset now, TimeSpan lease, CancellationToken ct)
+    public async Task<JobRecord?> DequeueAsync(DateTimeOffset now, TimeSpan lease, JobKindFilter kinds, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<JobRecord>(new CommandDefinition(
@@ -42,12 +52,13 @@ public sealed class JobQueue(NpgsqlDataSource dataSource)
             where id = (
                 select id from jobs
                 where run_after <= @now and (locked_until is null or locked_until < @now)
+                  and case when @exclude then kind <> all(@kinds) else kind = any(@kinds) end
                 order by run_after, id
                 for update skip locked
                 limit 1)
             returning id as Id, kind as Kind, payload::text as Payload, attempts as Attempts
             """,
-            new { now, lockedUntil = now + lease },
+            new { now, lockedUntil = now + lease, kinds = kinds.Kinds.ToArray(), exclude = kinds.Exclude },
             cancellationToken: ct));
     }
 
