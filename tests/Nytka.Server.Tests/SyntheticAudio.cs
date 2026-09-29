@@ -22,7 +22,10 @@ public static class SyntheticAudio
     public static Part Gap(double seconds) => new(false, true, seconds);
 
     /// <summary>Frames from sequence 0 at <see cref="StartMs"/>, cut into chunks of up to 1,500 frames.</summary>
-    public static IReadOnlyList<byte[]> Chunks(Guid session, params Part[] parts)
+    public static IReadOnlyList<byte[]> Chunks(Guid session, params Part[] parts) => Chunks(session, ChunkFormat.MaxFrames, parts);
+
+    /// <summary>As above, with chunks of up to <paramref name="chunkFrames"/> frames.</summary>
+    public static IReadOnlyList<byte[]> Chunks(Guid session, int chunkFrames, params Part[] parts)
     {
         var encoder = new OpusFrameEncoder();
         var frames = new List<Frame>();
@@ -52,7 +55,7 @@ public static class SyntheticAudio
             }
         }
 
-        return frames.Chunk(ChunkFormat.MaxFrames)
+        return frames.Chunk(chunkFrames)
             .Select(part => ChunkFormat.Write(new Chunk(session, ChunkFormat.OpusFs320, part[0].Seq, part[0].CapturedAtMs, part)))
             .ToList();
     }
