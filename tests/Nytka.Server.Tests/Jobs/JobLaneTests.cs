@@ -29,6 +29,12 @@ public sealed class JobLaneTests : IAsyncLifetime
         _probe = new Probe(db);
         _factory = new NytkaApiFactory(db, services: s =>
         {
+            // The probes stand in for every kind; a feature's real handler would otherwise be found first.
+            foreach (var real in s.Where(d => d.ServiceType == typeof(IJobHandler) && d.ImplementationType is not null).ToList())
+            {
+                s.Remove(real);
+            }
+
             foreach (var kind in Kinds)
             {
                 s.AddScoped<IJobHandler>(_ => new ProbeHandler(kind, _probe));
