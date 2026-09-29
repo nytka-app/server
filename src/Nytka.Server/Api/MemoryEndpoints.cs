@@ -24,8 +24,6 @@ public static class MemoryEndpoints
         return api;
     }
 
-    public sealed record MemoryPage(IReadOnlyList<MemoryRow> Items, Guid? NextBefore);
-
     public sealed record TextRequest(string? Text);
 
     private sealed record ValidText(string? Text, string? Fingerprint, IResult? Problem);
@@ -33,8 +31,7 @@ public static class MemoryEndpoints
     private static async Task<IResult> ListAsync(Guid? before, int? limit, MemoryStore memories, CancellationToken ct)
     {
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
-        var items = await memories.ListAsync(before, take, ct);
-        return Results.Ok(new MemoryPage(items, items.Count == take ? items[^1].Id : null));
+        return Results.Ok(await memories.ListAsync(before, take, ct));
     }
 
     private static async Task<IResult> CreateAsync(

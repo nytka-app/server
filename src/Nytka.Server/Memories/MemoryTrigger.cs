@@ -27,7 +27,11 @@ public sealed class MemoryTrigger(
         }
 
         var now = time.GetUtcNow();
-        await memories.MarkPendingAsync(connection, transaction, nytkaEvent.SubjectId, now, ct);
+        if (!await memories.MarkPendingAsync(connection, transaction, nytkaEvent.SubjectId, now, ct))
+        {
+            return;
+        }
+
         await queue.EnqueueAsync(
             connection, transaction, JobKinds.ExtractMemories, new ExtractPayload(nytkaEvent.SubjectId),
             JobKinds.ExtractMemoriesKey(nytkaEvent.SubjectId), now, ct);

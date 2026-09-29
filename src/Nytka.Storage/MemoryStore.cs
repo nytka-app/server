@@ -11,6 +11,9 @@ public sealed record MemoryRow(
     Guid Id, string Text, string Source, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt,
     DateTime CreatedAt, DateTime UpdatedAt);
 
+/// <summary>A page of memories and the id to pass as <c>before</c> for the next one, or null on the last page.</summary>
+public sealed record MemoryPage(IReadOnlyList<MemoryRow> Items, Guid? NextBefore);
+
 /// <summary>A fact the model proposed. <paramref name="Replaces"/> names a memory it lists as known.</summary>
 public sealed record MemoryCandidate(string Text, string Fingerprint, Guid? Replaces);
 
@@ -28,19 +31,23 @@ public sealed record MemoryRun(string Status, long? ThroughSegmentId, int Failur
 /// <summary>Memories taken from conversations (<c>memories</c>, <c>memory_runs</c>).</summary>
 public sealed class MemoryStore(NpgsqlDataSource dataSource)
 {
-    /// <summary>Newest first by id (ids are UUID v7). Deleted memories are left out.</summary>
-    public async Task<IReadOnlyList<MemoryRow>> ListAsync(Guid? before, int limit, CancellationToken ct)
+    /// <summary>
+    /// Newest first by id (ids are UUID v7). Deleted memories are left out. <c>NextBefore</c> is the last id of a
+    /// page that has more behind it, else null.
+    /// </summary>
+    public async Task<MemoryPage> ListAsync(Guid? before, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        var rows = await connection.QueryAsync<MemoryRow>(new CommandDefinition(
+        var rows = (await connection.QueryAsync<MemoryRow>(new CommandDefinition(
             $"""
             {SelectMemory}
             where m.deleted_at is null and (cast(@before as uuid) is null or m.id < cast(@before as uuid))
             order by m.id desc
-            limit @limit
+            limit @fetch
             """,
-            new { before, limit }, cancellationToken: ct));
-        return rows.ToList();
+            new { before, fetch = limit + 1 }, cancellationToken: ct))).ToList();
+        var items = rows.Take(limit).ToList();
+        return new MemoryPage(items, rows.Count > limit ? items[^1].Id : null);
     }
 
     public async Task<MemoryRow?> GetAsync(Guid id, CancellationToken ct)
@@ -133,16 +140,45 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
             new { conversationId }, cancellationToken: ct));
     }
 
-    /// <summary>Records that an extraction is queued, inside the transaction of the summary that asked for it. A new request starts the failure count again.</summary>
-    public Task MarkPendingAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, DateTimeOffset now, CancellationToken ct) =>
-        connection.ExecuteAsync(new CommandDefinition(
+    /// <summary>
+    /// Records that an extraction is queued, inside the transaction of the summary that asked for it, and returns
+    /// whether the caller should queue the job. False when the last run already read every segment. The failure
+    /// count starts again only when segments arrived after that run.
+    /// </summary>
+    public async Task<bool> MarkPendingAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, DateTimeOffset now, CancellationToken ct)
+    {
+        var last = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "select max(id) from segments where conversation_id = @conversationId",
+            new { conversationId }, transaction, cancellationToken: ct));
+        var through = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "select through_segment_id from memory_runs where conversation_id = @conversationId for update",
+            new { conversationId }, transaction, cancellationToken: ct));
+        if (last is null || through >= last)
+        {
+            return false;
+        }
+
+        var fresh = through is not null;
+        await connection.ExecuteAsync(new CommandDefinition(
             """
             insert into memory_runs (conversation_id, status, updated_at) values (@conversationId, 'pending', @now)
             on conflict (conversation_id) do update
-            set status = 'pending', failures = 0, message = null, updated_at = @now
+            set status = 'pending', message = null, updated_at = @now,
+                failures = case when @fresh then 0 else memory_runs.failures end
             """,
-            new { conversationId, now }, transaction, cancellationToken: ct));
+            new { conversationId, now, fresh }, transaction, cancellationToken: ct));
+        return true;
+    }
+
+    /// <summary>Drops the record of a run that will not happen (extraction is off or has no model), so it never stays pending.</summary>
+    public async Task ForgetRunAsync(Guid conversationId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            "delete from memory_runs where conversation_id = @conversationId and status = 'pending'",
+            new { conversationId }, cancellationToken: ct));
+    }
 
     /// <summary>
     /// Whether the conversation still exists, locking its row until the transaction ends so it cannot be

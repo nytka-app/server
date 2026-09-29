@@ -55,6 +55,7 @@ public sealed class ExtractMemoriesHandler(
         var conversationId = JsonSerializer.Deserialize<ExtractPayload>(job.Payload)!.ConversationId;
         if (!MemorySettings.IsEnabled(settings) || !llm.IsConfigured)
         {
+            await memories.ForgetRunAsync(conversationId, ct);
             return JobOutcome.Done;
         }
 

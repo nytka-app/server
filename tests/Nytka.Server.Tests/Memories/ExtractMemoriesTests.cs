@@ -249,6 +249,37 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     }
 
     [Fact]
+    public async Task A_second_summary_with_no_new_speech_queues_nothing_and_leaves_the_run_alone()
+    {
+        Llm.Respond = _ => ScriptedLlm.Answer(("A fact.", null));
+        await Extract();
+        await Db.ExecuteAsync("update memory_runs set failures = 2, status = 'failed'");
+
+        await PublishReadyAsync(Conversation);
+
+        Assert.Equal(0, await Jobs());
+        Assert.Equal("failed", await Db.ScalarAsync<string>("select status from memory_runs"));
+        Assert.Equal(2, await Db.ScalarAsync<int>("select failures from memory_runs"));
+    }
+
+    [Fact]
+    public async Task New_speech_resets_the_failure_count_of_an_earlier_run()
+    {
+        Llm.Respond = _ => ScriptedLlm.Answer(("A fact.", null));
+        await Extract();
+        await Db.ExecuteAsync("update memory_runs set failures = 2, status = 'failed'");
+        await Db.ExecuteAsync(
+            "insert into segments (conversation_id, batch_id, started_at, ended_at, text) values (@c, 1, @start, @start, 'More talk.')",
+            new { c = Conversation, start = Start.AddMinutes(9) });
+
+        await PublishReadyAsync(Conversation);
+
+        Assert.Equal(1, await Jobs());
+        Assert.Equal("pending", await Db.ScalarAsync<string>("select status from memory_runs"));
+        Assert.Equal(0, await Db.ScalarAsync<int>("select failures from memory_runs"));
+    }
+
+    [Fact]
     public async Task New_speech_after_the_last_run_is_read_again_and_the_known_facts_stay_single()
     {
         Llm.Respond = _ => ScriptedLlm.Answer(("A fact.", null));
@@ -312,6 +343,37 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
 
         Assert.Equal(0, await Jobs());
         Assert.Empty(Llm.Requests);
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from memory_runs"));
+    }
+
+    [Fact]
+    public async Task A_model_that_stops_being_configured_after_queueing_leaves_no_pending_run()
+    {
+        await PublishReadyAsync(Conversation);
+        Llm.IsConfigured = false;
+
+        await Server.RunJobsAsync();
+
+        Assert.Equal(0, await Jobs());
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from memory_runs"));
+    }
+
+    [Theory]
+    [InlineData("""{"memories": null}""")]
+    [InlineData("""{"memories": [null]}""")]
+    [InlineData("""{"memories": [{"text": null, "replaces": null}]}""")]
+    [InlineData("""{"memories": [{"replaces": null}]}""")]
+    [InlineData("""{"memories": [{"text": "x"}]}""")]
+    public async Task A_null_list_or_text_is_a_schema_error_not_a_crash(string answer)
+    {
+        Llm.Respond = _ => answer;
+        await PublishReadyAsync(Conversation);
+
+        await ThreeAttempts();
+
+        Assert.Equal("failed", await Db.ScalarAsync<string>("select status from memory_runs"));
+        Assert.Equal("The language model endpoint answered with JSON that does not match the schema.", await Db.ScalarAsync<string>("select message from memory_runs"));
+        Assert.Equal(0, await Memories());
     }
 
     [Fact]

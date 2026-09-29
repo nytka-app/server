@@ -21,7 +21,7 @@ public sealed class MemoryTools(MemoryStore memories)
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
     };
 
-    [McpServerTool(Name = "list_memories", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEndpoints.MemoryPage))]
+    [McpServerTool(Name = "list_memories", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryPage))]
     [Description("Lists lasting facts about the user taken from conversations, newest first. Pass nextBefore as before to read the next page.")]
     public async Task<CallToolResult> ListMemoriesAsync(
         [Description("A memory id (UUID): only memories older than it.")] string? before = null,
@@ -37,9 +37,7 @@ public sealed class MemoryTools(MemoryStore memories)
         }
 
         var take = Math.Clamp(limit, 1, MemoryEndpoints.MaxLimit);
-        var items = await memories.ListAsync(cursor, take, ct);
-        var element = JsonSerializer.SerializeToElement(
-            new MemoryEndpoints.MemoryPage(items, items.Count == take ? items[^1].Id : null), Json);
+        var element = JsonSerializer.SerializeToElement(await memories.ListAsync(cursor, take, ct), Json);
         return new CallToolResult
         {
             Content = [new TextContentBlock { Text = element.GetRawText() }],

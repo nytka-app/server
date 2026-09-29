@@ -164,6 +164,20 @@ public sealed class MemoryApiTests(PostgresFixture db) : MemoryTestBase(db)
     }
 
     [Fact]
+    public async Task A_page_that_ends_exactly_at_the_last_memory_has_no_next_before()
+    {
+        for (var i = 1; i <= 4; i++)
+        {
+            await Seed(Id(i), $"Fact {i}", $"fact {i}");
+        }
+
+        var page = await JsonOf(await Admin.GetAsync("/api/v1/memories?limit=4"));
+
+        Assert.Equal(4, page.GetProperty("items").GetArrayLength());
+        Assert.Equal(JsonValueKind.Null, page.GetProperty("nextBefore").ValueKind);
+    }
+
+    [Fact]
     public async Task Patch_sets_the_text_marks_it_edited_and_keeps_the_fingerprint()
     {
         await Seed(Id(1), "I live in Kyiv.", "i live in kyiv", Conversation);
