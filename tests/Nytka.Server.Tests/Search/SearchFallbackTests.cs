@@ -19,27 +19,31 @@ public sealed class SearchFallbackTests
         var connectionString = new NpgsqlConnectionStringBuilder(container.GetConnectionString()) { Pooling = false }.ConnectionString;
         new DatabaseMigrator(connectionString, NullLogger<DatabaseMigrator>.Instance).Run();
         await using var data = NpgsqlDataSource.Create(connectionString);
-        var search = new SearchStore(data);
+        using var search = SearchSeed.StoreFor(connectionString);
 
         var (_, logs) = await container.GetLogsAsync();
         Assert.Contains("Ukrainian dictionary not loaded", logs);
 
         // Exact and prefix matches still work; the base form of an inflected word does not.
         await SearchSeed.ConversationAsync(data, SearchSeed.T0, segments: ["Були зустрічами", "Це було минулого року"]);
+        await SearchSeed.IndexAsync(search);
         Assert.Single(await search.SearchAsync(["зустріч"], true, false, 10, 0, default));
         Assert.Empty(await search.SearchAsync(["рік"], true, false, 10, 0, default));
         Assert.Equal("simple", await search.SetupDictionaryAsync(default));
 
-        // Mounted later: the next start switches, and text from before is found.
+        // Mounted later: the next start switches, the indexer makes the vectors again, and text from before is found.
         await container.CopyAsync(await File.ReadAllBytesAsync(Dictionary.Dict), $"{DictionaryPostgresFixture.TsearchData}/uk_ua.dict");
         await container.CopyAsync(await File.ReadAllBytesAsync(Dictionary.Affix), $"{DictionaryPostgresFixture.TsearchData}/uk_ua.affix");
         Assert.Equal("uk", await search.SetupDictionaryAsync(default));
+        await SearchSeed.IndexAsync(search);
         Assert.Single(await search.SearchAsync(["рік"], true, false, 10, 0, default));
 
-        // Removed again: the next start falls back, and inserts keep working.
+        // Removed again: writes never notice, and a query that hits the missing files falls back instead of failing.
         await container.ExecAsync(["rm", $"{DictionaryPostgresFixture.TsearchData}/uk_ua.dict", $"{DictionaryPostgresFixture.TsearchData}/uk_ua.affix"]);
-        Assert.Equal("simple", await search.SetupDictionaryAsync(default));
         await SearchSeed.ConversationAsync(data, SearchSeed.T0.AddHours(1), segments: ["Нова зустріч"]);
+        await search.SearchAsync(["зустріч"], true, false, 10, 0, default);
+        Assert.Equal("simple", await search.SetupDictionaryAsync(default));
+        await SearchSeed.IndexAsync(search);
         Assert.Empty(await search.SearchAsync(["рік"], true, false, 10, 0, default));
         Assert.Equal(2, (await search.SearchAsync(["зустріч"], true, false, 10, 0, default)).Count);
     }

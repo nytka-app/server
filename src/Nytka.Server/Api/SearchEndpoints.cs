@@ -1,3 +1,4 @@
+using System.Net;
 using Nytka.Server.Auth;
 using Nytka.Server.Search;
 using Nytka.Storage;
@@ -37,9 +38,17 @@ public static class SearchEndpoints
         var skip = Math.Clamp(offset, 0, SearchQuery.MaxOffset);
         var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct);
         var items = rows.Take(take)
-            .Select(r => new Hit(r.Kind, r.Id, r.Score, r.Title, r.Snippet, r.At, r.ConversationId))
+            .Select(r => new Hit(r.Kind, r.Id, r.Score, r.Title, Markup(r.Snippet), r.At, r.ConversationId))
             .ToList();
         var next = rows.Count > take && skip + take <= SearchQuery.MaxOffset ? skip + take : (int?)null;
         return new HitPage(items, next);
     }
+
+    /// <summary>
+    /// The snippet is transcript text, so it is escaped as HTML first; only then do the private-use markers become the
+    /// one tag a client may see, <c>&lt;mark&gt;</c>.
+    /// </summary>
+    public static string Markup(string snippet) => WebUtility.HtmlEncode(snippet)
+        .Replace(SearchStore.MarkStart.ToString(), "<mark>", StringComparison.Ordinal)
+        .Replace(SearchStore.MarkEnd.ToString(), "</mark>", StringComparison.Ordinal);
 }

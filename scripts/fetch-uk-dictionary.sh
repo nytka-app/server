@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
-# Fetches the Ukrainian Hunspell dictionary (dict_uk, MPL 1.1) that Nytka's full-text search uses and
-# lays it out the way Postgres wants it: tsearch_data/uk_ua.dict and tsearch_data/uk_ua.affix, which
-# are uk_UA.dic and uk_UA.aff renamed. docker-compose.yml mounts both into the Postgres container.
+# Fetches the Ukrainian Hunspell dictionary (dict_uk, Andriy Rysin and others) that Nytka's full-text search
+# uses, and lays it out the way Postgres wants it: tsearch_data/uk_ua.dict and tsearch_data/uk_ua.affix, which
+# are uk_UA.dic and uk_UA.aff renamed. docker-compose.yml mounts that directory into the Postgres container.
 #
-# The files are not part of this repository. Run this once before `docker compose up`.
+# The files are never committed, bundled or redistributed by Nytka: they come from the upstream release at
+# the moment you run this, onto your own machine. Search works without them (Cyrillic words then match
+# exactly), so this step is optional.
+#
+# LICENCE, read before you run it. Upstream says two different things (brown-uk/dict_uk at v6.8.6):
+#   - The Hunspell package's own README (distr/hunspell/header/README_uk_UA.txt, saved next to the files)
+#     says the dictionary is licensed under GPL 3.0 or above, LGPL 2.1 or above and MPL 1.1; the
+#     distr/hunspell/README.md says MPL 1.1.
+#   - The project README says the dictionary DATA is CC BY-NC-SA 4.0 (non-commercial, share-alike) and its
+#     software GPL 3.0 or above, and that the derivative projects under distr/ have their own licences.
+# uk_UA.dic is generated from that data, and upstream does not say how the two statements fit together.
+# Personal, non-commercial self-hosting is covered either way. For commercial use, or any redistribution of
+# the files, ask the upstream authors first. This is not legal advice. See NOTICE.
 #
 #   scripts/fetch-uk-dictionary.sh [--force] [target-dir]
 #
@@ -70,7 +82,7 @@ mkdir -p "$target"
 # The postgres user inside the container reads the mounts, whoever owns them here.
 install -m 0644 "$work/uk_UA.dic" "$target/uk_ua.dict"
 install -m 0644 "$work/uk_UA.aff" "$target/uk_ua.affix"
-# The licence notice travels with the files: the dictionary is tri-licensed GPL 3+, LGPL 2.1+ and MPL 1.1.
+# The upstream licence notice travels with the files.
 install -m 0644 "$work/README_uk_UA.txt" "$target/README_uk_UA.txt"
 
 echo "Ukrainian dictionary ${VERSION} is in $target (uk_ua.dict, uk_ua.affix)."

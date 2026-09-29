@@ -20,6 +20,8 @@ public sealed class DictionaryPostgresFixture : IAsyncLifetime
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
+    public SearchStore Search { get; private set; } = null!;
+
     public static PostgreSqlContainer Build(bool mount)
     {
         var builder = new PostgreSqlBuilder("postgres:17-alpine")
@@ -44,12 +46,14 @@ public sealed class DictionaryPostgresFixture : IAsyncLifetime
         await _container.StartAsync();
         new DatabaseMigrator(_container.GetConnectionString(), NullLogger<DatabaseMigrator>.Instance).Run();
         DataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
+        Search = SearchSeed.StoreFor(_container.GetConnectionString());
     }
 
     public async Task DisposeAsync()
     {
         if (DataSource is not null)
         {
+            Search.Dispose();
             await DataSource.DisposeAsync();
             await _container.DisposeAsync();
         }

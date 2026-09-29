@@ -1,17 +1,54 @@
 -- Full-text search over transcripts, titles, summaries and memories (docs/specs/v0.4.md, Search).
 --
 -- The text search configuration `nytka` sends ASCII words through english_stem and Cyrillic words
--- through the Ukrainian Hunspell dictionary `nytka_uk`, then `simple`. The dictionary needs two
--- files Postgres reads from $SHAREDIR/tsearch_data (uk_ua.dict, uk_ua.affix); this migration must
--- still apply without them, so nytka_search_setup() loads the dictionary when it can and falls back
--- to `simple` (with a WARNING) when it cannot. The server calls the function at every start.
+-- through the Ukrainian Hunspell dictionary `nytka_uk`, then `simple`. The dictionary needs two files
+-- Postgres reads from $SHAREDIR/tsearch_data (uk_ua.dict, uk_ua.affix). Postgres loads a dictionary
+-- once per session, about 65 MB each, so no ordinary write may touch the configuration: the `search`
+-- columns are plain and nullable, and one background indexer in the server, on its own small
+-- connection pool, fills them (a row with a null `search` is not searchable yet). This migration must
+-- apply without the files (an external Postgres): nytka_search_setup() then maps Cyrillic to `simple`
+-- and raises a WARNING.
 
 -- The columns below take a lock on hot tables; give up rather than queue behind a long transaction.
 set local lock_timeout = '5s';
 
+-- Nullable and not generated: writing a segment, a summary or a memory never evaluates `nytka`. Null
+-- means "not indexed yet". Weights: title A, summary B, memory B, transcript none (D).
+alter table segments add column search tsvector null;
+alter table conversations add column search tsvector null;
+alter table memories add column search tsvector null;
+
+create index segments_search on segments using gin (search);
+create index conversations_search on conversations using gin (search);
+create index memories_search on memories using gin (search);
+
+-- What the indexer still has to do, in id order.
+create index segments_unindexed on segments (id) where search is null;
+create index conversations_unindexed on conversations (id) where search is null;
+create index memories_unindexed on memories (id) where search is null;
+
+-- A changed title, summary or memory text is indexed again: the trigger only clears the vector.
+create function nytka_search_stale() returns trigger
+language plpgsql
+as $$
+begin
+    new.search := null;
+    return new;
+end
+$$;
+
+create trigger conversations_search_stale
+    before update of title, ai_title, ai_summary on conversations
+    for each row execute function nytka_search_stale();
+
+create trigger memories_search_stale
+    before update of text on memories
+    for each row execute function nytka_search_stale();
+
 -- Returns 'uk' when Cyrillic words go through the dictionary, 'simple' when they match exactly. When
--- the mapping changes it rebuilds the generated `search` columns that exist, which rewrites those
--- tables: run `select nytka_search_setup();` by hand after mounting or removing the files.
+-- the mapping changes every vector was made under the old one, so they are cleared and the indexer
+-- makes them again. The server calls it at start and whenever indexing fails; by hand:
+-- `select nytka_search_setup();`.
 create function nytka_search_setup() returns text
 language plpgsql
 as $$
@@ -61,21 +98,9 @@ begin
     end if;
 
     if changed then
-        if exists (select 1 from information_schema.columns
-                   where table_schema = current_schema() and table_name = 'segments' and column_name = 'search') then
-            alter table segments alter column search set expression as (to_tsvector('nytka', text));
-        end if;
-        if exists (select 1 from information_schema.columns
-                   where table_schema = current_schema() and table_name = 'conversations' and column_name = 'search') then
-            alter table conversations alter column search set expression as (
-                setweight(to_tsvector('nytka', coalesce(title, ai_title, '')), 'A')
-                || setweight(to_tsvector('nytka', coalesce(ai_summary, '')), 'B'));
-        end if;
-        if exists (select 1 from information_schema.columns
-                   where table_schema = current_schema() and table_name = 'memories' and column_name = 'search') then
-            alter table memories alter column search set expression as (
-                setweight(to_tsvector('nytka', text), 'B'));
-        end if;
+        update segments set search = null where search is not null;
+        update conversations set search = null where search is not null;
+        update memories set search = null where search is not null;
     end if;
 
     return case when loaded then 'uk' else 'simple' end;
@@ -83,21 +108,3 @@ end
 $$;
 
 select nytka_search_setup();
-
--- Generated and stored: the code that writes these rows does not change. Title is the one the user
--- set, else the generated one (weight A); the summary is weight B; a memory is weight B; a segment
--- has no weight (D). nytka_search_setup() repeats these expressions to rebuild the columns.
-alter table segments add column search tsvector
-    generated always as (to_tsvector('nytka', text)) stored;
-
-alter table conversations add column search tsvector
-    generated always as (
-        setweight(to_tsvector('nytka', coalesce(title, ai_title, '')), 'A')
-        || setweight(to_tsvector('nytka', coalesce(ai_summary, '')), 'B')) stored;
-
-alter table memories add column search tsvector
-    generated always as (setweight(to_tsvector('nytka', text), 'B')) stored;
-
-create index segments_search on segments using gin (search);
-create index conversations_search on conversations using gin (search);
-create index memories_search on memories using gin (search);

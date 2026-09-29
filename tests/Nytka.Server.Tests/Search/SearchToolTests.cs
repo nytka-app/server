@@ -3,6 +3,7 @@ using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Search;
 
@@ -13,7 +14,7 @@ namespace Nytka.Server.Tests.Search;
 [Collection(PostgresCollection.Name)]
 public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
 {
-    private readonly NytkaApiFactory _server = new(db);
+    private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
 
     public Task InitializeAsync() => db.ResetAsync();
 
@@ -45,6 +46,7 @@ public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
     {
         await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, aiTitle: "Garden plans", segments: ["the garden needs water"]);
         await SearchSeed.MemoryAsync(db.DataSource, "Has a small garden");
+        await SearchSeed.IndexAsync(_server.Get<SearchStore>());
         var rest = await _server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>("/api/v1/search?q=garden");
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
 
@@ -72,6 +74,7 @@ public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
     {
         await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, aiTitle: "Garden plans");
         await SearchSeed.MemoryAsync(db.DataSource, "Has a small garden");
+        await SearchSeed.IndexAsync(_server.Get<SearchStore>());
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
 
         var memories = await client.CallToolAsync("search", new Dictionary<string, object?>

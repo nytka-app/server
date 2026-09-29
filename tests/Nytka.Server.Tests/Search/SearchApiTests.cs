@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Search;
 
@@ -8,7 +9,8 @@ namespace Nytka.Server.Tests.Search;
 [Collection(PostgresCollection.Name)]
 public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime
 {
-    private readonly NytkaApiFactory _server = new(db);
+    // No background indexer: the tests index by hand, so what is and is not searchable yet is deterministic.
+    private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
 
     public Task InitializeAsync() => db.ResetAsync();
 
@@ -18,8 +20,11 @@ public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private Task<JsonElement> Get(string query, HttpClient? client = null) =>
-        (client ?? _server.CreateAuthorizedClient()).GetFromJsonAsync<JsonElement>($"/api/v1/search?{query}");
+    private async Task<JsonElement> Get(string query, HttpClient? client = null)
+    {
+        await SearchSeed.IndexAsync(_server.Get<SearchStore>());
+        return await (client ?? _server.CreateAuthorizedClient()).GetFromJsonAsync<JsonElement>($"/api/v1/search?{query}");
+    }
 
     private static List<string> Ids(JsonElement page) =>
         page.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetString()!).ToList();
@@ -151,5 +156,69 @@ public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime
         // to_tsquery operators and quotes inside q are cut away, not interpreted.
         Assert.Empty(Ids(await Get($"q={Uri.EscapeDataString("'foo' | !bar & (baz:*")}")));
         Assert.Single(Ids(await Get($"q={Uri.EscapeDataString("plain | !words")}")));
+    }
+
+    [Fact]
+    public async Task Escapes_the_transcript_and_keeps_only_the_mark_tag()
+    {
+        await SearchSeed.ConversationAsync(
+            db.DataSource, SearchSeed.T0, segments: ["the budget <img src=x onerror=alert(1)> & \"more\" \uE000 tricks"]);
+
+        var hit = Assert.Single((await Get("q=budget")).GetProperty("items").EnumerateArray());
+
+        var snippet = hit.GetProperty("snippet").GetString()!;
+        Assert.DoesNotContain("<img", snippet);
+        Assert.Contains("<mark>budget</mark> &lt;img src=x onerror=alert(1)&gt; &amp; &quot;more&quot;", snippet);
+        Assert.Equal(1, snippet.Split("<mark>").Length - 1);
+    }
+
+    [Fact]
+    public async Task Rows_are_found_once_indexed_and_again_after_they_change()
+    {
+        var search = _server.Get<SearchStore>();
+        var id = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, summary: "About apples", segments: ["hello there"]);
+
+        // Written but not indexed: not searchable yet, and the write never needed the configuration.
+        var client = _server.CreateAuthorizedClient();
+        Assert.Empty(Ids(await client.GetFromJsonAsync<JsonElement>("/api/v1/search?q=apples")));
+
+        await SearchSeed.IndexAsync(search);
+        Assert.Equal([id.ToString()], Ids(await client.GetFromJsonAsync<JsonElement>("/api/v1/search?q=apples")));
+
+        await db.ExecuteAsync("update conversations set ai_summary = 'About pears' where id = @id", new { id });
+        Assert.Empty(Ids(await client.GetFromJsonAsync<JsonElement>("/api/v1/search?q=pears")));
+        await SearchSeed.IndexAsync(search);
+        Assert.Equal([id.ToString()], Ids(await client.GetFromJsonAsync<JsonElement>("/api/v1/search?q=pears")));
+        Assert.Empty(Ids(await client.GetFromJsonAsync<JsonElement>("/api/v1/search?q=apples")));
+    }
+}
+
+/// <summary>The background indexer, as the server runs it.</summary>
+[Collection(PostgresCollection.Name)]
+public sealed class SearchIndexerTests(PostgresFixture db) : IAsyncLifetime
+{
+    public Task InitializeAsync() => db.ResetAsync();
+
+    public Task DisposeAsync() => Task.CompletedTask;
+
+    [Fact]
+    public async Task The_server_indexes_new_rows_in_the_background()
+    {
+        using var server = new NytkaApiFactory(db);
+        var client = server.CreateAuthorizedClient();
+        var id = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, segments: ["a quiet lighthouse"]);
+
+        var ids = new List<string>();
+        for (var i = 0; i < 40 && ids.Count == 0; i++)
+        {
+            var page = await client.GetFromJsonAsync<JsonElement>("/api/v1/search?q=lighthouse");
+            ids = page.GetProperty("items").EnumerateArray().Select(h => h.GetProperty("id").GetString()!).ToList();
+            if (ids.Count == 0)
+            {
+                await Task.Delay(500);
+            }
+        }
+
+        Assert.Equal([id.ToString()], ids);
     }
 }

@@ -7,14 +7,17 @@ namespace Nytka.Server.Tests.Search;
 /// <summary>Ukrainian and English matching with the dictionary files mounted (docs/specs/v0.4.md, Done when 3).</summary>
 public sealed class SearchDictionaryTests(DictionaryPostgresFixture db) : IClassFixture<DictionaryPostgresFixture>, IAsyncLifetime
 {
-    private SearchStore Search => new(db.DataSource);
+    private SearchStore Search => db.Search;
 
     public Task InitializeAsync() => Dictionary.Available ? SearchSeed.ClearAsync(db.DataSource) : Task.CompletedTask;
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    private async Task<List<Guid>> Find(string query) =>
-        (await Search.SearchAsync(SearchQuery.ExtractTerms(query), true, true, 20, 0, default)).Select(h => h.Id).ToList();
+    private async Task<List<Guid>> Find(string query)
+    {
+        await SearchSeed.IndexAsync(Search);
+        return (await Search.SearchAsync(SearchQuery.ExtractTerms(query), true, true, 20, 0, default)).Select(h => h.Id).ToList();
+    }
 
     [DictionaryFact]
     public async Task Dictionary_is_loaded_and_lexizes_inflections()
@@ -59,6 +62,7 @@ public sealed class SearchDictionaryTests(DictionaryPostgresFixture db) : IClass
     {
         var memory = await SearchSeed.MemoryAsync(db.DataSource, "Зустрічі з Оленою щовівторка");
 
+        await SearchSeed.IndexAsync(Search);
         var hits = await Search.SearchAsync(SearchQuery.ExtractTerms("зустріч"), false, true, 20, 0, default);
 
         Assert.Equal(memory, Assert.Single(hits).Id);

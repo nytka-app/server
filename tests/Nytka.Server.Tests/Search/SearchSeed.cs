@@ -1,5 +1,10 @@
 using Dapper;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Nytka.Server.Search;
 using Npgsql;
+using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Search;
 
@@ -57,5 +62,28 @@ public static class SearchSeed
     {
         await using var connection = await db.OpenConnectionAsync();
         await connection.ExecuteAsync("truncate conversations, memories, capture_sessions cascade");
+    }
+
+    /// <summary>A store on its own small pool over <paramref name="connectionString"/>, as the server builds it.</summary>
+    public static SearchStore StoreFor(string connectionString) => new(new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Postgres"] = connectionString })
+        .Build());
+
+    /// <summary>Runs the indexer until it is caught up, as the background loop would.</summary>
+    public static async Task IndexAsync(SearchStore search)
+    {
+        while (await search.IndexPendingAsync(500, default) > 0)
+        {
+        }
+    }
+
+    /// <summary>Removes the background indexer from a test host.</summary>
+    public static void WithoutIndexer(IServiceCollection services)
+    {
+        foreach (var descriptor in services.Where(d => d.ServiceType == typeof(IHostedService)
+                     && d.ImplementationType == typeof(SearchDictionarySync)).ToList())
+        {
+            services.Remove(descriptor);
+        }
     }
 }

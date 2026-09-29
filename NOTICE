@@ -4,3 +4,10 @@ Copyright 2026 Egoushka (https://github.com/Egoushka)
 This product includes the Silero VAD model (src/Nytka.Audio/Models/silero_vad.onnx),
 https://github.com/snakers4/silero-vad, under the MIT License:
 Copyright (c) 2020-present Silero Team.
+
+Nytka does not include or redistribute the Ukrainian Hunspell dictionary. scripts/fetch-uk-dictionary.sh
+downloads it from https://github.com/brown-uk/dict_uk (release v6.8.6, Andriy Rysin, Vasyl Starko and
+others) onto the machine that runs it, for Postgres full-text search. Its Hunspell package states the
+dictionary is licensed under GPL 3.0 or above, LGPL 2.1 or above and MPL 1.1; the project README states
+that the dictionary data are CC BY-NC-SA 4.0 (non-commercial, share-alike). Check those terms before
+commercial use or redistribution of the fetched files.
