@@ -139,7 +139,8 @@ public sealed class ProcessSessionHandler(
                 new NewBatch(conversationId, start, end, WavWriter.Write(audio.Samples), audio.Map.ToJson(), SpeechAudio(sessionId, audio.SpeechFrames)),
                 now, ct);
             await jobs.EnqueueAsync(
-                connection, transaction, JobKinds.Transcribe, new BatchPayload(batchId), JobKinds.TranscribeKey(batchId), now, ct);
+                connection, transaction, JobKinds.Transcribe, new BatchPayload(batchId), JobKinds.TranscribeKey(batchId), now, ct,
+                JobPriority.ForAudioEndingAt(end, now));
         }
 
         await chunks.MarkProcessedAsync(

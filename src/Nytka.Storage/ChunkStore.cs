@@ -19,6 +19,9 @@ public sealed record SessionState(DateTime? ProcessedThroughAt, DateTime LastRec
 
 public sealed record PendingChunk(long FirstSeq, int FrameCount, DateTime ReceivedAt, byte[] Body);
 
+/// <summary>A session that holds chunk audio, and whether any of it was late when it arrived.</summary>
+public sealed record PendingSession(Guid Id, bool Late);
+
 public sealed record PendingSummary(long PendingChunks, DateTime? OldestPendingAt);
 
 public sealed class ChunkStore(NpgsqlDataSource dataSource)
@@ -92,11 +95,24 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>Sessions that still hold chunk audio the pipeline has not finished with.</summary>
-    public async Task<IReadOnlyList<Guid>> SessionsWithPendingAudioAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<Guid>> SessionsWithPendingAudioAsync(CancellationToken ct) =>
+        [.. (await PendingSessionsAsync(ct)).Select(s => s.Id)];
+
+    /// <summary>
+    /// Like <see cref="SessionsWithPendingAudioAsync"/>, with each session's priority. A session is late
+    /// when its newest waiting chunk was (last frame over <see cref="JobPriority.LateAfter"/> old when
+    /// it arrived, as <c>ChunkEndpoints</c> judges it), so live audio after a backlog is not held behind it.
+    /// </summary>
+    public async Task<IReadOnlyList<PendingSession>> PendingSessionsAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        var sessions = await connection.QueryAsync<Guid>(new CommandDefinition(
-            "select distinct session_id from audio_chunks where body is not null", cancellationToken: ct));
+        var sessions = await connection.QueryAsync<PendingSession>(new CommandDefinition(
+            """
+            select distinct on (session_id) session_id as Id, received_at - last_time > @lateAfter as Late
+            from audio_chunks where body is not null
+            order by session_id, first_seq desc
+            """,
+            new { lateAfter = JobPriority.LateAfter }, cancellationToken: ct));
         return sessions.ToList();
     }
 

@@ -22,9 +22,11 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     private const long AssignLock = 0x4E59544B; // "NYTK"
 
     /// <summary>
-    /// Puts a batch into the conversation whose speech ends less than <paramref name="gap"/> before
-    /// the batch starts (or overlaps it), extending that conversation; otherwise opens a new one.
-    /// Runs inside the caller's transaction.
+    /// Puts a batch into the conversations whose speech ends less than <paramref name="gap"/> before
+    /// the batch starts (or overlaps it) or starts less than <paramref name="gap"/> after it ends.
+    /// When several qualify (stored audio that arrives late can bridge two of them) the one that
+    /// starts first survives: it takes the others' rows, covers all their times and the batch, and
+    /// opens. With none, a new conversation opens. Runs inside the caller's transaction.
     /// </summary>
     public async Task<Guid> AssignAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, DateTimeOffset batchStart, DateTimeOffset batchEnd,
@@ -33,36 +35,93 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await connection.ExecuteAsync(new CommandDefinition(
             "select pg_advisory_xact_lock(@key)", new { key = AssignLock }, transaction, cancellationToken: ct));
 
-        var existing = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+        var matches = (await connection.QueryAsync<Guid>(new CommandDefinition(
             """
             select id from conversations
             where ended_at > @from and started_at < @to
-            order by ended_at desc
-            limit 1
+            order by started_at, id
             """,
-            new { from = batchStart - gap, to = batchEnd + gap }, transaction, cancellationToken: ct));
+            new { from = batchStart - gap, to = batchEnd + gap }, transaction, cancellationToken: ct))).ToList();
 
-        if (existing is { } id)
+        if (matches.Count == 0)
         {
+            var created = Guid.CreateVersion7(now);
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                update conversations
-                set started_at = least(started_at, @batchStart), ended_at = greatest(ended_at, @batchEnd),
-                    status = 'open', updated_at = @now
-                where id = @id
+                insert into conversations (id, started_at, ended_at, status, created_at, updated_at)
+                values (@created, @batchStart, @batchEnd, 'open', @now, @now)
                 """,
-                new { id, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
-            return id;
+                new { created, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
+            return created;
         }
 
-        var created = Guid.CreateVersion7(now);
+        var id = matches[0];
+        var others = matches.Skip(1).ToArray();
+        if (others.Length > 0)
+        {
+            await MergeIntoAsync(connection, transaction, id, others, ct);
+        }
+
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into conversations (id, started_at, ended_at, status, created_at, updated_at)
-            values (@created, @batchStart, @batchEnd, 'open', @now, @now)
+            update conversations
+            set started_at = least(started_at, @batchStart), ended_at = greatest(ended_at, @batchEnd),
+                status = 'open', updated_at = @now
+            where id = @id
             """,
-            new { created, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
-        return created;
+            new { id, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
+        return id;
+    }
+
+    /// <summary>
+    /// Folds <paramref name="others"/> into <paramref name="survivor"/> and deletes them. Children move
+    /// before the delete (they would cascade with it), batches first: <c>BatchStore.CompleteAsync</c>
+    /// reads a batch's conversation inside its own transaction, so one finishing mid-merge waits for
+    /// this transaction and lands in the survivor.
+    /// </summary>
+    private static async Task MergeIntoAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid survivor, Guid[] others, CancellationToken ct)
+    {
+        var args = new { survivor, others, all = others.Append(survivor).ToArray() };
+
+        async Task Run(string sql) => await connection.ExecuteAsync(new CommandDefinition(sql, args, transaction, cancellationToken: ct));
+
+        await Run("update transcription_batches set conversation_id = @survivor where conversation_id = any(@others)");
+        await Run("update segments set conversation_id = @survivor where conversation_id = any(@others)");
+        await Run("update speech_audio set conversation_id = @survivor where conversation_id = any(@others)");
+
+        // One task per fingerprint survives: the one the user touched, else the survivor's, else the oldest.
+        await Run(
+            """
+            delete from tasks where id in (
+                select id from (
+                    select id, row_number() over (
+                        partition by fingerprint
+                        order by (edited or done or deleted_at is not null) desc,
+                                 (conversation_id = @survivor) desc, created_at, id) as rank
+                    from tasks where conversation_id = any(@all)) ranked
+                where rank > 1)
+            """);
+        await Run("update tasks set conversation_id = @survivor where conversation_id = any(@others)");
+        await Run("update memories set conversation_id = @survivor where conversation_id = any(@others)");
+
+        // The merged conversation reads differently: its title stays, the AI output and the memories run again.
+        await Run(
+            """
+            update conversations c
+            set started_at = least(c.started_at, m.started_at), ended_at = greatest(c.ended_at, m.ended_at),
+                ai_status = 'none', ai_message = null, ai_through_segment_id = null, ai_failures = 0
+            from (select min(started_at) as started_at, max(ended_at) as ended_at
+                  from conversations where id = any(@others)) m
+            where c.id = @survivor
+            """);
+        await Run("delete from memory_runs where conversation_id = any(@others)");
+        await Run(
+            """
+            update memory_runs set status = 'pending', through_segment_id = null, failures = 0, message = null
+            where conversation_id = @survivor
+            """);
+        await Run("delete from conversations where id = any(@others)");
     }
 
     /// <summary>Closes open conversations whose last speech ended before <paramref name="endedBefore"/>.</summary>
