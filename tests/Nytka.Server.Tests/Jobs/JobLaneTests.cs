@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
@@ -29,12 +30,8 @@ public sealed class JobLaneTests : IAsyncLifetime
         _probe = new Probe(db);
         _factory = new NytkaApiFactory(db, services: s =>
         {
-            // The probes stand in for every kind; a feature's real handler would otherwise be found first.
-            foreach (var real in s.Where(d => d.ServiceType == typeof(IJobHandler) && d.ImplementationType is not null).ToList())
-            {
-                s.Remove(real);
-            }
-
+            // The real handlers of the Ai and Hooks kinds would answer before the probes.
+            s.RemoveAll<IJobHandler>();
             foreach (var kind in Kinds)
             {
                 s.AddScoped<IJobHandler>(_ => new ProbeHandler(kind, _probe));

@@ -96,6 +96,7 @@ public sealed class TranscriptionPipelineTests(PostgresFixture db) : IAsyncLifet
             "The transcription endpoint answered 503.",
             await db.ScalarAsync<string>("select error from transcription_batches where status = 'failed'"));
         Assert.Equal(1, await Count("speech_audio"));
+        Assert.Equal(1, await Count("transcription_batches", "status = 'failed' and finished_at is not null"));
         Assert.Equal(0, await Count("jobs", "kind = 'transcribe'"));
     }
 
@@ -112,6 +113,31 @@ public sealed class TranscriptionPipelineTests(PostgresFixture db) : IAsyncLifet
         Assert.Equal("just words", text);
         Assert.Equal(await db.ScalarAsync<DateTime>("select started_at from transcription_batches"), start);
         Assert.Equal(await db.ScalarAsync<DateTime>("select ended_at from transcription_batches"), end);
+    }
+
+    [Fact]
+    public async Task Speakers_from_the_answer_are_stored_and_missing_ones_are_null()
+    {
+        _server.Stt.Respond = _ => FakeStt.Json(
+            """{"text":"a b c","segments":[{"start":0,"end":1,"text":"a","speaker":"SPEAKER_00"},{"start":1,"end":2,"text":"b","speaker":1},{"start":2,"end":3,"text":"c"}]}""");
+        await _server.UploadAsync(Chunks(_session, Tone(6), Silence(3)));
+
+        await _server.RunJobsAsync();
+
+        Assert.Equal(
+            [("a", "SPEAKER_00"), ("b", "1"), ("c", null)],
+            await db.QueryAsync<(string, string?)>("select text, speaker from segments order by started_at"));
+    }
+
+    [Fact]
+    public async Task A_finished_batch_records_when_it_finished()
+    {
+        await _server.UploadAsync(Chunks(_session, Tone(6), Silence(3)));
+        Assert.Equal(0, await Count("transcription_batches", "finished_at is not null"));
+
+        await _server.RunJobsAsync();
+
+        Assert.Equal(1, await Count("transcription_batches", "status = 'done' and finished_at is not null"));
     }
 
     [Fact]
