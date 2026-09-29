@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using Nytka.Server.Jobs;
+using Nytka.Server.Transcription;
 
 namespace Nytka.Server.Tests;
 
@@ -23,6 +24,8 @@ public sealed class NytkaApiFactory(
     public const string Token = "test-admin-token-0123456789-abcdefghij";
 
     public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero));
+
+    public FakeStt Stt { get; } = new();
 
     public HttpClient CreateAuthorizedClient()
     {
@@ -63,6 +66,9 @@ public sealed class NytkaApiFactory(
             {
                 s.Remove(descriptor);
             }
+
+            // The last primary-handler registration wins: every test host talks to the fake.
+            s.AddHttpClient<TranscriptionClient>().ConfigurePrimaryHttpMessageHandler(Stt.CreateHandler);
 
             services?.Invoke(s);
         });

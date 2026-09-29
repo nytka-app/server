@@ -3,6 +3,7 @@ using Nytka.Server;
 using Nytka.Server.Api;
 using Nytka.Server.Auth;
 using Nytka.Server.Jobs;
+using Nytka.Server.Transcription;
 using Nytka.Storage;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -30,6 +31,7 @@ builder.Services.AddSingleton<JobRunner>();
 builder.Services.AddSingleton<Scheduler>();
 builder.Services.AddHostedService<JobRunnerService>();
 builder.Services.AddHostedService<SchedulerService>();
+builder.Services.AddHttpClient<TranscriptionClient>(client => client.Timeout = TranscriptionClient.Timeout);
 
 var app = builder.Build();
 
