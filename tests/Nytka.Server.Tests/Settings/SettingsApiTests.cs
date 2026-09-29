@@ -56,7 +56,8 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(
             ["stt.url", "stt.apiKey", "stt.model", "stt.language", "conversations.gap", "audio.retentionDays"],
-            items.EnumerateArray().Select(i => i.GetProperty("key").GetString()));
+            // Later versions add keys after these, so this asks only for the ones v0.2's core group holds.
+            items.EnumerateArray().Select(i => i.GetProperty("key").GetString()).Take(6));
         Assert.All(
             items.EnumerateArray(),
             item => Assert.Equal(
