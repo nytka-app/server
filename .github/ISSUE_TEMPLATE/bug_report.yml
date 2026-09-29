@@ -1,0 +1,28 @@
+name: Bug report
+description: Something the server does wrong.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: serverVersion from GET /api/v1/info, or the image tag.
+    validations:
+      required: true
+  - type: input
+    id: stt
+    attributes:
+      label: Transcription endpoint
+      description: Provider and model, e.g. Groq whisper-large-v3-turbo. No keys.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant lines from `docker compose logs server`. Remove tokens, keys and anything anyone said.
+      render: text

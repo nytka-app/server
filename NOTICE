@@ -1,2 +1,6 @@
-omi-platform
+Nytka server
 Copyright 2026 Egoushka (https://github.com/Egoushka)
+
+This product includes the Silero VAD model (src/Nytka.Audio/Models/silero_vad.onnx),
+https://github.com/snakers4/silero-vad, under the MIT License:
+Copyright (c) 2020-present Silero Team.

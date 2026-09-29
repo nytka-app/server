@@ -7,8 +7,8 @@ pick, so Omi's cloud sees none of it.
 
 Nytka (нитка) is Ukrainian for thread: the thread of your day, on your own server.
 
-> **Status: design.** This repository still holds omi-platform, a warehouse that pulls data from
-> Omi's cloud API. Version 0.1 of the Nytka server replaces that code, and git history keeps it.
+> **Status: v0.1 in progress.** The server in this repository implements
+> [specs/v0.1.md](specs/v0.1.md); the Android app lives in `nytka-app/android`.
 
 ## Why Nytka exists
 

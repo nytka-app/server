@@ -1,67 +1,108 @@
-# omi-platform
+# Nytka server
 
-Self-hosted warehouse for an [Omi](https://www.omi.me/) AI necklace. Pulls conversations, memories
-and action items into Postgres so they can be queried and, eventually, joined against everything
-else in the homelab. Runs under Docker Compose; this repo is only the source, and deployment lives
-in a separate repo.
+The self-hosted half of [Nytka](docs/vision.md), a companion app and server for the Omi AI
+necklace. The Nytka Android app streams the pendant's audio here; the server drops silence,
+sends speech to the transcription endpoint you choose, groups the transcript into conversations
+and serves them back to the app. Omi's cloud sees none of it.
 
-Built before the necklace arrived, against Omi's published API spec (verified 2026-09-28 — see
-[docs/omi-api-notes.md](docs/omi-api-notes.md)), with no live account to test against yet. See
-[CLAUDE.md](CLAUDE.md) → "First run against a live account" before trusting it with real data.
+Status: v0.1, capture and transcription. What v0.1 does and does not do: [docs/specs/v0.1.md](docs/specs/v0.1.md).
 
-## The images
+## Run it
 
-`ghcr.io/egoushka/omi-ingest` and `ghcr.io/egoushka/omi-mcp`, public packages, built and pushed by
-`scripts/publish.sh` — nothing in the homelab repo or its CI builds them, same convention as
-oura-platform.
-
-## The MCP server
-
-`omi-mcp` answers questions about the warehouse over MCP, at `http://<host>:8089/mcp` once
-deployed. Read-only, queries the database, never Omi's API, holds no Omi credential.
-
-| Tool | Answers |
-|---|---|
-| `coverage` | What is actually held: date span, conversation/memory/open-action-item counts |
-| `list_conversations` | Summaries over a date range and category, newest first |
-| `conversation_detail` | One conversation's full transcript, events and action items |
-| `search_conversations` | Full-text search over titles, overviews and transcripts |
-| `list_memories` | Memory facts, optionally filtered by category |
-| `list_action_items` | Action items across conversations, optionally filtered to open ones |
-| `daily_activity` | Conversation and memory counts per day over a range |
-
-## Required secrets
-
-| Key | What |
-|---|---|
-| `Omi__ApiKey` | Developer API key from the Omi app: Settings → Developer → API Keys, scopes `memories:read conversations:read` |
-| `Omi__BackfillFrom` | Earliest day to backfill — set to roughly when you started wearing the necklace |
-| `POSTGRES_*` | Warehouse credentials |
-
-## Local dev
+You need Docker Compose and an OpenAI-compatible transcription endpoint.
 
 ```bash
-cp .env.example .env    # fill in Omi__ApiKey and Omi__BackfillFrom
+mkdir nytka && cd nytka
+curl -fsSLO https://raw.githubusercontent.com/nytka-app/server/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/nytka-app/server/main/.env.example
+# edit .env: POSTGRES_PASSWORD, Nytka__AdminToken (openssl rand -hex 24), Nytka__Stt__Url, ...
 docker compose up -d
-docker compose logs -f ingest
+curl http://127.0.0.1:8080/healthz
 ```
 
-Before committing, enable the hooks: `git config core.hooksPath .githooks`, then copy
-`.private-terms.example` to `.private-terms` and list what must never appear here.
+The server listens on `127.0.0.1:8080`. The app needs to reach it: put a reverse proxy with HTTPS
+in front, or set `NYTKA_BIND` to an address on your VPN (Tailscale, WireGuard) and turn on the
+app's private-network switch, which allows plain HTTP.
 
-## Re-projecting after a change
+## Configuration
 
-`omi_raw` is the source of truth; every typed table is a projection of it.
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `POSTGRES_PASSWORD` | yes | | Password of the bundled Postgres |
+| `Nytka__AdminToken` | yes | | Token the app sends, 32 characters or more. The server refuses to start without it. |
+| `Nytka__Stt__Url` | yes | | Full URL of the transcription endpoint |
+| `Nytka__Stt__ApiKey` | no | | Sent as a bearer token |
+| `Nytka__Stt__Model` | no | | Sent as `model` |
+| `Nytka__Stt__Language` | no | detect | ISO 639-1 code sent as `language` |
+| `Nytka__Conversations__Gap` | no | `00:02:00` | Silence that ends a conversation |
+| `Nytka__Audio__RetentionDays` | no | `14` | Days to keep speech audio; `0` deletes it once transcribed |
+| `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | Where Compose publishes the server |
+| `NYTKA_VERSION` | no | `latest` | Image tag |
+
+## Transcription endpoints
+
+The server sends each batch of speech as a WAV file (16 kHz, mono, 16-bit) in `multipart/form-data`
+with `response_format=verbose_json`, and reads `text` and `segments`. The endpoint must support
+`verbose_json`:
+
+| Provider | `Nytka__Stt__Url` | `Nytka__Stt__Model` |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1/audio/transcriptions` | `whisper-1` (the `gpt-4o-*-transcribe` models answer `json` only) |
+| Groq | `https://api.groq.com/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo` |
+| whisper.cpp server | `http://<host>:<port>/inference` | none |
+| LiteLLM or another gateway | its `/v1/audio/transcriptions` | whatever it routes to a Whisper model |
+
+## API
+
+Every request under `/api` carries `Authorization: Bearer <token>`. Errors are RFC 9457 problem
+details.
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/healthz` | 200 when the database answers (no token) |
+| GET | `/api/v1/info` | `{ serverVersion, apiVersion }` |
+| GET | `/api/v1/status` | `{ pendingChunks, oldestPendingAt, lastError }` |
+| POST | `/api/v1/chunks` | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
+| GET | `/api/v1/conversations?before=&limit=` | Newest first, with a preview |
+| GET | `/api/v1/conversations/{id}` | One conversation with its segments |
+| DELETE | `/api/v1/conversations/{id}` | Deletes it with its transcript and audio |
+| GET | `/api/v1/conversations/{id}/transcriptions` | Raw transcription responses |
+
+The chunk format and the upload answers are specified in [docs/specs/v0.1.md](docs/specs/v0.1.md).
+
+## What it stores
+
+Everything lives in Postgres, so `pg_dump` backs it up. Silence is dropped as soon as a chunk is
+processed. Speech audio (Opus, about 14 MB per hour of speech) stays for `RetentionDays`. With
+`RetentionDays=0` it goes as soon as its transcript exists; audio whose transcription failed stays,
+so you can see what failed, until you delete its conversation. The server logs no audio, no
+transcript text and no token.
+
+## Test without a pendant
+
+`src/Nytka.Replay` sends a WAV file to a server as one capture session:
 
 ```bash
-docker compose run --rm ingest --reproject                    # everything
-docker compose run --rm ingest --reproject conversation        # one doc type
+dotnet run --project src/Nytka.Replay -- --server http://127.0.0.1:8080 --wav speech.wav
+```
+
+The token comes from `--token` or `NYTKA_TOKEN`. The file must be 16 kHz mono 16-bit:
+`ffmpeg -i in -ar 16000 -ac 1 -sample_fmt s16 out.wav`.
+
+## Develop
+
+.NET 10 SDK, a running Docker daemon (the tests start Postgres through Testcontainers) and
+[gitleaks](https://github.com/gitleaks/gitleaks). See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+dotnet build
+dotnet test
 ```
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Not affiliated with or endorsed by Omi or Based Hardware; "Omi" is a trademark of its owner. The
-warehouse stores recordings of the people around the wearer: you are responsible for following the
-recording and privacy laws where you use the device.
+Nytka is an independent project, not affiliated with or endorsed by Based Hardware; "Omi" is a
+trademark of its owner. Nytka records the people around the wearer: you are responsible for
+following the recording and privacy laws where you use it.

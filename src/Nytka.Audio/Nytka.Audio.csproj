@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Concentus" Version="2.2.2" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copied next to every assembly that references Nytka.Audio, tests and the server included. -->
+    <None Update="Models\silero_vad.onnx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
