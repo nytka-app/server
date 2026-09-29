@@ -1,9 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
@@ -19,11 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\OmiPlatform.Omi\OmiPlatform.Omi.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="..\..\src\Nytka.Audio\Nytka.Audio.csproj" />
   </ItemGroup>
 
 </Project>

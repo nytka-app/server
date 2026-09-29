@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Nytka.Audio/Nytka.Audio.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Nytka.Audio.Tests/Nytka.Audio.Tests.csproj" />
+  </Folder>
+</Solution>
