@@ -52,7 +52,17 @@ public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.NotEqual(true, result.IsError);
         var items = result.StructuredContent!.Value.GetProperty("items");
-        Assert.Equal(rest.GetProperty("items").ToString(), items.ToString());
+        // Compared by value: the two serializers escape "<" differently.
+        var expected = rest.GetProperty("items");
+        Assert.Equal(expected.GetArrayLength(), items.GetArrayLength());
+        for (var i = 0; i < items.GetArrayLength(); i++)
+        {
+            foreach (var property in expected[i].EnumerateObject())
+            {
+                Assert.Equal(property.Value.ToString(), items[i].GetProperty(property.Name).ToString());
+            }
+        }
+
         Assert.Equal(2, items.GetArrayLength());
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("conversationId").ValueKind);
     }
