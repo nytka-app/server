@@ -120,10 +120,11 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
         }
 
         var rows = (await connection.QueryAsync<SegmentLine>(new CommandDefinition(
-            """
-            select id as Id, started_at as StartedAt, speaker as Speaker, text as Text
-            from segments where conversation_id = @conversationId
-            order by started_at, id
+            $"""
+            select s.id as Id, s.started_at as StartedAt, {SpeakerLabel.Column} as Speaker, s.text as Text
+            from segments s {SpeakerLabel.Joins}
+            where s.conversation_id = @conversationId
+            order by s.started_at, s.id
             """,
             new { conversationId }, cancellationToken: ct))).ToList();
         return new ExtractionInput(header.Title, header.StartedAt, rows.Count == 0 ? null : rows.Max(r => r.Id), rows);

@@ -11,7 +11,17 @@ public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
     string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId);
 
-public sealed record SegmentRow(long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker);
+/// <summary>
+/// <paramref name="Speaker"/> is the provider's label, <paramref name="SpeakerId"/> its stable id for the voice,
+/// <paramref name="IsUser"/> whether it is the wearer's, and the person is the name the user gave the voice.
+/// </summary>
+public sealed record SegmentRow(
+    long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, Guid? PersonId,
+    string? PersonName)
+{
+    /// <summary>What a model reads as the speaker: the wearer, else the person's name, else the provider's label.</summary>
+    public string? Label() => IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
+}
 
 /// <summary>What <c>/status</c> reports about the AI runs: how many wait, and the newest failed and finished ones.</summary>
 public sealed record AiRunStatus(long Pending, string? FailedMessage, DateTime? FailedAt, DateTime? FinishedAt);
@@ -200,9 +210,13 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<SegmentRow>(new CommandDefinition(
             """
-            select id as Id, started_at as StartedAt, ended_at as EndedAt, text as Text, speaker as Speaker
-            from segments where conversation_id = @id
-            order by started_at, id
+            select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
+                   s.speaker_id as SpeakerId, s.is_user as IsUser, p.id as PersonId, p.name as PersonName
+            from segments s
+            left join person_voices pv on pv.speaker_id = s.speaker_id
+            left join people p on p.id = pv.person_id
+            where s.conversation_id = @id
+            order by s.started_at, s.id
             """,
             new { id }, cancellationToken: ct));
         return rows.ToList();

@@ -79,7 +79,7 @@ public sealed class ConversationAiApiTests(PostgresFixture db) : AiTestBase(db)
         var segments = detail.GetProperty("segments").EnumerateArray().ToList();
         Assert.Equal("Anna", segments[0].GetProperty("speaker").GetString());
         Assert.Equal(JsonValueKind.Null, segments[1].GetProperty("speaker").ValueKind);
-        Assert.Equal(["id", "startedAt", "endedAt", "text", "speaker"], segments[0].EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "startedAt", "endedAt", "text", "speaker", "speakerId", "isUser", "personId", "personName"], segments[0].EnumerateObject().Select(p => p.Name));
     }
 
     [Fact]

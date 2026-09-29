@@ -78,14 +78,14 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
         return id;
     }
 
-    protected Task AddSegment(Guid conversationId, string text, DateTimeOffset at, string? speaker = null) =>
+    protected Task AddSegment(Guid conversationId, string text, DateTimeOffset at, string? speaker = null, string? speakerId = null, bool? isUser = null) =>
         db.ExecuteAsync(
             """
-            insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker)
+            insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker, speaker_id, is_user)
             values (@conversationId, (select min(id) from transcription_batches where conversation_id = @conversationId),
-                    @at, @at, @text, @speaker)
+                    @at, @at, @text, @speaker, @speakerId, @isUser)
             """,
-            new { conversationId, at, text, speaker });
+            new { conversationId, at, text, speaker, speakerId, isUser });
 
     protected Task<long> MaxSegmentId(Guid conversationId) =>
         db.ScalarAsync<long>("select max(id) from segments where conversation_id = @conversationId", new { conversationId });

@@ -69,7 +69,7 @@ public sealed class EnrichConversationHandler(
                 : JobOutcome.RunAgain(Wait);
         }
 
-        var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Speaker, s.Text)));
+        var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text)));
         ConversationAnswer answer;
         try
         {
