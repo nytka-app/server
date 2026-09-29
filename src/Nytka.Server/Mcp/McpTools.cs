@@ -72,7 +72,7 @@ public sealed class McpTools(McpQueries queries)
                 conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, null, false));
         }
 
-        var lines = TranscriptText.Render((await queries.SegmentsAsync(conversationId, ct))
+        var lines = TranscriptText.Render((await queries.SegmentsAsync(conversationId, MaxTranscriptChars * 2, ct))
             .Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)));
         var windows = TranscriptWindows.Split(lines, MaxTranscriptChars);
         return Ok(new McpConversation(
@@ -124,13 +124,21 @@ public sealed class McpTools(McpQueries queries)
             ? id
             : throw new McpProtocolException($"{name} must be a UUID.", McpErrorCode.InvalidParams);
 
+    // ISO 8601 with an offset or Z, or a date alone (UTC midnight). "o" and K would also take a time without an
+    // offset, which would mean the server's zone, so the offset is spelled out.
+    private static readonly string[] TimeFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+        "yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz", "yyyy-MM-dd",
+    ];
+
     private static DateTimeOffset? ParseTime(string? value, string name) =>
         value is null
             ? null
-            : DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time)
+            : DateTimeOffset.TryParseExact(value, TimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time)
                 // Npgsql takes only UTC offsets for timestamptz.
                 ? time.ToUniversalTime()
-                : throw new McpProtocolException($"{name} must be an ISO 8601 time.", McpErrorCode.InvalidParams);
+                : throw new McpProtocolException($"{name} must be an ISO 8601 time with an offset, or a date.", McpErrorCode.InvalidParams);
 
     /// <summary>The preview as REST cuts it: 140 characters, never inside a surrogate pair.</summary>
     private static string Trim(string preview) =>

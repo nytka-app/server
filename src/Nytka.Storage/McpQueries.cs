@@ -17,6 +17,8 @@ public sealed record McpTaskItem(
 /// <summary>
 /// The SQL behind the MCP tools: read-only, written against the final schema (migrations 0003 and 0004), so
 /// the MCP endpoint waits for no other store. A conversation's title is the one you set, else the generated one.
+/// TODO: these queries copy ConversationStore's and TaskStore's (server#22). Once that PR is on main, reuse
+/// them or add a test that holds both to the same rows.
 /// </summary>
 public sealed class McpQueries(NpgsqlDataSource dataSource)
 {
@@ -67,12 +69,24 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
-    public async Task<IReadOnlyList<McpSegmentRow>> SegmentsAsync(Guid id, CancellationToken ct)
+    /// <summary>
+    /// The segments in order, cut in SQL once their text passes <paramref name="textBudget"/> characters, so a huge
+    /// conversation is never read whole. The caller trims to the exact size; the budget leaves room for its markup.
+    /// </summary>
+    public async Task<IReadOnlyList<McpSegmentRow>> SegmentsAsync(Guid id, int textBudget, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpSegmentRow>(new CommandDefinition(
-            "select started_at as StartedAt, speaker as Speaker, text as Text from segments where conversation_id = @id order by started_at, id",
-            new { id }, cancellationToken: ct));
+            """
+            select StartedAt, Speaker, Text from (
+                select started_at as StartedAt, speaker as Speaker, text as Text, id,
+                       coalesce(sum(length(text)) over (order by started_at, id
+                                rows between unbounded preceding and 1 preceding), 0) as before_chars
+                from segments where conversation_id = @id) s
+            where before_chars < @textBudget
+            order by StartedAt, id
+            """,
+            new { id, textBudget }, cancellationToken: ct));
         return rows.ToList();
     }
 

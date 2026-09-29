@@ -73,6 +73,45 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Every_registered_tool_is_read_only()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var tools = await client.ListToolsAsync();
+
+        Assert.NotEmpty(tools);
+        Assert.All(tools, tool => Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint, tool.Name));
+    }
+
+    [Theory]
+    [InlineData("2026-09-29T09:30:00Z")]
+    [InlineData("2026-09-29T11:30:00+02:00")]
+    [InlineData("2026-09-29T09:30:00.0000000+00:00")]
+    [InlineData("2026-09-29")]
+    public async Task Times_with_an_offset_or_a_date_are_accepted(string since)
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var result = await client.CallToolAsync("list_conversations", new Dictionary<string, object?> { ["since"] = since });
+
+        Assert.NotEqual(true, result.IsError);
+    }
+
+    [Theory]
+    [InlineData("2026-09-29T09:30:00")]
+    [InlineData("yesterday")]
+    [InlineData("29/09/2026")]
+    public async Task Times_without_an_offset_or_off_format_are_invalid_params(string since)
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var error = await Assert.ThrowsAsync<McpProtocolException>(() =>
+            client.CallToolAsync("list_conversations", new Dictionary<string, object?> { ["since"] = since }).AsTask());
+
+        Assert.Equal(McpErrorCode.InvalidParams, error.ErrorCode);
+    }
+
+    [Fact]
     public async Task List_conversations_returns_what_REST_returns()
     {
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
@@ -154,6 +193,23 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         Assert.True(result.GetProperty("truncated").GetBoolean());
         Assert.InRange(transcript.Length, 1, 60_000);
         Assert.All(transcript.Split('\n'), line => Assert.StartsWith("[", line));
+    }
+
+    [Fact]
+    public async Task Segments_are_capped_in_SQL_at_the_text_budget()
+    {
+        await db.ExecuteAsync(
+            """
+            insert into segments (conversation_id, batch_id, started_at, ended_at, text)
+            select @a, 1, @start + interval '1 minute' + n * interval '1 second', @start, repeat('x', 1000)
+            from generate_series(1, 200) n
+            """,
+            new { a = Conversation, start = Start });
+
+        var rows = await _server.Get<Nytka.Storage.McpQueries>().SegmentsAsync(Conversation, 10_000, CancellationToken.None);
+
+        // The two short seed segments, then 1,000-character ones until the budget is passed.
+        Assert.InRange(rows.Count, 11, 13);
     }
 
     [Fact]
