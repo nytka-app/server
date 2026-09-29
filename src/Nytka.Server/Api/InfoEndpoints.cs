@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Security.Claims;
+using Nytka.Server.Auth;
 
 namespace Nytka.Server.Api;
 
@@ -15,9 +17,12 @@ public static class InfoEndpoints
 
     public static RouteGroupBuilder MapInfo(this RouteGroupBuilder api)
     {
-        api.MapGet("/info", () => Results.Ok(new InfoResponse(ServerVersion, ApiVersion)));
+        // The app reads scope to refuse a read token; a server without it counts as admin.
+        api.MapGet("/info", (ClaimsPrincipal user) => Results.Ok(new InfoResponse(
+            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read)))
+            .AllowRead();
         return api;
     }
 
-    public sealed record InfoResponse(string ServerVersion, int ApiVersion);
+    public sealed record InfoResponse(string ServerVersion, int ApiVersion, string Scope);
 }
