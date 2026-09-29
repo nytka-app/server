@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/nytka-app/server/compare/v0.4.0...v0.4.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **pipeline:** bound process-session runs by audio, and always make progress ([#30](https://github.com/nytka-app/server/issues/30)) ([348b88f](https://github.com/nytka-app/server/commit/348b88fbe5476a0307ba91aa11edd97357403d1e))
+
 ## [0.4.0](https://github.com/nytka-app/server/compare/v0.3.0...v0.4.0) (2026-09-29)
 
 
