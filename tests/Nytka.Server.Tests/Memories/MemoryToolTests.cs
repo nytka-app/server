@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ModelContextProtocol;
+using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Nytka.Server.Memories;
@@ -78,6 +79,47 @@ public sealed class MemoryToolTests(PostgresFixture db) : MemoryTestBase(db)
         Assert.Equal(2, first.GetProperty("items").GetArrayLength());
         Assert.Equal(["fact 1"], second.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("text").GetString()));
         Assert.Equal(3, Structured(await Tools.ListMemoriesAsync(limit: 5000)).GetProperty("items").GetArrayLength());
+    }
+
+    private Task<McpClient> ConnectAsync(HttpClient http) =>
+        McpClient.CreateAsync(new HttpClientTransport(
+            new HttpClientTransportOptions { Endpoint = new Uri(http.BaseAddress!, "/mcp") }, http, ownsHttpClient: false));
+
+    [Fact]
+    public async Task The_host_lists_list_memories_read_only_with_an_output_schema()
+    {
+        await using var client = await ConnectAsync(Server.CreateClientWithScope("read"));
+
+        var tools = await client.ListToolsAsync();
+
+        var tool = Assert.Single(tools, t => t.Name == "list_memories");
+        Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
+        Assert.NotNull(tool.ProtocolTool.OutputSchema);
+        Assert.All(tools, t => Assert.True(t.ProtocolTool.Annotations?.ReadOnlyHint, t.Name));
+    }
+
+    [Fact]
+    public async Task A_read_token_calls_it_over_MCP_and_gets_what_REST_returns()
+    {
+        await SeedAsync();
+        var rest = await JsonOf(await Server.CreateAuthorizedClient().GetAsync("/api/v1/memories?limit=2"));
+        await using var client = await ConnectAsync(Server.CreateClientWithScope("read"));
+
+        var result = Structured(await client.CallToolAsync("list_memories", new Dictionary<string, object?> { ["limit"] = 2 }));
+
+        Assert.Equal(rest.ToString(), result.ToString());
+        Assert.Equal(Id(2), result.GetProperty("nextBefore").GetGuid());
+    }
+
+    [Fact]
+    public async Task A_bad_before_is_invalid_params_over_MCP()
+    {
+        await using var client = await ConnectAsync(Server.CreateClientWithScope("read"));
+
+        var error = await Assert.ThrowsAsync<McpProtocolException>(() =>
+            client.CallToolAsync("list_memories", new Dictionary<string, object?> { ["before"] = "nope" }).AsTask());
+
+        Assert.Equal(McpErrorCode.InvalidParams, error.ErrorCode);
     }
 
     [Fact]
