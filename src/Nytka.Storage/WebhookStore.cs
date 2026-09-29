@@ -126,7 +126,7 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
             new { eventType }, transaction, cancellationToken: ct))).ToList();
 
     /// <summary>
-    /// Writes a pending delivery, and drops the log's oldest rows beyond <see cref="KeptDeliveries"/>. Returns false
+    /// Writes a pending delivery, and drops the log's oldest ended rows beyond (a pending delivery is never trimmed) <see cref="KeptDeliveries"/>. Returns false
     /// when the webhook already has a delivery for this event (or is gone): a repeat writes nothing.
     /// </summary>
     public async Task<bool> InsertDeliveryAsync(
@@ -147,6 +147,7 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
                 """
                 delete from webhook_deliveries
                 where webhook_id = @webhookId
+                  and status <> 'pending'
                   and id in (select id from webhook_deliveries where webhook_id = @webhookId
                              order by created_at desc, id desc offset @kept)
                 """,

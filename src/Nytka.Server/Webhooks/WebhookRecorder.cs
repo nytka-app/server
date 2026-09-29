@@ -46,13 +46,26 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             return;
         }
 
-        var eventId = Guid.CreateVersion7(now);
+        var eventId = EventId(nytkaEvent, data);
         var payload = Envelope(eventId, nytkaEvent.Type, now, data);
         foreach (var webhookId in targets)
         {
             await QueueAsync(webhookId, eventId, nytkaEvent.Type, payload, now, connection, transaction, ct);
         }
     }
+
+    /// <summary>
+    /// The event's <c>id</c>: a UUIDv5 over <c>"type:subjectId"</c>, plus the moment the change happened where the
+    /// same subject can raise the event again (a task completed again, a conversation summarized again). The same
+    /// event published twice gets the same id, so the unique (webhook_id, event_id) keeps one delivery, and a
+    /// receiver drops repeats by this <c>id</c>.
+    /// </summary>
+    private static Guid EventId(NytkaEvent e, object data) => WebhookSigner.NameGuid(e.Type + ":" + e.SubjectId + data switch
+    {
+        TaskData { DoneAt: { } doneAt } when e.Type == NytkaEvent.TaskCompleted => ":" + doneAt.Ticks,
+        ConversationData { AiUpdatedAt: { } at } => ":" + at.Ticks,
+        _ => "",
+    });
 
     /// <summary>Queues a <c>ping</c> for one webhook, active or not; returns the delivery's id.</summary>
     public async Task<Guid> QueuePingAsync(Guid webhookId, CancellationToken ct)
@@ -117,7 +130,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         var conversation = await connection.QuerySingleOrDefaultAsync<ConversationHead>(new CommandDefinition(
             """
             select id as Id, started_at as StartedAt, ended_at as EndedAt,
-                   coalesce(title, ai_title) as Title, ai_summary as Summary
+                   coalesce(title, ai_title) as Title, ai_summary as Summary, ai_updated_at as AiUpdatedAt
             from conversations where id = @id
             """,
             new { id }, transaction, cancellationToken: ct));
@@ -129,13 +142,14 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         var tasks = (await connection.QueryAsync<TaskRef>(new CommandDefinition(
             "select id as Id, text as Text from tasks where conversation_id = @id and deleted_at is null order by created_at, id",
             new { id }, transaction, cancellationToken: ct))).ToList();
-        return new ConversationData(conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks);
+        return new ConversationData(conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, conversation.AiUpdatedAt);
     }
 
-    private sealed record ConversationHead(Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary);
+    private sealed record ConversationHead(Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, DateTime? AiUpdatedAt);
 
     private sealed record ConversationData(
-        Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<TaskRef> Tasks);
+        Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<TaskRef> Tasks,
+        [property: System.Text.Json.Serialization.JsonIgnore] DateTime? AiUpdatedAt = null);
 
     private sealed record TaskRef(Guid Id, string Text);
 

@@ -364,6 +364,40 @@ public sealed class WebhookDeliveryTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Publishing_the_same_event_twice_makes_one_delivery()
+    {
+        await CreateWebhook();
+        var conversation = await SeedConversation();
+        var task = await SeedTask(conversation);
+
+        await Publish(NytkaEvent.TaskCreated, task);
+        await Publish(NytkaEvent.TaskCreated, task);
+
+        Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from webhook_deliveries"));
+        Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from jobs"));
+    }
+
+    [Fact]
+    public async Task The_trim_never_deletes_a_pending_delivery()
+    {
+        var (id, _) = await CreateWebhook();
+        var store = _server.Get<WebhookStore>();
+        await using var connection = await _server.Get<NpgsqlDataSource>().OpenConnectionAsync();
+        for (var i = 0; i < WebhookStore.KeptDeliveries + 5; i++)
+        {
+            await store.InsertDeliveryAsync(
+                connection, null, Guid.CreateVersion7(), id, Guid.NewGuid(), "ping", "{}", _server.Time.GetUtcNow().AddSeconds(i), default);
+        }
+
+        Assert.Equal(WebhookStore.KeptDeliveries + 5, await db.ScalarAsync<long>("select count(*) from webhook_deliveries"));
+        await db.ExecuteAsync("update webhook_deliveries set status = 'delivered', payload = null");
+        await store.InsertDeliveryAsync(connection, null, Guid.CreateVersion7(), id, Guid.NewGuid(), "ping", "{}", _server.Time.GetUtcNow().AddDays(1), default);
+
+        Assert.Equal(WebhookStore.KeptDeliveries, await db.ScalarAsync<long>("select count(*) from webhook_deliveries"));
+        Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from webhook_deliveries where status = 'pending'"));
+    }
+
+    [Fact]
     public async Task Only_the_newest_200_deliveries_are_kept()
     {
         var (id, _) = await CreateWebhook();
@@ -375,6 +409,7 @@ public sealed class WebhookDeliveryTests(PostgresFixture db) : IAsyncLifetime
             await store.InsertDeliveryAsync(
                 connection, null, i == 0 ? first : Guid.CreateVersion7(), id, Guid.NewGuid(), "ping", "{}",
                 _server.Time.GetUtcNow().AddSeconds(i), default);
+            await db.ExecuteAsync("update webhook_deliveries set status = 'delivered', payload = null");
         }
 
         Assert.Equal(WebhookStore.KeptDeliveries, await db.ScalarAsync<long>("select count(*) from webhook_deliveries"));
