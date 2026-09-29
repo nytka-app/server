@@ -11,7 +11,10 @@ public sealed record NewBatch(
 
 public sealed record PendingBatch(long Id, Guid ConversationId, DateTime StartedAt, DateTime EndedAt, byte[] Wav, string OffsetMap);
 
-public sealed record NewSegment(DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text);
+public sealed record NewSegment(DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker = null);
+
+/// <summary>Where transcription stands. <paramref name="LastError"/> is set only while it is current: no batch has finished since.</summary>
+public sealed record BatchOutcomes(string? LastError, DateTime? LastErrorAt, DateTime? LastSuccessAt);
 
 public sealed record BatchRow(long Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Error, string? Response);
 
@@ -67,7 +70,7 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
         var conversationId = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
             """
             update transcription_batches
-            set status = 'done', wav = null, error = null, response = cast(@response as jsonb)
+            set status = 'done', wav = null, error = null, response = cast(@response as jsonb), finished_at = now()
             where id = @id and status = 'pending'
             returning conversation_id
             """,
@@ -79,10 +82,10 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
 
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into segments (conversation_id, batch_id, started_at, ended_at, text)
-            values (@ConversationId, @BatchId, @StartedAt, @EndedAt, @Text)
+            insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker)
+            values (@ConversationId, @BatchId, @StartedAt, @EndedAt, @Text, @Speaker)
             """,
-            segments.Select(s => new { ConversationId = conversationId.Value, BatchId = id, s.StartedAt, s.EndedAt, s.Text }),
+            segments.Select(s => new { ConversationId = conversationId.Value, BatchId = id, s.StartedAt, s.EndedAt, s.Text, s.Speaker }),
             transaction, cancellationToken: ct));
 
         if (deleteSpeechAudio)
@@ -98,7 +101,7 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await connection.ExecuteAsync(new CommandDefinition(
-            "update transcription_batches set status = 'failed', error = @error where id = @id and status = 'pending'",
+            "update transcription_batches set status = 'failed', error = @error, finished_at = now() where id = @id and status = 'pending'",
             new { id, error }, cancellationToken: ct));
     }
 
@@ -116,12 +119,33 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
-    /// <summary>The error of the most recently created failed batch, if any.</summary>
-    public async Task<string?> LastErrorAsync(CancellationToken ct)
+    public async Task<bool> HasPendingAsync(Guid conversationId, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        return await connection.QuerySingleOrDefaultAsync<string?>(new CommandDefinition(
-            "select error from transcription_batches where status = 'failed' order by created_at desc, id desc limit 1",
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "select exists (select 1 from transcription_batches where conversation_id = @conversationId and status = 'pending')",
+            new { conversationId }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// When the newest failed and the newest done batch finished, and the newest failure's error
+    /// while it is current. A failure is current until a batch finishes <c>done</c> after it; batches
+    /// from before <c>finished_at</c> existed have no time, so any finished batch is later than them.
+    /// </summary>
+    public async Task<BatchOutcomes> OutcomesAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleAsync<BatchOutcomes>(new CommandDefinition(
+            """
+            select case when s.at is null or f.at > s.at then f.error end as LastError,
+                   f.at as LastErrorAt, s.at as LastSuccessAt
+            from (select 1) one
+            left join lateral (
+                select error, finished_at as at from transcription_batches where status = 'failed'
+                order by finished_at desc nulls last, created_at desc, id desc limit 1) f on true
+            left join lateral (
+                select max(finished_at) as at from transcription_batches where status = 'done') s on true
+            """,
             cancellationToken: ct));
     }
 

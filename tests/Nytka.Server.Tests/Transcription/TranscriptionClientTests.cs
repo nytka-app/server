@@ -87,4 +87,38 @@ public class TranscriptionClientTests
     [InlineData("[1, 2]")]
     public void Rejects_an_answer_that_is_not_a_json_object(string raw) =>
         Assert.Throws<TranscriptionException>(() => TranscriptionClient.Parse(raw));
+
+    [Theory]
+    [InlineData("\"SPEAKER_00\"", "SPEAKER_00")]
+    [InlineData("\"  Anna  \"", "Anna")]
+    [InlineData("0", "0")]
+    [InlineData("12", "12")]
+    [InlineData("-3", "-3")]
+    [InlineData("1.5", null)]
+    [InlineData("\"\"", null)]
+    [InlineData("\"   \"", null)]
+    [InlineData("null", null)]
+    [InlineData("true", null)]
+    [InlineData("{\"name\":\"Anna\"}", null)]
+    [InlineData("[1]", null)]
+    public void Reads_the_speaker_of_a_segment(string speaker, string? expected)
+    {
+        var result = TranscriptionClient.Parse($$"""{"segments":[{"start":0,"end":1,"text":"hi","speaker":{{speaker}}}]}""");
+
+        Assert.Equal(expected, Assert.Single(result.Segments).Speaker);
+    }
+
+    [Fact]
+    public void A_speaker_of_64_characters_is_kept_and_65_is_not()
+    {
+        var kept = TranscriptionClient.Parse($$"""{"segments":[{"start":0,"end":1,"text":"hi","speaker":"{{new string('a', 64)}}"}]}""");
+        var dropped = TranscriptionClient.Parse($$"""{"segments":[{"start":0,"end":1,"text":"hi","speaker":"{{new string('a', 65)}}"}]}""");
+
+        Assert.Equal(64, Assert.Single(kept.Segments).Speaker!.Length);
+        Assert.Null(Assert.Single(dropped.Segments).Speaker);
+    }
+
+    [Fact]
+    public void A_segment_without_a_speaker_has_none() =>
+        Assert.Null(Assert.Single(TranscriptionClient.Parse(FakeStt.DefaultJson).Segments.Take(1)).Speaker);
 }

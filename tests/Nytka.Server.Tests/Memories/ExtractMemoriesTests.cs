@@ -194,15 +194,14 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     }
 
     [Fact]
-    public async Task The_output_language_follows_the_llm_setting_when_it_exists()
+    public async Task The_output_language_follows_the_llm_setting()
     {
         using var ukrainian = new NytkaApiFactory(Db, s => s["Nytka:Llm:OutputLanguage"] = "uk", s => s.AddSingleton<ILlmClient>(Llm));
 
         await Publish(ukrainian);
         await ukrainian.RunJobsAsync();
 
-        var system = Assert.Single(Llm.Requests).System;
-        Assert.True(system.Contains(" in uk.") || system.Contains("the language of the conversation"), system);
+        Assert.Contains(" in uk.", Assert.Single(Llm.Requests).System);
     }
 
     [Fact]

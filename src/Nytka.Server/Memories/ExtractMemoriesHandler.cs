@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
@@ -17,12 +18,12 @@ namespace Nytka.Server.Memories;
 /// the third the failure is recorded here and the job comes back an hour later, three rounds at most.
 /// </summary>
 public sealed class ExtractMemoriesHandler(
-    IServiceProvider services,
+    ILlmClient llm,
+    IOptionsMonitor<LlmOptions> llmOptions,
     SettingsService settings,
     MemoryStore memories,
     NpgsqlDataSource dataSource,
     IEventPublisher events,
-    IConfiguration configuration,
     TimeProvider time,
     ILogger<ExtractMemoriesHandler> logger)
     : IJobHandler
@@ -31,7 +32,6 @@ public sealed class ExtractMemoriesHandler(
     public const int MaxTextLength = 300;
     public const int KnownMemories = 200;
     public const int MaxRounds = 3;
-    public const int DefaultMaxInputChars = 100_000;
     public const string SchemaName = "memories";
 
     public static readonly TimeSpan RetryAfter = TimeSpan.FromHours(1);
@@ -53,7 +53,7 @@ public sealed class ExtractMemoriesHandler(
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
     {
         var conversationId = JsonSerializer.Deserialize<ExtractPayload>(job.Payload)!.ConversationId;
-        if (!MemorySettings.IsEnabled(settings) || services.GetService(typeof(ILlmClient)) is not ILlmClient { IsConfigured: true } llm)
+        if (!MemorySettings.IsEnabled(settings) || !llm.IsConfigured)
         {
             return JobOutcome.Done;
         }
@@ -67,7 +67,7 @@ public sealed class ExtractMemoriesHandler(
         {
             var run = await memories.GetRunAsync(conversationId, ct);
             var covered = input.LastSegmentId is null || run?.ThroughSegmentId >= input.LastSegmentId;
-            var candidates = covered ? [] : await AskAsync(llm, input, ct);
+            var candidates = covered ? [] : await AskAsync(input, ct);
             await ApplyAsync(conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, ct);
             return JobOutcome.Done;
         }
@@ -85,14 +85,14 @@ public sealed class ExtractMemoriesHandler(
     public Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct) => Task.CompletedTask;
 
     /// <summary>What the model proposes for each window of the transcript, pooled, cut to length and kept to five.</summary>
-    private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ILlmClient llm, ExtractionInput input, CancellationToken ct)
+    private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ExtractionInput input, CancellationToken ct)
     {
         var lines = TranscriptText.Render(input.Segments.Select(s =>
             new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)));
-        var windows = TranscriptWindows.Split(lines, MaxInputChars());
+        var windows = TranscriptWindows.Split(lines, llmOptions.CurrentValue.MaxInputChars);
         var known = await memories.NewestAsync(KnownMemories, ct);
         var listed = known.Select(k => k.Id).ToHashSet();
-        var system = SystemMessage(OutputLanguage());
+        var system = SystemMessage(llmOptions.CurrentValue.OutputLanguage);
         var userName = MemorySettings.UserName(settings);
 
         var pooled = new List<MemoryCandidate>();
@@ -138,6 +138,9 @@ public sealed class ExtractMemoriesHandler(
     }
 
     public static string SystemMessage(string outputLanguage) =>
+        Prompt(string.Equals(outputLanguage, "auto", StringComparison.OrdinalIgnoreCase) ? "the language of the conversation" : outputLanguage);
+
+    private static string Prompt(string outputLanguage) =>
         $"""
         You read a transcript of a conversation and pick out lasting facts about one person, called "you" below.
         A lasting fact is true beyond this conversation: who you are, your family, friends, home, work, health,
@@ -191,14 +194,4 @@ public sealed class ExtractMemoriesHandler(
         HttpRequestException => "connection refused",
         _ => "unexpected error",
     };
-
-    private string OutputLanguage() =>
-        settings.Find("llm.outputLanguage") is not null && settings.Get("llm.outputLanguage") is { } language && language != "auto"
-            ? language
-            : "the language of the conversation";
-
-    private int MaxInputChars() =>
-        int.TryParse(configuration["Nytka:Llm:MaxInputChars"], CultureInfo.InvariantCulture, out var chars) && chars > 0
-            ? chars
-            : DefaultMaxInputChars;
 }

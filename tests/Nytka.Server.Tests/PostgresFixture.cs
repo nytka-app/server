@@ -14,7 +14,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         .WithUsername("nytka")
         .WithPassword("nytka")
         // Every test host has its own connection pool; the default 100 runs out across a whole run.
-        .WithCommand("-c", "max_connections=300")
+        .WithCommand("-c", "max_connections=600")
         .Build();
 
     public string ConnectionString => _container.GetConnectionString();
