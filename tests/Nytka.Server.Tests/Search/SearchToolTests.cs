@@ -45,7 +45,7 @@ public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
     {
         await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, aiTitle: "Garden plans", segments: ["the garden needs water"]);
         await SearchSeed.MemoryAsync(db.DataSource, "Has a small garden");
-        var rest = await _server.CreateAuthorizedClient().GetFromJsonAsync("/api/v1/search?q=garden");
+        var rest = await _server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>("/api/v1/search?q=garden");
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
 
         var result = await client.CallToolAsync("search", new Dictionary<string, object?> { ["query"] = "garden" });
