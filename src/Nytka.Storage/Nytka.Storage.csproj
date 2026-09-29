@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.89" />
+    <PackageReference Include="dbup-postgresql" Version="7.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nytka.Audio\Nytka.Audio.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Migrations live in db/migrations so they read as SQL; DbUp reads them back out of the
+         assembly. LogicalName fixes the resource name regardless of link depth. -->
+    <EmbeddedResource Include="..\..\db\migrations\*.sql" LogicalName="Nytka.Storage.Migrations.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

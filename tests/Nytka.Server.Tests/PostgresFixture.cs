@@ -1,0 +1,55 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
+using Nytka.Storage;
+using Testcontainers.PostgreSql;
+
+namespace Nytka.Server.Tests;
+
+/// <summary>A real Postgres, migrated with the real scripts. Needs a running Docker daemon.</summary>
+public sealed class PostgresFixture : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:17-alpine")
+        .WithDatabase("nytka")
+        .WithUsername("nytka")
+        .WithPassword("nytka")
+        .Build();
+
+    public string ConnectionString => _container.GetConnectionString();
+
+    public NpgsqlDataSource DataSource { get; private set; } = null!;
+
+    public string ConnectionStringFor(string database) =>
+        new NpgsqlConnectionStringBuilder(ConnectionString) { Database = database }.ConnectionString;
+
+    public async Task InitializeAsync()
+    {
+        await _container.StartAsync();
+        new DatabaseMigrator(ConnectionString, NullLogger<DatabaseMigrator>.Instance).Run();
+        DataSource = NpgsqlDataSource.Create(ConnectionString);
+    }
+
+    public async Task DisposeAsync()
+    {
+        await DataSource.DisposeAsync();
+        await _container.DisposeAsync();
+    }
+
+    /// <summary>Empties every table between tests. The migration journal stays.</summary>
+    public async Task ResetAsync()
+    {
+        await using var connection = await DataSource.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            truncate capture_sessions, audio_chunks, conversations, transcription_batches,
+                     segments, speech_audio, jobs restart identity cascade
+            """,
+            connection);
+        await command.ExecuteNonQueryAsync();
+    }
+}
+
+[CollectionDefinition(Name)]
+public sealed class PostgresCollection : ICollectionFixture<PostgresFixture>
+{
+    public const string Name = "postgres";
+}
