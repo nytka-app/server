@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nytka.Server\Nytka.Server.csproj" />
+    <ProjectReference Include="..\..\src\Nytka.Replay\Nytka.Replay.csproj" />
   </ItemGroup>
 
 </Project>
