@@ -46,7 +46,7 @@ Groq is the quickest.
    [Nytka for Android](https://github.com/nytka-app/android#first-run-about-5-minutes).
 
 Conversations show up in the app a few minutes after speech. If none do, `GET /api/v1/status` with
-the token (see [API](#api)) says why in `lastError`, for example
+the token (see [API](#api)) reports `lastError`, for example
 `The transcription endpoint answered 401.`: check the endpoint's URL, key and model.
 
 ## Configuration
