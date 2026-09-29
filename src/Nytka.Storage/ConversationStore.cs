@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
-public sealed class ConversationStore
+public sealed class ConversationStore(NpgsqlDataSource dataSource)
 {
     /// <summary>Every assignment holds this lock, so two batches never open two conversations for one stretch of talk.</summary>
     private const long AssignLock = 0x4E59544B; // "NYTK"
@@ -50,5 +50,14 @@ public sealed class ConversationStore
             """,
             new { created, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
         return created;
+    }
+
+    /// <summary>Closes open conversations whose last speech ended before <paramref name="endedBefore"/>.</summary>
+    public async Task<int> CloseIdleAsync(DateTimeOffset endedBefore, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "update conversations set status = 'closed', updated_at = @now where status = 'open' and ended_at < @endedBefore",
+            new { endedBefore, now }, cancellationToken: ct));
     }
 }

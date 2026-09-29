@@ -38,6 +38,8 @@ builder.Services.AddHttpClient<TranscriptionClient>(client => client.Timeout = T
 // One model for the process; the job runner runs one job at a time, and Silero is not thread-safe.
 builder.Services.AddSingleton<IVoiceActivityDetector>(_ => new SileroVad());
 builder.Services.AddScoped<IJobHandler, ProcessSessionHandler>();
+builder.Services.AddScoped<IJobHandler, TranscribeHandler>();
+builder.Services.AddScoped<IJobHandler, CloseConversationsHandler>();
 
 var app = builder.Build();
 

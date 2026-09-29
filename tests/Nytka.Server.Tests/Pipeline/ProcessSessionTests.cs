@@ -60,7 +60,7 @@ public sealed class ProcessSessionTests(PostgresFixture db) : IAsyncLifetime
         Assert.InRange(end, StartMs + 6_000, StartMs + 6_300);  // 200 ms padding after the tone
         Assert.Equal(1, await Count("conversations"));
         Assert.Equal(1, await Count("speech_audio"));
-        Assert.Equal(1, await Count("transcription_batches", "wav is not null"));
+        Assert.Equal(1, await Count("transcription_batches", "status = 'done'")); // RunJobsAsync now also transcribes, which drops the WAV
         Assert.Equal(0, await Count("audio_chunks", "body is not null"));
     }
 
