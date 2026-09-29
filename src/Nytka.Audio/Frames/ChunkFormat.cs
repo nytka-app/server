@@ -15,6 +15,9 @@ public static class ChunkFormat
     public const int MaxFrames = 1500;
     public const int MaxBytes = 512 * 1024;
 
+    /// <summary>Latest base time that keeps every frame time (base + a u32 offset) a valid <see cref="DateTimeOffset"/>.</summary>
+    public const long MaxBaseTimeMs = 253_402_300_799_999L - uint.MaxValue;
+
     private const int RecordHeaderSize = 6;
 
     private static ReadOnlySpan<byte> Magic => "NYTK"u8;
@@ -49,6 +52,10 @@ public static class ChunkFormat
         var session = new Guid(data.Slice(6, 16), bigEndian: true);
         var firstSeq = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(22, 4));
         var baseTime = BinaryPrimitives.ReadInt64LittleEndian(data.Slice(26, 8));
+        if (baseTime is < 0 or > MaxBaseTimeMs)
+        {
+            throw new ChunkFormatException($"Base time {baseTime} is outside the supported range.");
+        }
         var count = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(34, 4));
 
         if (count == 0)
