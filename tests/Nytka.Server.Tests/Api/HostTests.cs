@@ -49,6 +49,7 @@ public class HostTests(PostgresFixture db)
 
         Assert.Equal(1, info.GetProperty("apiVersion").GetInt32());
         Assert.False(string.IsNullOrEmpty(info.GetProperty("serverVersion").GetString()));
+        Assert.Equal("admin", info.GetProperty("scope").GetString());
     }
 
     [Theory]
