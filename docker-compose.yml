@@ -38,14 +38,29 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=nytka;Username=nytka;Password=${POSTGRES_PASSWORD}"
+      # Postgres allows 100 connections by default. The search indexer and its queries keep 2 of their own,
+      # so the server's main pool is capped well below that.
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=nytka;Username=nytka;Password=${POSTGRES_PASSWORD};Maximum Pool Size=50"
       Nytka__AdminToken: "${Nytka__AdminToken:?set Nytka__AdminToken in .env (32+ characters: openssl rand -hex 24)}"
       Nytka__Stt__Url: "${Nytka__Stt__Url:?set Nytka__Stt__Url in .env}"
+      # Everything below is optional and empty by default. An empty value counts as unset: the server's own
+      # default applies and the app can edit the setting. A value here locks the setting to it.
       Nytka__Stt__ApiKey: "${Nytka__Stt__ApiKey:-}"
       Nytka__Stt__Model: "${Nytka__Stt__Model:-}"
       Nytka__Stt__Language: "${Nytka__Stt__Language:-}"
-      Nytka__Conversations__Gap: "${Nytka__Conversations__Gap:-00:02:00}"
-      Nytka__Audio__RetentionDays: "${Nytka__Audio__RetentionDays:-14}"
+      Nytka__Conversations__Gap: "${Nytka__Conversations__Gap:-}"
+      Nytka__Audio__RetentionDays: "${Nytka__Audio__RetentionDays:-}"
+      Nytka__Llm__BaseUrl: "${Nytka__Llm__BaseUrl:-}"
+      Nytka__Llm__ApiKey: "${Nytka__Llm__ApiKey:-}"
+      Nytka__Llm__Model: "${Nytka__Llm__Model:-}"
+      Nytka__Llm__OutputLanguage: "${Nytka__Llm__OutputLanguage:-}"
+      Nytka__Llm__JsonMode: "${Nytka__Llm__JsonMode:-}"
+      Nytka__Llm__TimeoutSeconds: "${Nytka__Llm__TimeoutSeconds:-}"
+      Nytka__Llm__MaxInputChars: "${Nytka__Llm__MaxInputChars:-}"
+      Nytka__Llm__BackfillDays: "${Nytka__Llm__BackfillDays:-}"
+      Nytka__Memories__Enabled: "${Nytka__Memories__Enabled:-}"
+      Nytka__Memories__UserName: "${Nytka__Memories__UserName:-}"
+      Nytka__Search__Dictionary: "${Nytka__Search__Dictionary:-}"
     ports:
       # Loopback by default: put a reverse proxy in front, or set NYTKA_BIND to a tailnet address.
       - "${NYTKA_BIND:-127.0.0.1}:${NYTKA_PORT:-8080}:8080"
