@@ -9,7 +9,7 @@ public sealed record ConversationSummary(
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId);
 
 public sealed record SegmentRow(long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker);
 
@@ -188,7 +188,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status,
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
-                   ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt
+                   ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
+                   ai_through_segment_id as AiThroughSegmentId
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -331,17 +332,39 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             Status != "closed" || SegmentCount != count || MaxSegmentId != (through ?? 0);
     }
 
-    private static Task<EnrichmentState?> LockForEnrichmentAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, CancellationToken ct) =>
-        connection.QuerySingleOrDefaultAsync<EnrichmentState>(new CommandDefinition(
-            """
-            select c.status as Status, c.ai_status as AiStatus, c.ai_through_segment_id as AiThroughSegmentId,
-                   (select count(*) from segments where conversation_id = c.id) as SegmentCount,
-                   (select coalesce(max(id), 0) from segments where conversation_id = c.id) as MaxSegmentId
-            from conversations c where c.id = @id
-            for update of c
-            """,
-            new { id }, transaction, cancellationToken: ct))!;
+    /// <summary>
+    /// Locks the conversation row in one statement and counts its segments in the next: under read
+    /// committed, a count in the locking statement would see the snapshot from before the lock wait, and
+    /// miss what the transaction that held the lock committed.
+    /// </summary>
+    private static async Task<EnrichmentState?> LockForEnrichmentAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, CancellationToken ct)
+    {
+        var row = await connection.QuerySingleOrDefaultAsync<(string Status, string AiStatus, long? Through)?>(new CommandDefinition(
+            "select status, ai_status, ai_through_segment_id from conversations where id = @id for update",
+            new { id }, transaction, cancellationToken: ct));
+        if (row is not { } locked)
+        {
+            return null;
+        }
+
+        var (count, max) = await connection.QuerySingleAsync<(long, long)>(new CommandDefinition(
+            "select count(*), coalesce(max(id), 0) from segments where conversation_id = @id",
+            new { id }, transaction, cancellationToken: ct));
+        return new EnrichmentState(locked.Status, locked.AiStatus, locked.Through, count, max);
+    }
+
+    /// <summary>
+    /// False when the conversation is gone, open again, or no longer holds the segments a run read (see
+    /// <see cref="StoreEnrichmentAsync"/>): whatever that run met belongs to an outdated read.
+    /// </summary>
+    public async Task<bool> EnrichmentReadIsCurrentAsync(Guid id, long? throughSegmentId, int segmentCount, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
+        return current is not null && !current.IsStale(throughSegmentId, segmentCount);
+    }
 
     /// <summary>Records a run that failed its last attempt and adds one to the failed rounds.</summary>
     public async Task FailEnrichmentAsync(Guid id, string message, DateTimeOffset now, CancellationToken ct)

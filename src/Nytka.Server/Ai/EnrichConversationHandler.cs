@@ -56,6 +56,11 @@ public sealed class EnrichConversationHandler(
 
         var segments = await conversations.SegmentsAsync(conversationId, ct);
         var through = segments.Count == 0 ? (long?)null : segments.Max(s => s.Id);
+        if (conversation.AiStatus == "done" && conversation.AiThroughSegmentId == through)
+        {
+            return JobOutcome.Done; // a repeated job: these segments are summarized already
+        }
+
         if (segments.Sum(s => Words(s.Text)) < MinWords)
         {
             // False: the conversation changed since the read (or is gone, which the next run finds out).
@@ -70,11 +75,23 @@ public sealed class EnrichConversationHandler(
         {
             answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, ct);
         }
-        catch (LlmException error) when (IsPermanent(error))
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            // A 400, 401, 404 and the like will not pass on a second try: fail the round at once.
-            await OnGiveUpAsync(job, error, ct);
-            return JobOutcome.Done;
+            // A failure over a transcript that changed since the read (a merge, a late batch) must not
+            // overwrite the state that change set: read again instead.
+            if (!await conversations.EnrichmentReadIsCurrentAsync(conversationId, through, segments.Count, ct))
+            {
+                return JobOutcome.RunAgain(Wait);
+            }
+
+            if (error is LlmException llmError && IsPermanent(llmError))
+            {
+                // A 400, 401, 404 and the like will not pass on a second try: fail the round at once.
+                await OnGiveUpAsync(job, error, ct);
+                return JobOutcome.Done;
+            }
+
+            throw;
         }
 
         switch (await StoreAsync(conversationId, answer, through, segments.Count, ct))

@@ -97,8 +97,36 @@ public sealed class EnrichAfterMergeTests(PostgresFixture db) : AiTestBase(db)
         await Server.RunJobsAsync();
 
         Assert.Equal(1, Ready);
-        Assert.Equal(2, Llm.Requests.Count);
+        Assert.Single(Llm.Requests); // no second call for segments already summarized
         Assert.Equal("done", (await Ai(id)).AiStatus);
+    }
+
+    [Fact]
+    public async Task A_failure_over_a_transcript_that_changed_leaves_the_state_alone_and_runs_again()
+    {
+        var id = await Seed(Talk);
+        var once = true;
+        Llm.RespondAsync = async (_, _) =>
+        {
+            if (once)
+            {
+                once = false;
+                await AddSegment(id, Talk, Now);
+                await Db.ExecuteAsync("update conversations set ai_status = 'pending' where id = @id", new { id });
+                throw new Nytka.Server.Ai.LlmException("boom", 500);
+            }
+
+            return FakeLlm.DefaultAnswer;
+        };
+
+        await TickAndRun();
+
+        var afterFailure = await Ai(id);
+        Assert.Equal("pending", afterFailure.AiStatus);
+        Assert.Equal(0, afterFailure.Failures);
+        await RunAgain();
+        Assert.Equal("done", (await Ai(id)).AiStatus);
+        Assert.Equal(1, Ready);
     }
 
     /// <summary>Uploads speech <paramref name="offsetSeconds"/> after the start, then lets the session go idle.</summary>
