@@ -131,10 +131,11 @@ public sealed class JobRunnerTests : IAsyncLifetime
         await Enqueue();
         var queue = _factory.Get<JobQueue>();
         var now = _factory.Time.GetUtcNow();
+        var lease = JobRunner.LeaseOf(JobLane.Audio);
 
-        var first = await queue.DequeueAsync(now, JobRunner.Lease, default);
-        var second = await queue.DequeueAsync(now, JobRunner.Lease, default);
-        var afterLease = await queue.DequeueAsync(now + JobRunner.Lease + TimeSpan.FromSeconds(1), JobRunner.Lease, default);
+        var first = await queue.DequeueAsync(now, lease, JobKindFilter.Any, default);
+        var second = await queue.DequeueAsync(now, lease, JobKindFilter.Any, default);
+        var afterLease = await queue.DequeueAsync(now + lease + TimeSpan.FromSeconds(1), lease, JobKindFilter.Any, default);
 
         Assert.NotNull(first);
         Assert.Null(second);
