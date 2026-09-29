@@ -1,3 +1,6 @@
+-- Give up rather than queue behind a long transaction while the server holds locks on hot tables.
+set local lock_timeout = '5s';
+
 -- When the batch reached done or failed, by the database clock. Null while it is pending, and for
 -- batches from before this migration.
 alter table transcription_batches add column finished_at timestamptz null;
