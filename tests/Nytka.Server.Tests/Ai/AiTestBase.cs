@@ -23,10 +23,10 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
     /// <summary>What the server's clock said when the host started; conversations are seeded relative to it.</summary>
     protected DateTimeOffset Now => Server.Time.GetUtcNow();
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         StartServer();
-        return db.ResetAsync();
+        await db.ResetAsync();
     }
 
     public Task DisposeAsync()

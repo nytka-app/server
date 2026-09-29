@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
 
@@ -20,6 +21,9 @@ public static class AiExtensions
             .ValidateOnStart();
 
         services.AddSingleton<ISettingsGroup, LlmSettings>();
+        services.AddSingleton<LlmOptionsSetup>();
+        services.AddSingleton<IPostConfigureOptions<LlmOptions>>(p => p.GetRequiredService<LlmOptionsSetup>());
+        services.AddSingleton<IOptionsChangeTokenSource<LlmOptions>>(p => p.GetRequiredService<LlmOptionsSetup>());
 
         // The per-request timeout lives in LlmClient, where it can follow the option.
         services.AddHttpClient<ILlmClient, LlmClient>(client => client.Timeout = Timeout.InfiniteTimeSpan);
