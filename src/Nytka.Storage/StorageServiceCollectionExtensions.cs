@@ -20,6 +20,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<JobQueue>();
         services.AddSingleton<ConversationStore>();
         services.AddSingleton<BatchStore>();
+        services.AddSingleton<DiagnosticsStore>();
 
         return services;
     }

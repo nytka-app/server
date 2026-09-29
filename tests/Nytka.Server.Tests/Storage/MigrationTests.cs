@@ -17,7 +17,7 @@ public class MigrationTests(PostgresFixture db)
             "select table_name from information_schema.tables where table_schema = 'public' order by table_name");
 
         Assert.Equal(
-            ["audio_chunks", "capture_sessions", "conversations", "jobs", "schemaversions",
+            ["audio_chunks", "capture_sessions", "conversations", "diagnostics", "jobs", "schemaversions",
              "segments", "speech_audio", "transcription_batches"],
             tables);
     }

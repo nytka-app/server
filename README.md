@@ -63,12 +63,16 @@ details.
 | GET | `/api/v1/info` | `{ serverVersion, apiVersion }` |
 | GET | `/api/v1/status` | `{ pendingChunks, oldestPendingAt, lastError }` |
 | POST | `/api/v1/chunks` | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
+| POST | `/api/v1/diagnostics` | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
+| GET | `/api/v1/diagnostics?since=&limit=` | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
 | GET | `/api/v1/conversations?before=&limit=` | Newest first, with a preview |
 | GET | `/api/v1/conversations/{id}` | One conversation with its segments |
 | DELETE | `/api/v1/conversations/{id}` | Deletes it with its transcript and audio |
 | GET | `/api/v1/conversations/{id}/transcriptions` | Raw transcription responses |
 
-The chunk format and the upload answers are specified in [docs/specs/v0.1.md](docs/specs/v0.1.md).
+Diagnostics are health samples from the app (link quality, queue and upload state) that the app
+sends only while its developer switch is on: no audio, no transcripts, no token. Samples older than
+30 days are deleted daily; there is nothing to configure. The chunk format and the upload answers are specified in [docs/specs/v0.1.md](docs/specs/v0.1.md).
 
 ## What it stores
 

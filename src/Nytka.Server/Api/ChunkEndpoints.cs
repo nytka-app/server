@@ -59,7 +59,7 @@ public static class ChunkEndpoints
         statusCode: StatusCodes.Status413PayloadTooLarge, title: $"A chunk may not exceed {ChunkFormat.MaxBytes} bytes.");
 
     /// <summary>Reads the body, or returns null once it grows past <paramref name="limit"/>.</summary>
-    private static async Task<byte[]?> ReadLimitedAsync(Stream body, int limit, CancellationToken ct)
+    internal static async Task<byte[]?> ReadLimitedAsync(Stream body, int limit, CancellationToken ct)
     {
         using var buffer = new MemoryStream();
         var block = new byte[16 * 1024];

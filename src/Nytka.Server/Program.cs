@@ -60,6 +60,7 @@ api.MapInfo();
 api.MapChunks();
 api.MapConversations();
 api.MapStatus();
+api.MapDiagnostics();
 
 app.Run();
 
