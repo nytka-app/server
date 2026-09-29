@@ -7,8 +7,9 @@ pick, so Omi's cloud sees none of it.
 
 Nytka (нитка) is Ukrainian for thread: the thread of your day, on your own server.
 
-> **Status: v0.1 in progress.** The server in this repository implements
-> [specs/v0.1.md](specs/v0.1.md); the Android app lives in `nytka-app/android`.
+> **Status: v0.4 shipped.** The server in this repository implements the specs from
+> [v0.1](specs/v0.1.md) to [v0.4](specs/v0.4.md); the Android app lives in `nytka-app/android`.
+> The roadmap names milestones, not release numbers: each repository has its own version.
 
 ## Why Nytka exists
 
@@ -48,7 +49,8 @@ Nytka follows five rules.
 ```
 pendant ──BLE──▶ Nytka app ──HTTPS──▶ Nytka server ──▶ Postgres
 (Opus frames)    (queue, upload)       ├──▶ your transcription endpoint
-                                       └──▶ your language model (from v0.2)
+                                       ├──▶ your language model
+                                       └──▶ your webhook receivers
 ```
 
 **The pendant** records the whole time it is on. While the phone is connected, it streams 20 ms Opus
@@ -58,54 +60,72 @@ overwrites the oldest audio once that storage fills.
 **The app** runs on Android 12 and later. It holds the Bluetooth connection in a foreground service,
 strips the Bluetooth packet headers, and keeps the frames in a local queue. Every 30 seconds it
 uploads the queued frames as one chunk. When the server is unreachable the queue grows, and it
-drains after the connection returns. The app never decodes or re-encodes audio, and it never touches
-the phone's microphone.
+drains after the connection returns. When the phone comes back in range, the app also reads the audio
+the pendant stored while it was away (on firmware 3.0.20 or later) and uploads it with the times it
+was recorded; it asks the pendant to free that storage only after the server has the audio. The app
+never decodes or re-encodes audio, and it never touches the phone's microphone.
 
 **The server** runs in Docker next to Postgres. It decodes the Opus frames, drops silence with a
 voice-activity detector, and sends the speech to your transcription endpoint. It groups the
-transcript into conversations: a conversation ends after two minutes without speech. From v0.2 it
-asks your language model for a title, a summary and tasks for each conversation. The app reads
-everything over a REST API, and AI tools read it over MCP.
+transcript into conversations by capture time: a conversation ends after two minutes without speech,
+and late audio from the pendant's storage joins the conversation its time falls in. It asks your
+language model for a title, a summary and tasks for each conversation, and for the lasting facts about
+you that the conversation shows, the memories. It indexes everything for search in Ukrainian and
+English, and calls your webhooks when something new exists. The app reads everything over a REST API,
+and AI tools read it over MCP.
 
-Frames travel in one format: a sequence number, a capture time and the Opus payload. Version 0.1
-uploads them over HTTP; a later version streams the same frames over WebSocket for live transcripts.
-The server handles a frame the same way whichever transport delivered it.
+Frames travel in one format: a sequence number, a capture time and the Opus payload. The app uploads
+them over HTTP, stored audio included; a later version streams the same frames over WebSocket for
+live transcripts. The server handles a frame the same way whichever transport delivered it.
 
 ## What it looks like
 
 The app follows Material 3 with dynamic color, so it takes its palette from your wallpaper. Its icon
 is one thread that turns into a sound wave, linen on indigo.
 
-The finished app has five tabs: Conversations, Tasks, Memories, Ask and Device. A status chip in the
-top bar shows recording state and pendant battery on every tab. Version 0.1 ships Conversations and
-Device, and its navigation leaves room for the other three.
+The app has five tabs: Conversations, Tasks, Memories, Ask and Device. A status chip in the top bar
+shows recording state and pendant battery on every tab. Ask is still a placeholder that says it
+arrives in a later version; the other four work.
 
 Conversations opens with a status card: recording or muted, pendant battery, server state, queued
-uploads and a Mute button. Your conversations follow, grouped by day. A conversation shows its time
-range and length, then the transcript as timestamped paragraphs. From v0.2 speaker names appear in
-color. You can delete a conversation, which removes its audio and transcript from the server.
-Renaming arrives with titles in v0.2, sharing as text comes later, and transcripts stay read-only.
+uploads and a Mute button. A search icon sits above the list. Your conversations follow, grouped by
+day, each with its title, two lines of summary, time range and length. A conversation shows its
+summary and tasks, then the transcript as timestamped paragraphs, with speaker names in color when
+the transcription provider returns them. You can rename a conversation, regenerate its summary or
+delete it, which removes its audio, transcript, tasks and memories from the server. Sharing as text
+comes later, and transcripts stay read-only.
+
+Tasks lists what your conversations left you to do, and you can tick, edit or delete each one.
+Memories lists the lasting facts the server took from your conversations, each with the conversation
+it came from, and you can add, edit or delete them. Search finds conversations and memories by any
+word, in Ukrainian and English.
 
 Device gathers everything about the pendant and the server: connection, battery, the upload queue,
-pairing and settings.
+the audio the pendant stored while the phone was away with a button to sync it, pairing and settings.
 
 The pendant button has two gestures. A double tap mutes or unmutes Nytka, and the pendant confirms
-with one long buzz for muted and two short buzzes for live. While muted, the app stops listening and
-the pendant discards the audio, so nothing gets stored. A single tap will drop a bookmark into the
-transcript in a later version. Holding the button for three seconds powers the pendant off, and the
-firmware sends no long-press event, so Nytka has no third gesture to use.
+with one long buzz for muted and two short buzzes for live. While muted and connected, the app stops
+listening and the pendant discards the audio. The pendant keeps no mute state of its own, so while
+the phone is away it records anyway. The app therefore logs every mute change, and before it uploads
+anything it drops each stored frame within two seconds of a muted stretch, which stays open until you
+unmute. Muted audio never reaches the server. A single tap will drop a bookmark into the transcript
+in a later version. Holding the button for three seconds powers the pendant off, and the firmware
+sends no long-press event, so Nytka has no third gesture to use.
 
 A persistent notification shows the recording state, battery and queue, with a Mute action. Beyond
-that Nytka stays silent, with three exceptions: the pendant has been disconnected for five minutes,
-the server has been unreachable for fifteen minutes, or the pendant battery has dropped to 20%.
+that Nytka stays silent, with four exceptions: the pendant has been disconnected for five minutes,
+the server has been unreachable for fifteen minutes, the pendant battery has dropped to 20%, or the
+upload queue is 80% full.
 
-First run takes four steps. You enter the server URL and token and test the connection, grant the
-nearby-devices and notification permissions, confirm that you know recording people carries legal
-duties that differ by country, and pair the pendant.
+First run takes four steps. You enter the server URL and an admin token and test the connection,
+grant the nearby-devices and notification permissions, confirm that you know recording people carries
+legal duties that differ by country and that the pendant also records while the phone is away, and
+pair the pendant.
 
-Seven taps on the version number unlock developer mode: server settings, Bluetooth and upload
-diagnostics, a fake pendant that replays recorded audio, the raw transcription response for any
-conversation, and a button that copies a debug report.
+Seven taps on the version number unlock developer mode: server settings, access tokens, webhooks,
+Bluetooth and upload diagnostics, the state of the pendant's storage, a fake pendant that replays
+recorded audio, the raw transcription response for any conversation, and a button that copies a
+debug report.
 
 The interface is in English. Transcription detects the spoken language unless you set one, and a
 setting chooses the language for summaries, tasks and memories. By default they follow the
@@ -113,18 +133,19 @@ conversation.
 
 ## Roadmap
 
-- **v0.1, capture.** Pairing, reconnection and battery. Background capture with mute. Upload with an
-  offline queue. Transcription and conversation splitting on the server. The conversation list and
-  transcripts. Server URL and token settings, the consent step and developer-mode diagnostics.
-  Version 0.1 is done when someone wears the pendant for a full day with the official app uninstalled
-  and the phone nearby, and every conversation shows up. Details: [specs/v0.1.md](specs/v0.1.md).
-- **v0.2, the AI layer.** Titles, summaries and tasks for each conversation, and a Tasks tab. Speaker
-  labels when the transcription provider returns them. A read-only MCP endpoint. Server settings
-  editable from the app. Named tokens with `admin` and `read` scopes.
-- **v0.3, offline sync.** The app pulls the audio the pendant stored while the phone was away, so
-  leaving your phone behind stops costing you conversations.
-- **v0.4, memory and search.** Memories (lasting facts about you) with their own tab, full-text
-  search and outgoing webhooks.
+- **v0.1, capture (shipped).** Pairing, reconnection and battery. Background capture with mute.
+  Upload with an offline queue. Transcription and conversation splitting on the server. The
+  conversation list and transcripts. Server URL and token settings, the consent step and
+  developer-mode diagnostics. Version 0.1 is done when someone wears the pendant for a full day with
+  the official app uninstalled and the phone nearby, and every conversation shows up. Details:
+  [specs/v0.1.md](specs/v0.1.md).
+- **v0.2, the AI layer (shipped).** Titles, summaries and tasks for each conversation, and a Tasks
+  tab. Speaker labels when the transcription provider returns them. A read-only MCP endpoint. Server
+  settings editable from the app. Named tokens with `admin` and `read` scopes.
+- **v0.3, offline sync (shipped).** The app pulls the audio the pendant stored while the phone was
+  away, so leaving your phone behind stops costing you conversations.
+- **v0.4, memory and search (shipped).** Memories (lasting facts about you) with their own tab,
+  full-text search and outgoing webhooks.
 - **Later.** Questions about your history, live transcripts, bookmarks from the pendant button, audio
   playback, a daily digest, import from Omi's "Export All Data" file, firmware updates, pendant
   settings (LED and mic gain), voice enrollment on the server so it recognizes your voice with any
@@ -138,15 +159,21 @@ conversation.
 ## Configuration and security
 
 You configure the server with environment variables in its Compose file: the transcription
-endpoint, key and model; the language model endpoint, key and model (from v0.2); the admin token;
-audio retention; and the silence gap that ends a conversation. From v0.2 you can also edit settings
-in the app's developer mode. A value set by an environment variable shows as locked there, and the
-app can write API keys but never read them back.
+endpoint, key and model; the language model endpoint, key and model; the admin token; audio
+retention; the silence gap that ends a conversation; whether to extract memories and whose name
+"you" is; and the search dictionary. You can edit most of these in the app's developer mode too, and
+a value set by an environment variable shows as locked there. API keys come only from the
+environment: the app shows whether one is set, and can neither write it nor read it back.
 
 A Nytka server belongs to one person. The admin token in the environment always works, so you cannot
-lock yourself out. From v0.2 you can create named tokens with one of two scopes: `admin` for the app
-and `read` for MCP clients and agents. The server stores a hash of each token and shows the token
-once, when you create it.
+lock yourself out. You can create named tokens with one of two scopes: `admin` for the app and
+`read` for MCP clients and agents. The server stores a hash of each token and shows the token once,
+when you create it.
+
+Your data leaves the server in three ways, each to an address you choose: speech audio goes to the
+transcription endpoint, transcript text to the language model endpoint, and titles, summaries, tasks
+and memories, never transcripts, to the webhooks you register. The server keeps a webhook's secret
+in plain text, because it needs it to sign each delivery, and shows it once.
 
 The app requires HTTPS. A private-network switch allows plain HTTP for a server you reach over a VPN
 or tailnet, and the app warns you when you turn it on.
@@ -170,11 +197,13 @@ nothing phones home.
 - **License.** Apache-2.0. Code adapted from the official Omi app (MIT) keeps its notice in
   `NOTICE`. The license grants no trademark rights, so a fork can reuse the code but not the Nytka
   name or icon.
-- **Versions.** Each repository has its own semantic version. Release-please turns conventional
-  commits into releases. CI builds a signed APK for the app, and an amd64 and arm64 image,
+- **Versions.** Each repository has its own semantic version, and a roadmap milestone such as v0.4
+  names a set of features, not a release number. Release-please turns conventional commits into
+  releases. CI builds a signed APK for the app, and an amd64 and arm64 image,
   `ghcr.io/nytka-app/server`, for the server.
-- **Docs.** This file holds the whole picture. `docs/specs/` holds one spec per version. Setup guides
-  and provider recipes will sit next to them.
+- **Docs.** This file holds the whole picture. `docs/specs/` holds one spec per version. The server
+  README holds setup, configuration, provider recipes and the API; the Android README holds the
+  app's.
 - **Independence.** Based Hardware makes Omi and owns its name. Nytka is an independent project with
   no affiliation to them.
 
@@ -193,6 +222,8 @@ nothing phones home.
 | Apache-2.0 | It grants a patent license and keeps the name out of the license. |
 | `io.github.nytka_app` | A permanent app ID with no domain to buy. The website lives on GitHub Pages. |
 | Two-minute conversation gap | A starting value; each server can tune it. |
+| API keys only in the environment | The app edits settings without ever holding a key, and no request, database dump or log can leak one. |
+| Ukrainian dictionary is opt-in | Its licence is unclear, so Nytka never ships it: you fetch it yourself and turn it on. |
 
 ## Glossary
 
@@ -206,4 +237,6 @@ nothing phones home.
 | Task | Something to do, taken from a conversation. Omi's "action items" import as tasks. |
 | Memory | A lasting fact about you, taken from your conversations. |
 | Token | A named credential for the server, with scope `admin` or `read`. |
+| Webhook | An address the server calls when a conversation, task or memory is new, with a signature that shows the call came from your server. |
+| MCP | The Model Context Protocol: how AI agents read your conversations, tasks and memories from the server. |
 | Developer mode | Hidden settings, unlocked by tapping the version number seven times. |
