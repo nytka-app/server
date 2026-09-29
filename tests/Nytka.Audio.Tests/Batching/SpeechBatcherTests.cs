@@ -61,25 +61,45 @@ public class SpeechBatcherTests
     }
 
     [Fact]
-    public void Cuts_at_a_gap_once_thirty_seconds_are_in()
+    public void Past_thirty_seconds_keeps_going_over_gaps_shorter_than_a_pause()
     {
         var plan = SpeechBatcher.Plan(Closed(Phrases(12)), audioEndMs: 41_800, flush: false);
 
-        var batch = Assert.Single(plan.Closed);
-        Assert.Equal(Phrases(10), batch.Regions);
-        Assert.Equal(30_000, batch.SpeechMs);
-        Assert.Equal(Phrases(12)[10..], plan.Pending);
+        Assert.Empty(plan.Closed);
+        Assert.Equal(Phrases(12), plan.Pending);
     }
 
     [Fact]
-    public void Starts_a_new_batch_before_a_region_that_would_pass_thirty_seconds()
+    public void Past_thirty_seconds_cuts_at_the_first_pause_of_a_second()
     {
-        var detection = Closed([.. Phrases(6), R(21, 36)]);
+        var plan = SpeechBatcher.Plan(Closed([.. Phrases(12), R(42.5, 45.5)]), audioEndMs: 46_000, flush: false);
 
-        var plan = SpeechBatcher.Plan(detection, audioEndMs: 36_500, flush: false);
+        var batch = Assert.Single(plan.Closed);
+        Assert.Equal(Phrases(12), batch.Regions);
+        Assert.Equal(36_000, batch.SpeechMs);
+        Assert.Equal([R(42.5, 45.5)], plan.Pending);
+    }
+
+    [Fact]
+    public void Cuts_at_a_short_gap_only_to_stay_under_the_hard_maximum()
+    {
+        var plan = SpeechBatcher.Plan(Closed(Phrases(16)), audioEndMs: 56_000, flush: false);
+
+        var batch = Assert.Single(plan.Closed);
+        Assert.Equal(Phrases(15), batch.Regions);
+        Assert.Equal(45_000, batch.SpeechMs);
+        Assert.Equal([Phrases(16)[15]], plan.Pending);
+    }
+
+    [Fact]
+    public void Starts_a_new_batch_before_a_region_that_would_pass_the_hard_maximum()
+    {
+        var detection = Closed([.. Phrases(6), R(21, 50)]);
+
+        var plan = SpeechBatcher.Plan(detection, audioEndMs: 50_500, flush: false);
 
         Assert.Equal(Phrases(6), Assert.Single(plan.Closed).Regions);
-        Assert.Equal([R(21, 36)], plan.Pending);
+        Assert.Equal([R(21, 50)], plan.Pending);
     }
 
     [Fact]
@@ -104,17 +124,17 @@ public class SpeechBatcherTests
     [Fact]
     public void Closed_batches_do_not_change_as_speech_arrives()
     {
-        var phrases = Phrases(11);
-        var first = SpeechBatcher.Plan(new SpeechDetection(phrases[..10], R(35, 38)), audioEndMs: 38_000, flush: false);
-        var second = SpeechBatcher.Plan(new SpeechDetection(phrases[..10], R(35, 50)), audioEndMs: 50_000, flush: false);
-        var later = SpeechBatcher.Plan(new SpeechDetection(phrases[..10], R(35, 80)), audioEndMs: 80_000, flush: false);
-        var last = SpeechBatcher.Plan(Closed([.. phrases[..10], R(35, 80)]), audioEndMs: 90_000, flush: true);
+        var phrases = Phrases(15);
+        var first = SpeechBatcher.Plan(new SpeechDetection(phrases, R(52.5, 55.5)), audioEndMs: 55_500, flush: false);
+        var second = SpeechBatcher.Plan(new SpeechDetection(phrases, R(52.5, 70)), audioEndMs: 70_000, flush: false);
+        var later = SpeechBatcher.Plan(new SpeechDetection(phrases, R(52.5, 97.5)), audioEndMs: 97_500, flush: false);
+        var last = SpeechBatcher.Plan(Closed([.. phrases, R(52.5, 97.5)]), audioEndMs: 100_000, flush: true);
 
-        Assert.Equal(Phrases(10), Assert.Single(first.Closed).Regions);
+        Assert.Equal(phrases, Assert.Single(first.Closed).Regions);
         Assert.Equal(first.Closed.Select(b => b.Regions), second.Closed.Select(b => b.Regions));
         Assert.Equal(second.Closed.Select(b => b.Regions), later.Closed.Take(1).Select(b => b.Regions));
         Assert.Equal(later.Closed.Select(b => b.Regions), last.Closed.Take(later.Closed.Count).Select(b => b.Regions));
-        Assert.Equal([R(35, 80)], last.Closed[1].Regions);
+        Assert.Equal([R(52.5, 97.5)], last.Closed[1].Regions);
     }
 
     [Fact]
