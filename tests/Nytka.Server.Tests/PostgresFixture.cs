@@ -44,7 +44,8 @@ public sealed class PostgresFixture : IAsyncLifetime
         await using var command = new NpgsqlCommand(
             """
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
-                     segments, speech_audio, jobs, diagnostics, api_tokens, settings restart identity cascade
+                     segments, speech_audio, jobs, diagnostics, api_tokens, settings,
+                     webhooks, webhook_deliveries restart identity cascade
             """,
             connection);
         await command.ExecuteNonQueryAsync();
