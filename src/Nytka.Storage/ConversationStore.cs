@@ -9,12 +9,28 @@ public sealed record ConversationSummary(
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId);
 
 public sealed record SegmentRow(long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker);
 
 /// <summary>What <c>/status</c> reports about the AI runs: how many wait, and the newest failed and finished ones.</summary>
 public sealed record AiRunStatus(long Pending, string? FailedMessage, DateTime? FailedAt, DateTime? FinishedAt);
+
+/// <summary>The conversation a batch went into, and whether others were merged into it (and deleted).</summary>
+public sealed record Assignment(Guid Id, bool Merged);
+
+/// <summary>What became of a finished enrichment run: only <see cref="Stored"/> changed anything.</summary>
+public enum EnrichmentStore
+{
+    Stored,
+    Gone,
+
+    /// <summary>The conversation is open again or its segments changed since the run read them: run again.</summary>
+    Stale,
+
+    /// <summary>The same segments were already summarized.</summary>
+    Duplicate,
+}
 
 public sealed class ConversationStore(NpgsqlDataSource dataSource)
 {
@@ -28,7 +44,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// starts first survives: it takes the others' rows, covers all their times and the batch, and
     /// opens. With none, a new conversation opens. Runs inside the caller's transaction.
     /// </summary>
-    public async Task<Guid> AssignAsync(
+    public async Task<Assignment> AssignAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, DateTimeOffset batchStart, DateTimeOffset batchEnd,
         TimeSpan gap, DateTimeOffset now, CancellationToken ct)
     {
@@ -52,7 +68,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                 values (@created, @batchStart, @batchEnd, 'open', @now, @now)
                 """,
                 new { created, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
-            return created;
+            return new Assignment(created, false);
         }
 
         var id = matches[0];
@@ -70,7 +86,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             where id = @id
             """,
             new { id, batchStart, batchEnd, now }, transaction, cancellationToken: ct));
-        return id;
+        return new Assignment(id, others.Length > 0);
     }
 
     /// <summary>
@@ -85,6 +101,10 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         var args = new { survivor, others, all = others.Append(survivor).ToArray() };
 
         async Task Run(string sql) => await connection.ExecuteAsync(new CommandDefinition(sql, args, transaction, cancellationToken: ct));
+
+        // Conversation rows first, in id order, as a finishing enrichment takes them: neither side then
+        // waits on the other while holding task rows. A run that lost the race finds its conversation gone.
+        await Run("select id from conversations where id = any(@all) order by id for update");
 
         await Run("update transcription_batches set conversation_id = @survivor where conversation_id = any(@others)");
         await Run("update segments set conversation_id = @survivor where conversation_id = any(@others)");
@@ -168,7 +188,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status,
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
-                   ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt
+                   ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
+                   ai_through_segment_id as AiThroughSegmentId
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -243,11 +264,31 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Stores a finished run, inside the caller's transaction: the title and summary, the segment
-    /// the run read up to, and no failures. False when the conversation is gone.
+    /// the run read up to, and no failures. The conversation row is locked first; the result is
+    /// dropped when the conversation is gone, is open again, or no longer holds the
+    /// <paramref name="segmentCount"/> segments (ending at <paramref name="throughSegmentId"/>) the
+    /// run read, as after a merge, and when those segments were already summarized.
     /// </summary>
-    public async Task<bool> StoreEnrichmentAsync(
+    public async Task<EnrichmentStore> StoreEnrichmentAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? title, string? summary,
-        long? throughSegmentId, DateTimeOffset now, CancellationToken ct) =>
+        long? throughSegmentId, int segmentCount, DateTimeOffset now, CancellationToken ct)
+    {
+        var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
+        if (current is null)
+        {
+            return EnrichmentStore.Gone;
+        }
+
+        if (current.IsStale(throughSegmentId, segmentCount))
+        {
+            return EnrichmentStore.Stale;
+        }
+
+        if (current.AiStatus == "done" && current.AiThroughSegmentId == throughSegmentId)
+        {
+            return EnrichmentStore.Duplicate;
+        }
+
         await connection.ExecuteAsync(new CommandDefinition(
             """
             update conversations
@@ -255,19 +296,74 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                 ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0
             where id = @id
             """,
-            new { id, title, summary, throughSegmentId, now }, transaction, cancellationToken: ct)) > 0;
+            new { id, title, summary, throughSegmentId, now }, transaction, cancellationToken: ct));
+        return EnrichmentStore.Stored;
+    }
 
-    /// <summary>A run that had nothing to summarize. The title, summary and tasks of an earlier run stay.</summary>
-    public async Task SkipEnrichmentAsync(Guid id, long? throughSegmentId, string message, DateTimeOffset now, CancellationToken ct)
+    /// <summary>
+    /// A run that had nothing to summarize. The title, summary and tasks of an earlier run stay. False
+    /// when the result is stale or the conversation is gone (see <see cref="StoreEnrichmentAsync"/>).
+    /// </summary>
+    public async Task<bool> SkipEnrichmentAsync(
+        Guid id, long? throughSegmentId, int segmentCount, string message, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
+        if (current is null || current.IsStale(throughSegmentId, segmentCount))
+        {
+            return false;
+        }
+
         await connection.ExecuteAsync(new CommandDefinition(
             """
             update conversations
             set ai_status = 'skipped', ai_message = @message, ai_updated_at = @now, ai_through_segment_id = @throughSegmentId
             where id = @id
             """,
-            new { id, message, throughSegmentId, now }, cancellationToken: ct));
+            new { id, message, throughSegmentId, now }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    private sealed record EnrichmentState(string Status, string AiStatus, long? AiThroughSegmentId, long SegmentCount, long MaxSegmentId)
+    {
+        public bool IsStale(long? through, int count) =>
+            Status != "closed" || SegmentCount != count || MaxSegmentId != (through ?? 0);
+    }
+
+    /// <summary>
+    /// Locks the conversation row in one statement and counts its segments in the next: under read
+    /// committed, a count in the locking statement would see the snapshot from before the lock wait, and
+    /// miss what the transaction that held the lock committed.
+    /// </summary>
+    private static async Task<EnrichmentState?> LockForEnrichmentAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, CancellationToken ct)
+    {
+        var row = await connection.QuerySingleOrDefaultAsync<(string Status, string AiStatus, long? Through)?>(new CommandDefinition(
+            "select status, ai_status, ai_through_segment_id from conversations where id = @id for update",
+            new { id }, transaction, cancellationToken: ct));
+        if (row is not { } locked)
+        {
+            return null;
+        }
+
+        var (count, max) = await connection.QuerySingleAsync<(long, long)>(new CommandDefinition(
+            "select count(*), coalesce(max(id), 0) from segments where conversation_id = @id",
+            new { id }, transaction, cancellationToken: ct));
+        return new EnrichmentState(locked.Status, locked.AiStatus, locked.Through, count, max);
+    }
+
+    /// <summary>
+    /// False when the conversation is gone, open again, or no longer holds the segments a run read (see
+    /// <see cref="StoreEnrichmentAsync"/>): whatever that run met belongs to an outdated read.
+    /// </summary>
+    public async Task<bool> EnrichmentReadIsCurrentAsync(Guid id, long? throughSegmentId, int segmentCount, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
+        return current is not null && !current.IsStale(throughSegmentId, segmentCount);
     }
 
     /// <summary>Records a run that failed its last attempt and adds one to the failed rounds.</summary>

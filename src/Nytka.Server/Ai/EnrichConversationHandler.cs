@@ -56,10 +56,17 @@ public sealed class EnrichConversationHandler(
 
         var segments = await conversations.SegmentsAsync(conversationId, ct);
         var through = segments.Count == 0 ? (long?)null : segments.Max(s => s.Id);
+        if (conversation.AiStatus == "done" && conversation.AiThroughSegmentId == through)
+        {
+            return JobOutcome.Done; // a repeated job: these segments are summarized already
+        }
+
         if (segments.Sum(s => Words(s.Text)) < MinWords)
         {
-            await conversations.SkipEnrichmentAsync(conversationId, through, TooShort, time.GetUtcNow(), ct);
-            return JobOutcome.Done;
+            // False: the conversation changed since the read (or is gone, which the next run finds out).
+            return await conversations.SkipEnrichmentAsync(conversationId, through, segments.Count, TooShort, time.GetUtcNow(), ct)
+                ? JobOutcome.Done
+                : JobOutcome.RunAgain(Wait);
         }
 
         var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Speaker, s.Text)));
@@ -68,15 +75,36 @@ public sealed class EnrichConversationHandler(
         {
             answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, ct);
         }
-        catch (LlmException error) when (IsPermanent(error))
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            // A 400, 401, 404 and the like will not pass on a second try: fail the round at once.
-            await OnGiveUpAsync(job, error, ct);
-            return JobOutcome.Done;
+            // A failure over a transcript that changed since the read (a merge, a late batch) must not
+            // overwrite the state that change set: read again instead.
+            if (!await conversations.EnrichmentReadIsCurrentAsync(conversationId, through, segments.Count, ct))
+            {
+                return JobOutcome.RunAgain(Wait);
+            }
+
+            if (error is LlmException llmError && IsPermanent(llmError))
+            {
+                // A 400, 401, 404 and the like will not pass on a second try: fail the round at once.
+                await OnGiveUpAsync(job, error, ct);
+                return JobOutcome.Done;
+            }
+
+            throw;
         }
 
-        await StoreAsync(conversationId, answer, through, ct);
-        logger.LogInformation("Conversation {ConversationId} summarized from {Segments} segments.", conversationId, segments.Count);
+        switch (await StoreAsync(conversationId, answer, through, segments.Count, ct))
+        {
+            case EnrichmentStore.Stale:
+                // A late batch or a merge changed the conversation during the call: read it again once it is closed.
+                logger.LogInformation("Conversation {ConversationId} changed during its summary; running again.", conversationId);
+                return JobOutcome.RunAgain(Wait);
+            case EnrichmentStore.Stored:
+                logger.LogInformation("Conversation {ConversationId} summarized from {Segments} segments.", conversationId, segments.Count);
+                break;
+        }
+
         return JobOutcome.Done;
     }
 
@@ -120,7 +148,8 @@ public sealed class EnrichConversationHandler(
             await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, ConversationPrompt.Schema, system, user), ct));
 
     /// <summary>Stores the result, reconciles the tasks and publishes the events, in one transaction.</summary>
-    private async Task StoreAsync(Guid conversationId, ConversationAnswer answer, long? through, CancellationToken ct)
+    private async Task<EnrichmentStore> StoreAsync(
+        Guid conversationId, ConversationAnswer answer, long? through, int segmentCount, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var title = ConversationPrompt.Cut(answer.Title, ConversationPrompt.MaxTitle);
@@ -138,10 +167,10 @@ public sealed class EnrichConversationHandler(
 
         var stored = await conversations.StoreEnrichmentAsync(
             connection, transaction, conversationId, title.Length == 0 ? null : title, summary.Length == 0 ? null : summary,
-            through, now, ct);
-        if (!stored)
+            through, segmentCount, now, ct);
+        if (stored != EnrichmentStore.Stored)
         {
-            return;
+            return stored; // no event: the conversation is gone, changed since the read, or was summarized already
         }
 
         var created = await tasks.ReconcileAsync(connection, transaction, conversationId, aiTasks, now, ct);
@@ -152,6 +181,7 @@ public sealed class EnrichConversationHandler(
         }
 
         await transaction.CommitAsync(ct);
+        return stored;
     }
 
     /// <summary>A client error other than 429: retrying with the same request and key cannot help.</summary>
