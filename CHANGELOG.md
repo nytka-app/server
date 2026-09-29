@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/nytka-app/server/compare/v0.2.0...v0.3.0) (2026-09-29)
+
+
+### Features
+
+* **pipeline:** cut batches at pauses instead of at 30 s of speech ([#12](https://github.com/nytka-app/server/issues/12)) ([750cec1](https://github.com/nytka-app/server/commit/750cec10c772ee540307aec921142a970c0e647f))
+
 ## [0.2.0](https://github.com/nytka-app/server/compare/v0.1.0...v0.2.0) (2026-09-29)
 
 
