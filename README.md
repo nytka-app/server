@@ -10,7 +10,8 @@ Status: v0.1, capture and transcription. What v0.1 does and does not do: [docs/s
 ## First run (about 5 minutes)
 
 You need Docker Compose and an OpenAI-compatible transcription endpoint; an API key from OpenAI or
-Groq is the quickest.
+Groq is the quickest. The five minutes assume you already have an HTTPS proxy or a VPN to put the
+server behind (step 4); setting one up is not counted.
 
 1. Download the Compose file and the settings template:
 
@@ -30,11 +31,11 @@ Groq is the quickest.
 
    ```bash
    docker compose up -d --wait
-   curl http://127.0.0.1:8080/healthz    # {"status":"healthy"}
+   curl http://127.0.0.1:8080/healthz
    ```
 
-   If it does not come up, `docker compose logs server` says why, for example a token shorter than
-   32 characters.
+   It answers `{"status":"healthy"}`. If it does not come up, `docker compose logs server` says why,
+   for example a token shorter than 32 characters.
 
 4. Make it reachable from the phone. The server listens on `127.0.0.1:8080` only: put a reverse
    proxy with HTTPS in front, or set `NYTKA_BIND` in `.env` to an address on your VPN (Tailscale,
@@ -45,9 +46,10 @@ Groq is the quickest.
    app's private-network switch, which allows plain HTTP, has to be on. The phone side continues in
    [Nytka for Android](https://github.com/nytka-app/android#first-run-about-5-minutes).
 
-Conversations show up in the app a few minutes after speech. If none do, `GET /api/v1/status` with
-the token (see [API](#api)) reports `lastError`, for example
-`The transcription endpoint answered 401.`: check the endpoint's URL, key and model.
+Conversations show up in the app a few minutes after speech; pull the list down to refresh if a new
+one hasn't appeared. If they stay empty, `GET /api/v1/status` with the token (see [API](#api))
+reports `lastError`, for example `The transcription endpoint answered 401.`: check the endpoint's
+URL, key and model.
 
 ## Configuration
 
