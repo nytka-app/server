@@ -324,7 +324,7 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
-    public async Task Speech_that_arrives_during_the_call_starts_another_run()
+    public async Task Speech_that_arrives_during_the_call_drops_the_result_and_runs_again()
     {
         var id = await Seed(Talk);
         var first = true;
@@ -341,9 +341,12 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
 
         await TickAndRun();
         var afterFirst = await Ai(id);
-        await TickAndRun();
+        Server.Time.Advance(TimeSpan.FromMinutes(1));
+        await Server.RunJobsAsync();
 
-        Assert.NotEqual(await MaxSegmentId(id), afterFirst.ThroughSegmentId);
+        // The first result read a transcript that had since grown: it is dropped and the job reads again.
+        Assert.Equal("pending", afterFirst.AiStatus);
+        Assert.Null(afterFirst.ThroughSegmentId);
         Assert.Equal(2, Llm.Requests.Count);
         Assert.Equal(await MaxSegmentId(id), (await Ai(id)).ThroughSegmentId);
     }
