@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/nytka-app/server/compare/v0.1.0...v0.2.0) (2026-09-29)
+
+
+### Features
+
+* **server:** accept diagnostics samples from the app ([#10](https://github.com/nytka-app/server/issues/10)) ([96e15ba](https://github.com/nytka-app/server/commit/96e15bab68d7912bb92cefba5c9fb125d39a9991))
+
 ## 0.1.0 (2026-09-29)
 
 
