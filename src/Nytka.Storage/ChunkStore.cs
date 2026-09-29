@@ -19,6 +19,9 @@ public sealed record SessionState(DateTime? ProcessedThroughAt, DateTime LastRec
 
 public sealed record PendingChunk(long FirstSeq, int FrameCount, DateTime ReceivedAt, byte[] Body);
 
+/// <summary>A session that holds chunk audio, and whether any of it was late when it arrived.</summary>
+public sealed record PendingSession(Guid Id, bool Late);
+
 public sealed record PendingSummary(long PendingChunks, DateTime? OldestPendingAt);
 
 public sealed class ChunkStore(NpgsqlDataSource dataSource)
@@ -92,11 +95,23 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>Sessions that still hold chunk audio the pipeline has not finished with.</summary>
-    public async Task<IReadOnlyList<Guid>> SessionsWithPendingAudioAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<Guid>> SessionsWithPendingAudioAsync(CancellationToken ct) =>
+        [.. (await PendingSessionsAsync(ct)).Select(s => s.Id)];
+
+    /// <summary>
+    /// Like <see cref="SessionsWithPendingAudioAsync"/>, with each session's priority: late when a chunk
+    /// still waiting reached the server more than <see cref="JobPriority.LateAfter"/> after its last frame.
+    /// </summary>
+    public async Task<IReadOnlyList<PendingSession>> PendingSessionsAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        var sessions = await connection.QueryAsync<Guid>(new CommandDefinition(
-            "select distinct session_id from audio_chunks where body is not null", cancellationToken: ct));
+        var sessions = await connection.QueryAsync<PendingSession>(new CommandDefinition(
+            """
+            select session_id as Id, bool_or(received_at - last_time > @lateAfter) as Late
+            from audio_chunks where body is not null
+            group by session_id
+            """,
+            new { lateAfter = JobPriority.LateAfter }, cancellationToken: ct));
         return sessions.ToList();
     }
 

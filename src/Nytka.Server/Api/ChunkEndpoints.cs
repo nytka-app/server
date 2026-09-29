@@ -44,8 +44,10 @@ public static class ChunkEndpoints
         switch (await chunks.StoreAsync(chunk, body, now, ct))
         {
             case StoreOutcome.Stored:
+                // Stored audio the phone uploads after reconnecting is old on arrival: it runs behind live speech.
                 await jobs.EnqueueAsync(
-                    JobKinds.ProcessSession, new SessionPayload(chunk.Session), JobKinds.ProcessSessionKey(chunk.Session), now, ct);
+                    JobKinds.ProcessSession, new SessionPayload(chunk.Session), JobKinds.ProcessSessionKey(chunk.Session), now, ct,
+                    JobPriority.ForAudioEndingAt(DateTimeOffset.FromUnixTimeMilliseconds(chunk.Frames[^1].EndMs), now));
                 return Results.Accepted(value: response);
             case StoreOutcome.Duplicate:
                 return Results.Ok(response);

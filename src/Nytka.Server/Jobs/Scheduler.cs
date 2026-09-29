@@ -16,10 +16,12 @@ public sealed class Scheduler(JobQueue queue, ChunkStore chunks, TimeProvider ti
         await queue.EnqueueAsync(JobKinds.CloseConversations, new { }, JobKinds.CloseConversations, now, ct);
         await queue.EnqueueAsync(JobKinds.Retention, new { }, JobKinds.Retention, now, ct);
 
-        foreach (var session in await chunks.SessionsWithPendingAudioAsync(ct))
+        foreach (var session in await chunks.PendingSessionsAsync(ct))
         {
+            // A late session keeps its priority, or the re-queue would move it ahead of live speech.
             await queue.EnqueueAsync(
-                JobKinds.ProcessSession, new SessionPayload(session), JobKinds.ProcessSessionKey(session), now, ct);
+                JobKinds.ProcessSession, new SessionPayload(session.Id), JobKinds.ProcessSessionKey(session.Id), now, ct,
+                session.Late ? JobPriority.Late : JobPriority.Live);
         }
     }
 }
