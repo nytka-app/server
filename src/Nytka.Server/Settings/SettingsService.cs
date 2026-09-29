@@ -50,8 +50,9 @@ public sealed class SettingsService(
 
     public SettingDefinition? Find(string key) => Definitions.FirstOrDefault(d => d.Key == key);
 
-    public ResolvedSetting Resolve(SettingDefinition definition) =>
-        definition.Resolve(Environment(definition), EnvironmentOnly.Contains(definition.Key) ? null : _table.GetValueOrDefault(definition.Key));
+    public ResolvedSetting Resolve(SettingDefinition definition, IReadOnlyDictionary<string, string>? table = null) =>
+        definition.Resolve(
+            Environment(definition), EnvironmentOnly.Contains(definition.Key) ? null : (table ?? _table).GetValueOrDefault(definition.Key));
 
     /// <summary>A secret, and a key only the environment supplies, refuses writes; so does any key the environment has set.</summary>
     public bool IsLocked(SettingDefinition definition) =>
@@ -61,10 +62,10 @@ public sealed class SettingsService(
     /// The value of a key, or null when nothing sets it. An environment value that breaks the key's
     /// rules stops the caller with a message naming the variable, so the server never starts on it.
     /// </summary>
-    public string? Get(string key)
+    public string? Get(string key, IReadOnlyDictionary<string, string>? table = null)
     {
         var definition = Find(key) ?? throw new ArgumentException($"No setting {key}.", nameof(key));
-        var resolved = Resolve(definition);
+        var resolved = Resolve(definition, table);
         if (resolved.Source == SettingSource.Env && definition.Validate(resolved.Value!) is { } error)
         {
             throw new InvalidOperationException($"{definition.EnvironmentVariable}: {error}");
@@ -133,6 +134,25 @@ public sealed class SettingsService(
         await _writes.WaitAsync(ct);
         try
         {
+            // The options this table would build must build, before anything is written.
+            var candidate = new Dictionary<string, string>(_table, StringComparer.Ordinal);
+            foreach (var (key, value) in changes)
+            {
+                if (value is null)
+                {
+                    candidate.Remove(key);
+                }
+                else
+                {
+                    candidate[key] = value;
+                }
+            }
+
+            if (!TryBuild(candidate))
+            {
+                return new SettingsUpdate.Invalid(changes.Keys.ToDictionary(k => k, _ => new[] { "The server cannot use this combination of values." }));
+            }
+
             await store.ApplyAsync(changes, time.GetUtcNow(), ct);
             await LoadAsync(ct);
         }
@@ -161,9 +181,29 @@ public sealed class SettingsService(
             table[key] = value;
         }
 
+        // A table the options cannot be built from is never swapped in: the last good one stays.
+        if (!TryBuild(table))
+        {
+            logger.LogError("Keeping the previous settings: the table's values do not build the options.");
+            return;
+        }
+
         _table = table;
         var previous = Interlocked.Exchange(ref _changed, new CancellationTokenSource());
         await previous.CancelAsync();
+    }
+
+    private bool TryBuild(IReadOnlyDictionary<string, string> table)
+    {
+        try
+        {
+            SettingsOptionsSetup.Apply(this, new NytkaOptions(), table);
+            return true;
+        }
+        catch (Exception error) when (error is InvalidOperationException or FormatException or OverflowException)
+        {
+            return false;
+        }
     }
 
     private string? Environment(SettingDefinition definition) => configuration[definition.EnvironmentVariable.Replace("__", ":", StringComparison.Ordinal)];

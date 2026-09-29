@@ -478,4 +478,19 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("", host.Services.GetRequiredService<IConfiguration>()["Other:Key"]);
         await host.StopAsync();
     }
+
+    [Fact]
+    public async Task A_url_is_shown_without_its_credentials()
+    {
+        using var server = ServerWithEnvironment(("Nytka:Stt:Url", "https://user:hunter2@stt.test/v1/transcribe"));
+
+        var response = await server.CreateAuthorizedClient().GetAsync("/api/v1/settings");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("hunter2", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("user:", body, StringComparison.Ordinal);
+        Assert.Equal(
+            "https://stt.test/v1/transcribe",
+            Item(JsonDocument.Parse(body).RootElement, "stt.url").GetProperty("value").GetString());
+    }
 }

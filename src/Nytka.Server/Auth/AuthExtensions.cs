@@ -18,11 +18,17 @@ public static class AuthExtensions
         // No default scheme: only a route that asks for the policy reads the token, so /healthz never does.
         services.AddAuthentication().AddScheme<AuthenticationSchemeOptions, NytkaAuthenticationHandler>(
             NytkaAuthenticationHandler.SchemeName, null);
-        services.AddAuthorizationBuilder().AddPolicy(Policy, policy => policy
-            .AddAuthenticationSchemes(NytkaAuthenticationHandler.SchemeName)
-            .RequireAuthenticatedUser()
-            .AddRequirements(new NytkaScopeRequirement()));
+        // Closed by default: a route mapped without RequireNytkaAuth still needs an admin token.
+        services.AddAuthorizationBuilder()
+            .AddPolicy(Policy, policy => policy
+                .AddAuthenticationSchemes(NytkaAuthenticationHandler.SchemeName)
+                .RequireAuthenticatedUser()
+                .AddRequirements(new NytkaScopeRequirement()))
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder(NytkaAuthenticationHandler.SchemeName)
+                .AddRequirements(new NytkaFallbackRequirement())
+                .Build());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuthorizationHandler, NytkaScopeHandler>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IAuthorizationHandler, NytkaFallbackHandler>());
         return services;
     }
 
@@ -36,7 +42,11 @@ public static class AuthExtensions
     public static T RequireNytkaAuth<T>(this T builder)
         where T : IEndpointConventionBuilder => builder.RequireAuthorization(Policy);
 
-    /// <summary>Also admits tokens of scope <c>read</c> to a route that <see cref="RequireNytkaAuth{T}"/> guards.</summary>
-    public static T AllowRead<T>(this T builder)
-        where T : IEndpointConventionBuilder => builder.WithMetadata(AllowReadMetadata.Instance);
+    /// <summary>
+    /// Also admits tokens of scope <c>read</c> to a route that <see cref="RequireNytkaAuth{T}"/> guards, on GET and HEAD.
+    /// <paramref name="anyMethod"/> admits every method, for an endpoint (MCP's POST) that checks per operation what
+    /// a <c>read</c> token may do.
+    /// </summary>
+    public static T AllowRead<T>(this T builder, bool anyMethod = false)
+        where T : IEndpointConventionBuilder => builder.WithMetadata(anyMethod ? AllowReadMetadata.Any : AllowReadMetadata.Safe);
 }

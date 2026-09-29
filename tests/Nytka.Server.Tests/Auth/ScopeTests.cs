@@ -203,7 +203,11 @@ public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
 
         _app = builder.Build();
         _app.UseNytkaAuth();
-        _app.MapGet("/open", () => "open");
+        _app.MapGet("/unmarked", () => "unmarked");
+        _app.MapGet("/anon", () => "anon").AllowAnonymous();
+        _app.MapGet("/healthz", () => "healthy");
+        _app.MapMethods("/rw", ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], () => "rw").RequireNytkaAuth().AllowRead();
+        _app.MapPost("/rpc", () => "rpc").RequireNytkaAuth().AllowRead(anyMethod: true);
         _app.MapGet("/admin", () => "admin").RequireNytkaAuth();
         _app.MapGet("/read", () => "read").RequireNytkaAuth().AllowRead();
         var closed = _app.MapGroup("/closed").RequireNytkaAuth();
@@ -224,9 +228,9 @@ public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
         return token;
     }
 
-    private async Task<HttpStatusCode> Get(string path, string? token)
+    private async Task<HttpStatusCode> Get(string path, string? token, HttpMethod? method = null)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        using var request = new HttpRequestMessage(method ?? HttpMethod.Get, path);
         if (token is not null)
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -269,7 +273,37 @@ public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
     public async Task The_environment_token_is_admin_everywhere(string path) =>
         Assert.Equal(HttpStatusCode.OK, await Get(path, NytkaApiFactory.Token));
 
+    [Theory]
+    [InlineData("GET", HttpStatusCode.OK)]
+    [InlineData("HEAD", HttpStatusCode.OK)]
+    [InlineData("POST", HttpStatusCode.Forbidden)]
+    [InlineData("PUT", HttpStatusCode.Forbidden)]
+    [InlineData("PATCH", HttpStatusCode.Forbidden)]
+    [InlineData("DELETE", HttpStatusCode.Forbidden)]
+    public async Task AllowRead_admits_a_read_token_on_GET_and_HEAD_only(string method, HttpStatusCode expected)
+    {
+        Assert.Equal(expected, await Get("/rw", await NewToken("read"), new HttpMethod(method)));
+        Assert.Equal(HttpStatusCode.OK, await Get("/rw", await NewToken("admin"), new HttpMethod(method)));
+    }
+
     [Fact]
-    public async Task A_route_without_the_hook_is_open() =>
-        Assert.Equal(HttpStatusCode.OK, await Get("/open", null));
+    public async Task AllowRead_for_any_method_admits_a_read_token_to_a_POST() =>
+        Assert.Equal(HttpStatusCode.OK, await Get("/rpc", await NewToken("read"), HttpMethod.Post));
+
+    [Fact]
+    public async Task A_newly_mapped_route_without_the_hook_still_needs_an_admin_token()
+    {
+        Assert.Equal(HttpStatusCode.Unauthorized, await Get("/unmarked", null));
+        Assert.Equal(HttpStatusCode.Unauthorized, await Get("/unmarked", "nyt_unknown"));
+        Assert.Equal(HttpStatusCode.Forbidden, await Get("/unmarked", await NewToken("read")));
+        Assert.Equal(HttpStatusCode.OK, await Get("/unmarked", await NewToken("admin")));
+        Assert.Equal(HttpStatusCode.OK, await Get("/unmarked", NytkaApiFactory.Token));
+    }
+
+    [Fact]
+    public async Task Healthz_and_an_AllowAnonymous_route_need_no_token()
+    {
+        Assert.Equal(HttpStatusCode.OK, await Get("/healthz", null));
+        Assert.Equal(HttpStatusCode.OK, await Get("/anon", null));
+    }
 }

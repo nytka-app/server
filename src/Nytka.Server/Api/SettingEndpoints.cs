@@ -78,9 +78,21 @@ public static class SettingEndpoints
             return definition.IsSecret
                 ? new Setting(definition.Key, TypeName(definition.Type), null, resolved.Source == SettingSource.Env, SourceName(resolved.Source), locked, null)
                 : new Setting(
-                    definition.Key, TypeName(definition.Type), resolved.Value, resolved.Source != SettingSource.Default,
-                    SourceName(resolved.Source), locked, definition.Default);
+                    definition.Key, TypeName(definition.Type), Shown(definition, resolved.Value), resolved.Source != SettingSource.Default,
+                    SourceName(resolved.Source), locked, Shown(definition, definition.Default));
         }).ToList());
+
+    /// <summary>A URL is shown without its <c>user:password@</c>: a credential in a URL is a secret the list must not repeat.</summary>
+    private static string? Shown(SettingDefinition definition, string? value)
+    {
+        if (definition.Type != SettingType.Url || value is null
+            || !Uri.TryCreate(value, UriKind.Absolute, out var url) || url.UserInfo.Length == 0)
+        {
+            return value;
+        }
+
+        return new UriBuilder(url) { UserName = "", Password = "" }.Uri.ToString();
+    }
 
     private static string TypeName(SettingType type) => type.ToString().ToLowerInvariant();
 

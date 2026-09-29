@@ -76,6 +76,7 @@ public static class TokenEndpoints
             return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "A token with this name is already in use.");
         }
 
+        http.HttpContext!.Response.Headers.CacheControl = "no-store";
         return Results.Json(
             new CreatedToken(id, name!, request.Scope!, TokenSecret.Hint(secret), now.UtcDateTime, null, null, secret),
             statusCode: StatusCodes.Status201Created);

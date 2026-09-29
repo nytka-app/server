@@ -39,6 +39,7 @@ public sealed class TokenApiTests(PostgresFixture db) : IAsyncLifetime
         var created = await Json(response);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
         var token = created.GetProperty("token").GetString()!;
         Assert.Matches("^nyt_[A-Za-z0-9_-]{43}$", token);
         Assert.Equal("Claude Desktop", created.GetProperty("name").GetString());
