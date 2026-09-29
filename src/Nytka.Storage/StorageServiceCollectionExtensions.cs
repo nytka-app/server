@@ -16,6 +16,9 @@ public static class StorageServiceCollectionExtensions
             provider.GetRequiredService<IConfiguration>().GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings__Postgres is required.")));
 
+        services.AddSingleton<ChunkStore>();
+        services.AddSingleton<JobQueue>();
+
         return services;
     }
 }
