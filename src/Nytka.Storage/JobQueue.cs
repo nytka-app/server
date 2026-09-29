@@ -14,7 +14,10 @@ public readonly record struct JobKindFilter(IReadOnlyCollection<string> Kinds, b
     public static JobKindFilter Except(IEnumerable<string> kinds) => new([.. kinds], true);
 }
 
-/// <summary>Which jobs run first: a lower number is taken first, then <c>run_after</c>, then <c>id</c>.</summary>
+/// <summary>
+/// Which jobs run first. Each step of priority counts as <see cref="Step"/> of extra waiting: a late
+/// job yields to live jobs due within that time of it, and runs ahead of any due later.
+/// </summary>
 public static class JobPriority
 {
     /// <summary>Live audio and every other kind of job.</summary>
@@ -22,6 +25,9 @@ public static class JobPriority
 
     /// <summary>Late audio, such as a stored backlog: it yields to live speech.</summary>
     public const short Late = 1;
+
+    /// <summary>The delay one step of priority adds to a job's place in line, so late work cannot starve.</summary>
+    public static readonly TimeSpan Step = TimeSpan.FromMinutes(10);
 
     /// <summary>Audio whose last frame is older than this when it reaches the server counts as late.</summary>
     public static readonly TimeSpan LateAfter = TimeSpan.FromMinutes(5);
@@ -72,12 +78,12 @@ public sealed class JobQueue(NpgsqlDataSource dataSource)
                 select id from jobs
                 where run_after <= @now and (locked_until is null or locked_until < @now)
                   and case when @exclude then kind <> all(@kinds) else kind = any(@kinds) end
-                order by priority, run_after, id
+                order by run_after + priority * cast(@step as interval), id
                 for update skip locked
                 limit 1)
             returning id as Id, kind as Kind, payload::text as Payload, attempts as Attempts
             """,
-            new { now, lockedUntil = now + lease, kinds = kinds.Kinds.ToArray(), exclude = kinds.Exclude },
+            new { now, lockedUntil = now + lease, kinds = kinds.Kinds.ToArray(), exclude = kinds.Exclude, step = JobPriority.Step },
             cancellationToken: ct));
     }
 

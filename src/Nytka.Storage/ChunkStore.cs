@@ -99,17 +99,18 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
         [.. (await PendingSessionsAsync(ct)).Select(s => s.Id)];
 
     /// <summary>
-    /// Like <see cref="SessionsWithPendingAudioAsync"/>, with each session's priority: late when a chunk
-    /// still waiting reached the server more than <see cref="JobPriority.LateAfter"/> after its last frame.
+    /// Like <see cref="SessionsWithPendingAudioAsync"/>, with each session's priority. A session is late
+    /// when its newest waiting chunk was (last frame over <see cref="JobPriority.LateAfter"/> old when
+    /// it arrived, as <c>ChunkEndpoints</c> judges it), so live audio after a backlog is not held behind it.
     /// </summary>
     public async Task<IReadOnlyList<PendingSession>> PendingSessionsAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var sessions = await connection.QueryAsync<PendingSession>(new CommandDefinition(
             """
-            select session_id as Id, bool_or(received_at - last_time > @lateAfter) as Late
+            select distinct on (session_id) session_id as Id, received_at - last_time > @lateAfter as Late
             from audio_chunks where body is not null
-            group by session_id
+            order by session_id, first_seq desc
             """,
             new { lateAfter = JobPriority.LateAfter }, cancellationToken: ct));
         return sessions.ToList();

@@ -52,6 +52,53 @@ public sealed class JobPriorityTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Late_work_waiting_longer_than_a_step_runs_before_newer_live_work()
+    {
+        await Queue.EnqueueAsync("late", new { }, null, Now.AddMinutes(-11), default, JobPriority.Late);
+        await Enqueue("live");
+        await Queue.EnqueueAsync("recent-late", new { }, null, Now.AddMinutes(-9), default, JobPriority.Late);
+
+        Assert.Equal("late", await DequeueKind());      // 11 minutes overdue outranks a job due now
+        Assert.Equal("live", await DequeueKind());
+        Assert.Equal("recent-late", await DequeueKind());
+    }
+
+    [Fact]
+    public async Task A_stream_of_live_jobs_cannot_starve_a_late_one()
+    {
+        await Enqueue("late", priority: JobPriority.Late);
+        for (var minute = 1; minute <= 12; minute++)
+        {
+            _server.Time.Advance(TimeSpan.FromMinutes(1));
+            await Enqueue($"live-{minute}");
+        }
+
+        var order = new List<string?>();
+        while (await DequeueKind() is { } kind)
+        {
+            order.Add(kind);
+        }
+
+        Assert.True(order.IndexOf("late") < order.Count - 1);
+    }
+
+    [Fact]
+    public async Task A_session_is_late_by_its_newest_chunk()
+    {
+        var session = Guid.NewGuid();
+        _server.Time.Advance(TimeSpan.FromHours(1));
+        await _server.UploadAsync(Chunks(session, Tone(2)).Select(c => c)); // the backlog: an hour old, sequences 0 to 99
+        Assert.Equal(JobPriority.Late, await PriorityOf(JobKinds.ProcessSession));
+
+        // Live audio joins the same session: it is no longer late.
+        await _server.UploadAsync([TestChunks.Build(session, 100, 10, baseMs: Now.ToUnixTimeMilliseconds())]);
+        await db.ExecuteAsync("delete from jobs");
+        await _server.Get<Scheduler>().TickAsync(default);
+
+        Assert.Equal(JobPriority.Live, await PriorityOf(JobKinds.ProcessSession));
+    }
+
+    [Fact]
     public async Task The_priority_defaults_to_live_and_within_one_priority_the_order_is_unchanged()
     {
         await Enqueue("first");
