@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -11,6 +12,8 @@ namespace Nytka.Server.Transcription;
 public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> options)
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(120);
+
+    private const int MaxSpeakerLength = 64;
 
     public async Task<TranscriptionResult> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
@@ -47,7 +50,7 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
     }
 
     /// <summary>
-    /// Reads <c>text</c> and <c>segments[].start/end/text</c>. Missing or odd fields are skipped
+    /// Reads <c>text</c> and <c>segments[].start/end/text/speaker</c>. Missing or odd fields are skipped
     /// rather than fatal: providers differ in what else they send.
     /// </summary>
     public static TranscriptionResult Parse(string raw)
@@ -82,13 +85,33 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
                         && item.TryGetProperty("text", out var segmentText)
                         && segmentText.ValueKind == JsonValueKind.String)
                     {
-                        segments.Add(new TranscribedSegment(start, Math.Max(start, end), segmentText.GetString()!.Trim()));
+                        segments.Add(new TranscribedSegment(start, Math.Max(start, end), segmentText.GetString()!.Trim(), Speaker(item)));
                     }
                 }
             }
 
             return new TranscriptionResult(text.Trim(), segments, raw);
         }
+    }
+
+    /// <summary>
+    /// A string, or an integer taken as its decimal string; trimmed, at most <see cref="MaxSpeakerLength"/>
+    /// characters. Anything else, empty or too long is null.
+    /// </summary>
+    private static string? Speaker(JsonElement item)
+    {
+        if (!item.TryGetProperty("speaker", out var element))
+        {
+            return null;
+        }
+
+        var speaker = element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString()!.Trim(),
+            JsonValueKind.Number when element.TryGetInt64(out var number) => number.ToString(CultureInfo.InvariantCulture),
+            _ => "",
+        };
+        return speaker.Length is > 0 and <= MaxSpeakerLength ? speaker : null;
     }
 
     private static bool TryNumber(JsonElement item, string name, out double value)
