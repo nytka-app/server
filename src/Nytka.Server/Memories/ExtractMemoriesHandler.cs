@@ -147,7 +147,7 @@ public sealed class ExtractMemoriesHandler(
         A lasting fact is true beyond this conversation: who you are, your family, friends, home, work, health,
         habits, preferences, goals and commitments.
         Never report one-off events, tasks, plans for a single day or other people's affairs.
-        Speaker labels may differ between parts of the transcript; the user message says who "you" is.
+        Lines labelled "Wearer" are yours. Other speaker labels may differ between parts of the transcript; the user message says who "you" is.
         Write each fact as one short sentence, at most {MaxTextLength} characters, in {outputLanguage}.
         Return at most {MaxMemoriesPerRun} facts, none that a known memory already states. When a fact updates a
         known memory, set "replaces" to that memory's id, otherwise to null. Return an empty list when there is

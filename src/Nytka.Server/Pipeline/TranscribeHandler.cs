@@ -40,7 +40,9 @@ public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient cl
                 DateTimeOffset.FromUnixTimeMilliseconds(map.ToCaptureMs(s.Start)),
                 DateTimeOffset.FromUnixTimeMilliseconds(map.ToCaptureMs(s.End)),
                 s.Text,
-                s.Speaker))
+                s.Speaker,
+                s.SpeakerId,
+                s.IsUser))
             .ToList();
 
         if (segments.Count == 0 && result.Text.Length > 0)

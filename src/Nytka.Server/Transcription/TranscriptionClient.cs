@@ -85,7 +85,8 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
                         && item.TryGetProperty("text", out var segmentText)
                         && segmentText.ValueKind == JsonValueKind.String)
                     {
-                        segments.Add(new TranscribedSegment(start, Math.Max(start, end), segmentText.GetString()!.Trim(), Speaker(item)));
+                        segments.Add(new TranscribedSegment(
+                            start, Math.Max(start, end), segmentText.GetString()!.Trim(), Label(item, "speaker"), Label(item, "speaker_id"), IsUser(item)));
                     }
                 }
             }
@@ -95,12 +96,12 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
     }
 
     /// <summary>
-    /// A string, or an integer taken as its decimal string; trimmed, at most <see cref="MaxSpeakerLength"/>
+    /// The property as a string, or an integer taken as its decimal string; trimmed, at most <see cref="MaxSpeakerLength"/>
     /// characters. Anything else, empty or too long is null.
     /// </summary>
-    private static string? Speaker(JsonElement item)
+    private static string? Label(JsonElement item, string name)
     {
-        if (!item.TryGetProperty("speaker", out var element))
+        if (!item.TryGetProperty(name, out var element))
         {
             return null;
         }
@@ -113,6 +114,11 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
         };
         return speaker.Length is > 0 and <= MaxSpeakerLength ? speaker : null;
     }
+
+    private static bool? IsUser(JsonElement item) =>
+        item.TryGetProperty("is_user", out var element) && element.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? element.GetBoolean()
+            : null;
 
     private static bool TryNumber(JsonElement item, string name, out double value)
     {

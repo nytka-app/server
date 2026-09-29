@@ -27,6 +27,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<MemoryStore>();
         services.AddSingleton<SearchStore>();
         services.AddSingleton<WebhookStore>();
+        services.AddSingleton<PeopleStore>();
 
         return services;
     }

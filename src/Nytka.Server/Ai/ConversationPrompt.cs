@@ -34,7 +34,7 @@ public static class ConversationPrompt
             You read the transcript of one conversation, recorded by a pendant its wearer carries, and describe it.
             Answer with a short title (at most {MaxTitle} characters), a summary (a few sentences, at most {MaxSummary} characters) and the tasks.
             List only tasks the wearer has to do: things they promised, were asked for or decided to do. Leave out other people's tasks and anything already done. Put a deadline into the task's text when one was named. Return at most {MaxTasks} tasks, none when there are none.
-            Speaker labels may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on them.
+            The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. Any other speaker label may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on those.
             Write the title, the summary and the tasks in {language}.
             """;
     }

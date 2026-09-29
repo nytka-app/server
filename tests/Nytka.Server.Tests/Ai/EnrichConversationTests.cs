@@ -59,7 +59,25 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
             request.User);
         Assert.Contains("language the conversation is in", request.System, StringComparison.Ordinal);
         Assert.Contains("tasks the wearer has to do", request.System, StringComparison.Ordinal);
-        Assert.Contains("Speaker labels may differ", request.System, StringComparison.Ordinal);
+        Assert.Contains("speaker label may differ", request.System, StringComparison.Ordinal);
+        Assert.Contains("labelled \"Wearer\"", request.System, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_wearer_and_named_voices_are_labelled_in_the_transcript()
+    {
+        var id = await Seed(Talk);
+        await Db.ExecuteAsync("delete from segments");
+        await AddSegment(id, Talk, Now.AddMinutes(-9), "SPEAKER_0", "0", true);
+        await AddSegment(id, Talk, Now.AddMinutes(-8), "SPEAKER_4", "4", false);
+        await AddSegment(id, Talk, Now.AddMinutes(-7), "SPEAKER_5", "5", false);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (gen_random_uuid(), 'Anna', now())");
+        await Db.ExecuteAsync("insert into person_voices (speaker_id, person_id, created_at) select '4', id, now() from people");
+
+        await TickAndRun();
+
+        var lines = Assert.Single(Llm.Requests).User.Split('\n').Skip(3).ToList();
+        Assert.Equal([$"Wearer: {Talk}", $"Anna: {Talk}", $"SPEAKER_5: {Talk}"], lines.Select(l => l[(l.IndexOf(' ') + 1)..]));
     }
 
     [Fact]

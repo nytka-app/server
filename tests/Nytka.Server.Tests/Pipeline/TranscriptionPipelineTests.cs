@@ -130,6 +130,20 @@ public sealed class TranscriptionPipelineTests(PostgresFixture db) : IAsyncLifet
     }
 
     [Fact]
+    public async Task The_voice_id_and_the_wearer_flag_are_stored()
+    {
+        _server.Stt.Respond = _ => FakeStt.Json(
+            """{"text":"a b c","segments":[{"start":0,"end":1,"text":"a","speaker":"SPEAKER_0","speaker_id":"0","is_user":true},{"start":1,"end":2,"text":"b","speaker":"SPEAKER_4","speaker_id":"4","is_user":false},{"start":2,"end":3,"text":"c"}]}""");
+        await _server.UploadAsync(Chunks(_session, Tone(6), Silence(3)));
+
+        await _server.RunJobsAsync();
+
+        Assert.Equal(
+            [("a", "0", (bool?)true), ("b", "4", false), ("c", null, null)],
+            await db.QueryAsync<(string, string?, bool?)>("select text, speaker_id, is_user from segments order by started_at"));
+    }
+
+    [Fact]
     public async Task A_finished_batch_records_when_it_finished()
     {
         await _server.UploadAsync(Chunks(_session, Tone(6), Silence(3)));

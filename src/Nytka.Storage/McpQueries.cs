@@ -77,12 +77,13 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpSegmentRow>(new CommandDefinition(
-            """
+            $"""
             select StartedAt, Speaker, Text from (
-                select started_at as StartedAt, speaker as Speaker, text as Text, id,
-                       coalesce(sum(length(text)) over (order by started_at, id
+                select s.started_at as StartedAt, {SpeakerLabel.Column} as Speaker, s.text as Text, s.id,
+                       coalesce(sum(length(s.text)) over (order by s.started_at, s.id
                                 rows between unbounded preceding and 1 preceding), 0) as before_chars
-                from segments where conversation_id = @id) s
+                from segments s {SpeakerLabel.Joins}
+                where s.conversation_id = @id) t
             where before_chars < @textBudget
             order by StartedAt, id
             """,

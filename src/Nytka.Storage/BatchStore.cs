@@ -11,7 +11,8 @@ public sealed record NewBatch(
 
 public sealed record PendingBatch(long Id, Guid ConversationId, DateTime StartedAt, DateTime EndedAt, byte[] Wav, string OffsetMap);
 
-public sealed record NewSegment(DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker = null);
+public sealed record NewSegment(
+    DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker = null, string? SpeakerId = null, bool? IsUser = null);
 
 /// <summary>Where transcription stands. <paramref name="LastError"/> is set only while it is current: no batch has finished since.</summary>
 public sealed record BatchOutcomes(string? LastError, DateTime? LastErrorAt, DateTime? LastSuccessAt);
@@ -82,10 +83,10 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
 
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker)
-            values (@ConversationId, @BatchId, @StartedAt, @EndedAt, @Text, @Speaker)
+            insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker, speaker_id, is_user)
+            values (@ConversationId, @BatchId, @StartedAt, @EndedAt, @Text, @Speaker, @SpeakerId, @IsUser)
             """,
-            segments.Select(s => new { ConversationId = conversationId.Value, BatchId = id, s.StartedAt, s.EndedAt, s.Text, s.Speaker }),
+            segments.Select(s => new { ConversationId = conversationId.Value, BatchId = id, s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, s.IsUser }),
             transaction, cancellationToken: ct));
 
         if (deleteSpeechAudio)

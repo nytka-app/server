@@ -118,6 +118,20 @@ public class TranscriptionClientTests
         Assert.Null(Assert.Single(dropped.Segments).Speaker);
     }
 
+    [Theory]
+    [InlineData("\"speaker_id\":\"3\",\"is_user\":true", "3", true)]
+    [InlineData("\"speaker_id\":7,\"is_user\":false", "7", false)]
+    [InlineData("\"speaker_id\":null,\"is_user\":\"yes\"", null, null)]
+    [InlineData("\"speaker\":\"SPEAKER_00\"", null, null)]
+    public void Reads_the_voice_id_and_the_wearer_flag_of_a_segment(string fields, string? speakerId, bool? isUser)
+    {
+        var result = TranscriptionClient.Parse($$"""{"segments":[{"start":0,"end":1,"text":"hi",{{fields}}}]}""");
+
+        var segment = Assert.Single(result.Segments);
+        Assert.Equal(speakerId, segment.SpeakerId);
+        Assert.Equal(isUser, segment.IsUser);
+    }
+
     [Fact]
     public void A_segment_without_a_speaker_has_none() =>
         Assert.Null(Assert.Single(TranscriptionClient.Parse(FakeStt.DefaultJson).Segments.Take(1)).Speaker);

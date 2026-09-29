@@ -1,0 +1,134 @@
+using Dapper;
+using Npgsql;
+
+namespace Nytka.Storage;
+
+/// <summary>The label a model or an MCP client reads for the wearer's segments.</summary>
+public static class SpeakerLabel
+{
+    public const string Wearer = "Wearer";
+
+    /// <summary>
+    /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>: the wearer, else the person the voice
+    /// was named after, else the provider's own label.
+    /// </summary>
+    public const string Column = $"case when s.is_user then '{Wearer}' else coalesce(p.name, s.speaker) end";
+
+    public const string Joins =
+        "left join person_voices pv on pv.speaker_id = s.speaker_id left join people p on p.id = pv.person_id";
+}
+
+public sealed record PersonRow(Guid Id, string Name, DateTime CreatedAt, string[] Voices, int Segments);
+
+public enum PersonWrite { Ok, NotFound, NameTaken }
+
+/// <summary>People: names given to the voices a transcription provider tells apart (<c>people</c>, <c>person_voices</c>).</summary>
+public sealed class PeopleStore(NpgsqlDataSource dataSource)
+{
+    private sealed record Row(Guid Id, string Name, DateTime CreatedAt);
+
+    private sealed record Voice(Guid PersonId, string SpeakerId);
+
+    private sealed record Count(Guid PersonId, int Segments);
+
+    public async Task<IReadOnlyList<PersonRow>> ListAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var people = (await connection.QueryAsync<Row>(new CommandDefinition(
+            "select id as Id, name as Name, created_at as CreatedAt from people order by lower(name)", cancellationToken: ct))).ToList();
+        var voices = (await connection.QueryAsync<Voice>(new CommandDefinition(
+            "select person_id as PersonId, speaker_id as SpeakerId from person_voices order by speaker_id", cancellationToken: ct))).ToList();
+        var counts = (await connection.QueryAsync<Count>(new CommandDefinition(
+            """
+            select pv.person_id as PersonId, count(*)::int as Segments
+            from segments s join person_voices pv on pv.speaker_id = s.speaker_id
+            where s.is_user is not true
+            group by pv.person_id
+            """, cancellationToken: ct))).ToDictionary(c => c.PersonId, c => c.Segments);
+        return people
+            .Select(p => new PersonRow(
+                p.Id, p.Name, p.CreatedAt,
+                voices.Where(v => v.PersonId == p.Id).Select(v => v.SpeakerId).ToArray(),
+                counts.GetValueOrDefault(p.Id)))
+            .ToList();
+    }
+
+    public async Task<PersonRow?> GetAsync(Guid id, CancellationToken ct) =>
+        (await ListAsync(ct)).FirstOrDefault(p => p.Id == id);
+
+    /// <summary>
+    /// Gives <paramref name="speakerId"/> the name: the person with that name (any case) when there is one, else a new person.
+    /// A voice named before moves to the new owner.
+    /// </summary>
+    public async Task<Guid> NameVoiceAsync(string name, string speakerId, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var id = await FindOrCreateAsync(connection, transaction, name, now, ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into person_voices (speaker_id, person_id, created_at) values (@speakerId, @id, @now)
+            on conflict (speaker_id) do update set person_id = excluded.person_id
+            """,
+            new { speakerId, id, now }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return id;
+    }
+
+    public async Task<Guid> CreateAsync(string name, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var id = await FindOrCreateAsync(connection, transaction, name, now, ct);
+        await transaction.CommitAsync(ct);
+        return id;
+    }
+
+    private static async Task<Guid> FindOrCreateAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string name, DateTimeOffset now, CancellationToken ct) =>
+        await connection.QuerySingleAsync<Guid>(new CommandDefinition(
+            """
+            with created as (
+                insert into people (id, name, created_at) values (@id, @name, @now)
+                on conflict (lower(name)) do nothing
+                returning id)
+            select id from created
+            union all
+            select id from people where lower(name) = lower(@name)
+            limit 1
+            """,
+            new { id = Guid.NewGuid(), name, now }, transaction, cancellationToken: ct));
+
+    /// <summary>Renames a person. A name another person already has is refused.</summary>
+    public async Task<PersonWrite> RenameAsync(Guid id, string name, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        try
+        {
+            return await connection.ExecuteAsync(new CommandDefinition(
+                "update people set name = @name where id = @id", new { id, name }, cancellationToken: ct)) == 1
+                ? PersonWrite.Ok
+                : PersonWrite.NotFound;
+        }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return PersonWrite.NameTaken;
+        }
+    }
+
+    /// <summary>Deletes the person and their voice links; the segments keep the provider's labels.</summary>
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "delete from people where id = @id", new { id }, cancellationToken: ct)) == 1;
+    }
+
+    public async Task<bool> UnlinkVoiceAsync(Guid id, string speakerId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "delete from person_voices where person_id = @id and speaker_id = @speakerId",
+            new { id, speakerId }, cancellationToken: ct)) == 1;
+    }
+}
