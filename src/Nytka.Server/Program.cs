@@ -40,6 +40,7 @@ builder.Services.AddSingleton<IVoiceActivityDetector>(_ => new SileroVad());
 builder.Services.AddScoped<IJobHandler, ProcessSessionHandler>();
 builder.Services.AddScoped<IJobHandler, TranscribeHandler>();
 builder.Services.AddScoped<IJobHandler, CloseConversationsHandler>();
+builder.Services.AddScoped<IJobHandler, RetentionHandler>();
 
 var app = builder.Build();
 

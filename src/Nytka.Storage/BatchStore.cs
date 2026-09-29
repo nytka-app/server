@@ -124,4 +124,16 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             "select error from transcription_batches where status = 'failed' order by created_at desc, id desc limit 1",
             cancellationToken: ct));
     }
+
+    public async Task<int> DeleteSpeechAudioEndedBeforeAsync(DateTimeOffset before, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            """
+            delete from speech_audio
+            where ended_at < @before
+              and batch_id in (select id from transcription_batches where status = 'done')
+            """,
+            new { before }, cancellationToken: ct));
+    }
 }

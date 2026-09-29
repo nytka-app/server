@@ -176,4 +176,12 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
             """,
             cancellationToken: ct));
     }
+
+    /// <summary>Deletes rows of processed chunks (no body) received before <paramref name="before"/>.</summary>
+    public async Task<int> DeleteProcessedReceivedBeforeAsync(DateTimeOffset before, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "delete from audio_chunks where body is null and received_at < @before", new { before }, cancellationToken: ct));
+    }
 }
