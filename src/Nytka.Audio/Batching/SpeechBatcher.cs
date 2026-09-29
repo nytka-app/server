@@ -63,7 +63,13 @@ public static class SpeechBatcher
 
         public void Add(SpeechRegion region) => AddTail(AddUpToLimit(region));
 
-        /// <summary>Adds full MaxSpeechMs pieces of the region; returns what is left over.</summary>
+        /// <summary>
+        /// Adds the region and returns what is left over. MaxSpeechMs is a soft limit: a region that
+        /// would pass it starts a new batch, because the gap before it is a pause, and speech is
+        /// never cut inside a region while the batch holds MinSpeechMs. Only when the batch is too
+        /// short to close does the batch grow, up to HardMaxSpeechMs, unless the region fits under it
+        /// alone (the short batch closes first). A region past HardMaxSpeechMs is cut there. The VAD result carries no probabilities, so the cut is at the limit.
+        /// </summary>
         public SpeechRegion AddUpToLimit(SpeechRegion region)
         {
             if (ShouldCloseBefore(region.StartMs))
@@ -74,7 +80,24 @@ public static class SpeechBatcher
             var rest = region;
             while (_speechMs + rest.DurationMs > rules.MaxSpeechMs)
             {
-                var cut = rest.StartMs + (rules.MaxSpeechMs - _speechMs);
+                if (_speechMs >= rules.MinSpeechMs)
+                {
+                    Close();
+                    continue;
+                }
+
+                if (_speechMs + rest.DurationMs <= rules.HardMaxSpeechMs)
+                {
+                    break;
+                }
+
+                if (Current.Count > 0 && rest.DurationMs <= rules.HardMaxSpeechMs)
+                {
+                    Close();
+                    continue;
+                }
+
+                var cut = rest.StartMs + (rules.HardMaxSpeechMs - _speechMs);
                 AddTail(rest with { EndMs = cut });
                 Close();
                 rest = rest with { StartMs = cut };
