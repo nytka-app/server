@@ -96,6 +96,21 @@ public sealed class RetentionTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Deletes_diagnostics_older_than_thirty_days()
+    {
+        foreach (var at in new[] { Now.AddDays(-31), Now.AddDays(-29) })
+        {
+            await db.ExecuteAsync(
+                "insert into diagnostics (id, at, received_at, payload) values (@id, @at, @at, '{}')",
+                new { id = Guid.CreateVersion7(), at });
+        }
+
+        await RunRetention();
+
+        Assert.Equal([Now.AddDays(-29)], await db.QueryAsync<DateTime>("select at from diagnostics"));
+    }
+
+    [Fact]
     public async Task Runs_again_a_day_later()
     {
         await RunRetention();
