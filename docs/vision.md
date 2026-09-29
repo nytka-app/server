@@ -146,12 +146,26 @@ conversation.
   away, so leaving your phone behind stops costing you conversations.
 - **v0.4, memory and search (shipped).** Memories (lasting facts about you) with their own tab,
   full-text search and outgoing webhooks.
-- **Later.** Questions about your history, live transcripts, bookmarks from the pendant button, audio
-  playback, a daily digest, import from Omi's "Export All Data" file, firmware updates, pendant
-  settings (LED and mic gain), voice enrollment on the server so it recognizes your voice with any
-  transcription provider, stripping personal data before text reaches a cloud model, people and
-  calendar extraction, opt-in location tags, a home-screen widget, full data export, and iOS, desktop
-  or web clients.
+- **v0.5, nothing is lost.** A week of wear with the official app uninstalled loses no audio: the
+  Bluetooth link and offline sync are fixed against measured failures, batches close at pauses, a
+  weekly mute schedule keeps chosen hours unrecorded, and the language of summaries is a setting
+  (English by default).
+- **v0.6, output worth reading.** Segments carry speaker labels and mark the wearer's own lines.
+  Tasks and memories come only from what the wearer committed to or lasting facts about them, with
+  no dates nobody said.
+- **v0.7, leaving Omi.** Import from Omi's "Export All Data" file, a full export from Nytka in a
+  documented format, and a daily digest delivered through a webhook.
+- **v0.8, moments and questions.** Bookmarks from a single tap on the pendant, LED and microphone
+  settings, an Ask tab that answers from your history with numbered sources, audio playback, and a
+  notice when new pendant firmware exists.
+- **v0.9, your voice.** Voice enrollment on the server, so segments are labelled as yours with any
+  transcription provider.
+- **v1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
+  documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week.
+- **After 1.0.** Firmware updates from the app, live transcripts, people and calendar extraction, a
+  local model or stripping personal data before text reaches a cloud model, opt-in location tags, a
+  home-screen widget, vector search, an optional supporter key that unlocks nothing, and web, desktop
+  or iOS clients.
 - **Not planned.** A hosted service, user accounts, sharing, a plugin store, a Wear OS tile,
   transcription on the phone, several pendants per person, and database encryption inside the app
   (encrypt the disk instead).
