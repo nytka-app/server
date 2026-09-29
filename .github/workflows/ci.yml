@@ -18,8 +18,13 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
+      # The search tests mount the Ukrainian dictionary into their Postgres; NYTKA_REQUIRE_DICTIONARY makes
+      # a missing file fail them instead of skipping them.
+      - run: scripts/fetch-uk-dictionary.sh
       # Storage tests start Postgres through Testcontainers; the hosted runner has Docker.
       - run: dotnet test --no-build -c Release
+        env:
+          NYTKA_REQUIRE_DICTIONARY: "1"
 
   secrets:
     runs-on: ubuntu-latest

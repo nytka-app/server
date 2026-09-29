@@ -10,6 +10,20 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # The Ukrainian search dictionary. Run scripts/fetch-uk-dictionary.sh once first: without the files
+      # Compose stops here (create_host_path: false) instead of creating directories in their place.
+      - type: bind
+        source: ./tsearch_data/uk_ua.dict
+        target: /usr/local/share/postgresql/tsearch_data/uk_ua.dict
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./tsearch_data/uk_ua.affix
+        target: /usr/local/share/postgresql/tsearch_data/uk_ua.affix
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nytka -d nytka"]
       interval: 10s
