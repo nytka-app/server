@@ -177,6 +177,39 @@ public sealed class StatusTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_ai_failure_survives_a_retry_until_a_run_finishes()
+    {
+        var id = await SeedConversation("failed");
+        await db.ExecuteAsync(
+            "update conversations set ai_message = 'The language model endpoint answered 429.', ai_updated_at = '2026-09-29T09:00:00Z'");
+
+        await db.ExecuteAsync("update conversations set ai_status = 'pending'");
+        var retrying = (await Status()).GetProperty("ai");
+        await db.ExecuteAsync(
+            "update conversations set ai_status = 'done', ai_message = null, ai_updated_at = '2026-09-29T10:00:00Z' where id = @id",
+            new { id });
+        var finished = (await Status()).GetProperty("ai");
+
+        Assert.Equal("The language model endpoint answered 429.", retrying.GetProperty("lastError").GetString());
+        Assert.Equal("2026-09-29T09:00:00Z", retrying.GetProperty("lastErrorAt").GetString());
+        Assert.Equal(1, retrying.GetProperty("pending").GetInt64());
+        Assert.Equal(JsonValueKind.Null, finished.GetProperty("lastError").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_pending_conversation_that_was_only_skipped_is_no_failure()
+    {
+        await SeedConversation("pending");
+        await db.ExecuteAsync(
+            "update conversations set ai_message = 'Too short to summarize.', ai_updated_at = '2026-09-29T09:00:00Z'");
+
+        var ai = (await Status()).GetProperty("ai");
+
+        Assert.Equal(JsonValueKind.Null, ai.GetProperty("lastError").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ai.GetProperty("lastErrorAt").ValueKind);
+    }
+
+    [Fact]
     public async Task Status_reports_the_model_as_configured_when_it_is()
     {
         using var configured = new NytkaApiFactory(db, services: s => s.AddSingleton<Nytka.Server.Ai.ILlmClient>(new FakeLlm()));

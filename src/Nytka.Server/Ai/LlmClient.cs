@@ -21,19 +21,19 @@ public sealed class LlmClient(HttpClient http, IOptionsMonitor<LlmOptions> optio
             throw new LlmException("The language model is not configured.");
         }
 
-        using var message = new HttpRequestMessage(HttpMethod.Post, llm.BaseUrl!.TrimEnd('/') + "/chat/completions")
-        {
-            Content = new StringContent(Body(llm, request), Encoding.UTF8, "application/json"),
-        };
-        if (!string.IsNullOrWhiteSpace(llm.ApiKey))
-        {
-            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", llm.ApiKey);
-        }
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(llm.TimeoutSeconds));
         try
         {
+            using var message = new HttpRequestMessage(HttpMethod.Post, llm.BaseUrl!.TrimEnd('/') + "/chat/completions")
+            {
+                Content = new StringContent(Body(llm, request), Encoding.UTF8, "application/json"),
+            };
+            if (!string.IsNullOrWhiteSpace(llm.ApiKey))
+            {
+                message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", llm.ApiKey);
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(llm.TimeoutSeconds));
             using var response = await http.SendAsync(message, timeout.Token);
             if (!response.IsSuccessStatusCode)
             {
@@ -43,13 +43,18 @@ public sealed class LlmClient(HttpClient http, IOptionsMonitor<LlmOptions> optio
 
             return Content(await response.Content.ReadAsStringAsync(timeout.Token));
         }
+        catch (LlmException)
+        {
+            throw;
+        }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             throw new LlmException("The language model endpoint did not answer in time.");
         }
-        catch (HttpRequestException)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            // Its message can hold the URL; the fixed sentence is all a log or ai_message gets.
+            // Whatever it was (a refused connection, a malformed base URL), its message can hold the URL;
+            // the fixed sentence is all a log, jobs.error or ai_message gets.
             throw new LlmException("The language model endpoint could not be reached.");
         }
     }

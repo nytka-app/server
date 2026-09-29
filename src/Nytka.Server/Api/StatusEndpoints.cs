@@ -12,7 +12,7 @@ public static class StatusEndpoints
         {
             var pending = await chunks.PendingAsync(ct);
             var outcomes = await batches.OutcomesAsync(ct);
-            var runs = await conversations.AiRunStatusAsync(ct);
+            var runs = await conversations.AiRunStatusAsync(EnrichConversationHandler.TooShort, ct);
 
             // A failed run is trouble only until a later run finishes; the time stays as history.
             var aiFailureIsCurrent = runs.FailedAt is { } failedAt && (runs.FinishedAt is not { } finishedAt || failedAt > finishedAt);

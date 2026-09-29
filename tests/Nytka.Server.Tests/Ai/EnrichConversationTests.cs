@@ -140,6 +140,80 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal("The language model endpoint answered 429.", ai.AiMessage);
     }
 
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(404)]
+    public async Task A_client_error_fails_the_round_at_once(int status)
+    {
+        var id = await Seed(Talk);
+        Llm.Respond = _ => throw new LlmException($"The language model endpoint answered {status}.", status);
+
+        await TickAndRun();
+
+        Assert.Single(Llm.Requests);
+        var ai = await Ai(id);
+        Assert.Equal("failed", ai.AiStatus);
+        Assert.Equal(1, ai.Failures);
+        Assert.Equal(0, await Jobs());
+    }
+
+    [Fact]
+    public async Task Too_many_requests_and_server_errors_still_get_three_attempts()
+    {
+        await Seed(Talk);
+        Llm.Respond = _ => throw new LlmException("The language model endpoint answered 429.", 429);
+
+        await TickAndRun();
+        await RunRemainingAttempts();
+
+        Assert.Equal(3, Llm.Requests.Count);
+    }
+
+    [Fact]
+    public async Task After_three_failed_runs_in_a_row_one_conversation_goes_out_per_tick()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var failed = await Seed(Talk);
+            await Db.ExecuteAsync(
+                "update conversations set ai_status = 'failed', ai_failures = 3, ai_message = 'x', ai_updated_at = @at where id = @failed",
+                new { failed, at = Now.AddMinutes(-i) });
+        }
+
+        for (var i = 0; i < 5; i++)
+        {
+            await Seed(Talk);
+        }
+
+        await Server.Get<Scheduler>().TickAsync(default);
+
+        Assert.Equal(1, await Jobs());
+    }
+
+    [Fact]
+    public async Task A_success_ends_the_probing()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var failed = await Seed(Talk);
+            await Db.ExecuteAsync(
+                "update conversations set ai_status = 'failed', ai_failures = 3, ai_message = 'x', ai_updated_at = @at where id = @failed",
+                new { failed, at = Now.AddMinutes(-i - 1) });
+        }
+
+        var done = await Seed(Talk);
+        await Db.ExecuteAsync("update conversations set ai_status = 'done', ai_updated_at = @at, ai_through_segment_id = (select max(id) from segments) where id = @done", new { done, at = Now });
+        for (var i = 0; i < 5; i++)
+        {
+            await Seed(Talk);
+        }
+
+        await Server.Get<Scheduler>().TickAsync(default);
+
+        Assert.Equal(5, await Jobs());
+    }
+
     [Fact]
     public async Task An_unexpected_error_gets_a_generic_message()
     {

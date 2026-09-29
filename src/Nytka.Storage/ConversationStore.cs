@@ -224,7 +224,12 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             new { id, message, now }, cancellationToken: ct));
     }
 
-    public async Task<AiRunStatus> AiRunStatusAsync(CancellationToken ct)
+    /// <summary>
+    /// The newest failure is the newest row that failed and has not finished since: a failed row, or a
+    /// pending one (a retry keeps the failure's message and time until a run finishes). A pending or
+    /// skipped row's message can also be <paramref name="skippedMessage"/>, which is no failure.
+    /// </summary>
+    public async Task<AiRunStatus> AiRunStatusAsync(string skippedMessage, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleAsync<AiRunStatus>(new CommandDefinition(
@@ -235,10 +240,26 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             from (select 1) one
             left join lateral (
                 select ai_message, ai_updated_at from conversations
-                where ai_status = 'failed'
+                where ai_status in ('failed', 'pending') and ai_message is not null and ai_message <> @skippedMessage
                 order by ai_updated_at desc nulls last
                 limit 1) f on true
             """,
-            cancellationToken: ct));
+            new { skippedMessage }, cancellationToken: ct));
+    }
+
+    /// <summary>True when the newest <paramref name="count"/> finished runs all failed (and there are that many).</summary>
+    public async Task<bool> RecentRunsAllFailedAsync(int count, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var statuses = await connection.QueryAsync<string>(new CommandDefinition(
+            """
+            select ai_status from conversations
+            where ai_status in ('done', 'skipped', 'failed') and ai_updated_at is not null
+            order by ai_updated_at desc
+            limit @count
+            """,
+            new { count }, cancellationToken: ct));
+        var list = statuses.ToList();
+        return list.Count == count && list.All(s => s == "failed");
     }
 }

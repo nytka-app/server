@@ -18,6 +18,8 @@ public sealed class Scheduler(
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
 
+    private const int ConsecutiveFailuresBeforeProbing = 3;
+
     public async Task TickAsync(CancellationToken ct)
     {
         var now = time.GetUtcNow();
@@ -47,6 +49,14 @@ public sealed class Scheduler(
             EnrichConversationHandler.MaxFailedRounds,
             EnrichPerTick,
             ct);
+
+        // After three failed runs in a row (a wrong key, a dead endpoint) one conversation goes out per
+        // tick as a probe, instead of a hundred that would each fail.
+        if (due.Count > 1 && await conversations.RecentRunsAllFailedAsync(ConsecutiveFailuresBeforeProbing, ct))
+        {
+            due = [due[0]];
+        }
+
         foreach (var id in due)
         {
             await enrichments.QueueAsync(id, force: false, ct);

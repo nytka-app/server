@@ -63,7 +63,17 @@ public sealed class EnrichConversationHandler(
         }
 
         var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Speaker, s.Text)));
-        var answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, ct);
+        ConversationAnswer answer;
+        try
+        {
+            answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, ct);
+        }
+        catch (LlmException error) when (IsPermanent(error))
+        {
+            // A 400, 401, 404 and the like will not pass on a second try: fail the round at once.
+            await OnGiveUpAsync(job, error, ct);
+            return JobOutcome.Done;
+        }
 
         await StoreAsync(conversationId, answer, through, ct);
         logger.LogInformation("Conversation {ConversationId} summarized from {Segments} segments.", conversationId, segments.Count);
@@ -143,6 +153,9 @@ public sealed class EnrichConversationHandler(
 
         await transaction.CommitAsync(ct);
     }
+
+    /// <summary>A client error other than 429: retrying with the same request and key cannot help.</summary>
+    private static bool IsPermanent(LlmException error) => error.StatusCode is >= 400 and < 500 and not 429;
 
     private static int Words(string text) => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
 

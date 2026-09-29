@@ -191,4 +191,14 @@ public class LlmClientTests
 
         Assert.Equal("The language model endpoint could not be reached.", error.Message);
     }
+
+    [Fact]
+    public async Task A_malformed_base_url_fails_with_the_fixed_sentence_and_never_the_url()
+    {
+        var error = await Assert.ThrowsAsync<LlmException>(
+            () => Client(o => o.BaseUrl = "http://secret-host.test:99999/v1").CompleteJsonAsync(Request, default));
+
+        Assert.Equal("The language model endpoint could not be reached.", error.Message);
+        Assert.Empty(_requests);
+    }
 }

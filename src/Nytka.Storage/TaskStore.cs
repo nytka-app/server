@@ -119,6 +119,11 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// transaction. A returned fingerprint that has a row, in any state, changes nothing; a new one
     /// inserts a task; an untouched row (open, not edited, not deleted) the model no longer returns
     /// is deleted. Returns the ids of the inserted tasks.
+    /// <para>
+    /// A task the model words differently (a new fingerprint) is inserted as a new task and publishes
+    /// <c>task.created</c> again, while its old row is deleted or, if the user touched it, stays. The
+    /// spec allows this; v0.4's webhooks will see the second event.
+    /// </para>
     /// </summary>
     public async Task<IReadOnlyList<Guid>> ReconcileAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, IReadOnlyList<AiTask> returned,
