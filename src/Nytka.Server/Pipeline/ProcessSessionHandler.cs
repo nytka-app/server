@@ -29,8 +29,14 @@ public sealed class ProcessSessionHandler(
     TimeProvider time,
     ILogger<ProcessSessionHandler> logger) : IJobHandler
 {
-    /// <summary>20 minutes of audio per run: a day's offline backlog drains in bounded memory.</summary>
-    public const int MaxChunksPerRun = 40;
+    /// <summary>
+    /// A run keeps taking chunks until its window holds this many frames (10 minutes), so the
+    /// window covers whole batches whatever the chunk size. A day's backlog drains in bounded memory.
+    /// </summary>
+    public const int MinFramesPerRun = 30_000;
+
+    /// <summary>Row cap for one run when chunks are tiny; the window may then hold fewer frames.</summary>
+    public const int MaxChunksPerRun = 2000;
 
     public static readonly TimeSpan GapWait = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan GapRecheck = TimeSpan.FromMinutes(1);
@@ -59,8 +65,9 @@ public sealed class ProcessSessionHandler(
             return JobOutcome.Done;
         }
 
-        var more = loaded.Count > MaxChunksPerRun;
-        var (used, waiting) = TakeContiguous(loaded.Take(MaxChunksPerRun), session, now);
+        var window = TakeWindow(loaded);
+        var more = loaded.Count > window.Count;
+        var (used, waiting) = TakeContiguous(window, session, now);
         if (used.Count == 0)
         {
             return JobOutcome.RunAgain(GapRecheck);
@@ -71,9 +78,18 @@ public sealed class ProcessSessionHandler(
         var detection = Detector.Detect(VadScanner.Scan(timeline, vad)).TrimBefore(processedThrough);
         var idle = !waiting && !more && session.LastReceivedAt <= (now - IdleAfter).UtcDateTime;
         var plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: idle);
+        var newThrough = Math.Max(processedThrough, plan.ProcessedThroughMs(timeline.EndMs));
+        if (more && !waiting && newThrough <= processedThrough)
+        {
+            // Speech pending from the window's start would be read again forever: close it here.
+            plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: true);
+            newThrough = Math.Max(processedThrough, plan.ProcessedThroughMs(timeline.EndMs));
+        }
+
+        var advanced = newThrough > processedThrough;
         var usedSeqs = used.Select(c => c.FirstSeq).ToArray();
 
-        await WriteAsync(sessionId, timeline, plan, Math.Max(processedThrough, plan.ProcessedThroughMs(timeline.EndMs)), usedSeqs, now, ct);
+        await WriteAsync(sessionId, timeline, plan, newThrough, usedSeqs, now, ct);
         logger.LogInformation(
             "Session {SessionId}: read {Chunks} chunk(s), closed {Batches} batch(es), waiting for a gap: {Waiting}.",
             sessionId, used.Count, plan.Closed.Count, waiting);
@@ -83,10 +99,34 @@ public sealed class ProcessSessionHandler(
             return JobOutcome.RunAgain(GapRecheck);
         }
 
+        if (more)
+        {
+            // Never spin: without progress the next run would read the same window.
+            return JobOutcome.RunAgain(advanced ? TimeSpan.Zero : GapRecheck);
+        }
+
         // Uploads during this run could not queue another run (dedupe key), so look for them here.
-        return more || await chunks.HasPendingBeyondAsync(sessionId, usedSeqs, ct)
+        return await chunks.HasPendingBeyondAsync(sessionId, usedSeqs, ct)
             ? JobOutcome.RunAgain(TimeSpan.Zero)
             : JobOutcome.Done;
+    }
+
+    private static List<PendingChunk> TakeWindow(IReadOnlyList<PendingChunk> loaded)
+    {
+        var window = new List<PendingChunk>();
+        var frames = 0;
+        foreach (var chunk in loaded.Take(MaxChunksPerRun))
+        {
+            if (frames >= MinFramesPerRun)
+            {
+                break;
+            }
+
+            window.Add(chunk);
+            frames += chunk.FrameCount;
+        }
+
+        return window;
     }
 
     public Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct) => Task.CompletedTask;

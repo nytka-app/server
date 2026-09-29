@@ -120,4 +120,50 @@ public sealed class ProcessSessionTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(0, await Count("audio_chunks", "body is not null"));
     }
+
+    private async Task<int> DrainAsync(NytkaApiFactory server)
+    {
+        // A run that spins without progress trips the timeout instead of hanging the suite.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var ran = await server.Get<JobRunner>().RunDueJobsAsync(cts.Token);
+        server.Time.Advance(TimeSpan.FromSeconds(61));
+        await server.Get<Scheduler>().TickAsync(default);
+        return ran + await server.Get<JobRunner>().RunDueJobsAsync(cts.Token);
+    }
+
+    [Fact]
+    public async Task Tiny_chunks_drain_completely_in_bounded_runs()
+    {
+        var server = NewServer();
+        var parts = Enumerable.Range(0, 39).SelectMany(_ => new[] { Tone(20), Silence(3) }).ToArray();
+        var chunks = Chunks(_session, 9, parts);
+        Assert.True(chunks.Count > 4_900);
+        await server.UploadAsync(chunks);
+
+        var ran = await DrainAsync(server);
+
+        var batches = await db.QueryAsync<(DateTime, DateTime)>(
+            "select started_at, ended_at from transcription_batches order by started_at");
+        Assert.Equal(39, batches.Count());
+        Assert.All(batches, b => Assert.InRange((b.Item2 - b.Item1).TotalSeconds, 20, 21));
+        Assert.Equal(0, await Count("audio_chunks", "body is not null"));
+        Assert.InRange(ran, 1, 39 * 2 + 20); // one transcription per batch plus a few process runs
+    }
+
+    [Fact]
+    public async Task Tiny_chunks_of_unbroken_speech_drain_through_the_hard_max()
+    {
+        var server = NewServer();
+        var chunks = Chunks(_session, 9, Tone(900));
+        await server.UploadAsync(chunks);
+
+        var ran = await DrainAsync(server);
+
+        var batches = (await db.QueryAsync<(DateTime, DateTime)>(
+            "select started_at, ended_at from transcription_batches order by started_at")).ToList();
+        Assert.InRange(batches.Count, 20, 45);
+        Assert.All(batches, b => Assert.InRange((b.Item2 - b.Item1).TotalSeconds, 1, 46));
+        Assert.Equal(0, await Count("audio_chunks", "body is not null"));
+        Assert.InRange(ran, 1, batches.Count * 2 + 20);
+    }
 }
