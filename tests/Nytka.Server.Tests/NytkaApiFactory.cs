@@ -1,10 +1,15 @@
+using System.Buffers.Text;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using Dapper;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
+using Npgsql;
 using Nytka.Audio.Vad;
 using Nytka.Server.Jobs;
 using Nytka.Server.Transcription;
@@ -12,9 +17,10 @@ using Nytka.Server.Transcription;
 namespace Nytka.Server.Tests;
 
 /// <summary>
-/// The real server on a real (Testcontainers) database, with a fake clock. The job runner and the
-/// scheduler do not run on their own: tests call <see cref="RunJobsAsync"/> and
-/// <see cref="Scheduler.TickAsync"/> when they want them.
+/// The real server on a real (Testcontainers) database, with a fake clock. The job runners and the
+/// scheduler do not run on their own: tests call <see cref="RunJobsAsync"/>, which runs every lane,
+/// and <see cref="Scheduler.TickAsync"/> when they want them. A test extends the host through
+/// <c>configure</c> (settings, as environment variables would supply them) and <c>services</c>.
 /// </summary>
 public sealed class NytkaApiFactory(
     PostgresFixture db,
@@ -32,6 +38,37 @@ public sealed class NytkaApiFactory(
     {
         var client = CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        return client;
+    }
+
+    /// <summary>
+    /// A client whose bearer token is a new named token of <paramref name="scope"/> (<c>admin</c> or
+    /// <c>read</c>). Its row goes straight into <c>api_tokens</c>, hashed as the API stores tokens.
+    /// </summary>
+    public HttpClient CreateClientWithScope(string scope)
+    {
+        var token = "nyt_" + Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
+        var id = Guid.CreateVersion7(Time.GetUtcNow());
+        using (var connection = Get<NpgsqlDataSource>().OpenConnection())
+        {
+            connection.Execute(
+                """
+                insert into api_tokens (id, name, scope, token_hash, hint, created_at)
+                values (@id, @name, @scope, @hash, @hint, @now)
+                """,
+                new
+                {
+                    id,
+                    name = $"test-{scope}-{id:N}",
+                    scope,
+                    hash = SHA256.HashData(Encoding.UTF8.GetBytes(token)),
+                    hint = token[^4..],
+                    now = Time.GetUtcNow(),
+                });
+        }
+
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return client;
     }
 
