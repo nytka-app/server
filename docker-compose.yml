@@ -1,68 +1,43 @@
-name: omi-platform
-
-# The MCP server gets only this half: it never calls Omi, so it holds no API key.
-x-db-env: &db-env
-  ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-omi};Username=${POSTGRES_USER:-omi};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-  TZ: "${TZ:-UTC}"
-
-x-dotnet-env: &dotnet-env
-  <<: *db-env
-  Omi__ApiKey: "${Omi__ApiKey:?create a Developer API key in the Omi app: Settings -> Developer -> API Keys}"
-  Omi__BackfillFrom: "${Omi__BackfillFrom:?set Omi__BackfillFrom to roughly when you started wearing the necklace, yyyy-MM-dd}"
-  Omi__ReconcileTrailingDays: "${Omi__ReconcileTrailingDays:-3}"
+name: nytka
 
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: "${POSTGRES_DB:-omi}"
-      POSTGRES_USER: "${POSTGRES_USER:-omi}"
+      POSTGRES_DB: nytka
+      POSTGRES_USER: nytka
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-      TZ: "${TZ:-UTC}"
-    ports:
-      # Bound to loopback: the only reason to expose this is ad-hoc psql from the host.
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omi} -d ${POSTGRES_DB:-omi}"]
+      test: ["CMD-SHELL", "pg_isready -U nytka -d nytka"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
-  # Runs the migrations, backfills once, then reconciles on a timer. Single instance -- see the
-  # invariant in CLAUDE.md. Do not scale this.
-  ingest:
-    build:
-      context: .
-      args:
-        PROJECT: OmiPlatform.Ingest
+  server:
+    image: "ghcr.io/nytka-app/server:${NYTKA_VERSION:-latest}"
+    # `docker compose up --build` builds from a checkout instead of pulling.
+    build: .
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    environment: *dotnet-env
-
-  # Read-only analytics over the warehouse, spoken as MCP. Holds no Omi credential and never calls
-  # the API -- the value is in the warehouse, not in proxying the app.
-  mcp:
-    build:
-      context: .
-      args:
-        PROJECT: OmiPlatform.Mcp
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment: *db-env
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=nytka;Username=nytka;Password=${POSTGRES_PASSWORD}"
+      Nytka__AdminToken: "${Nytka__AdminToken:?set Nytka__AdminToken in .env (32+ characters: openssl rand -hex 24)}"
+      Nytka__Stt__Url: "${Nytka__Stt__Url:?set Nytka__Stt__Url in .env}"
+      Nytka__Stt__ApiKey: "${Nytka__Stt__ApiKey:-}"
+      Nytka__Stt__Model: "${Nytka__Stt__Model:-}"
+      Nytka__Stt__Language: "${Nytka__Stt__Language:-}"
+      Nytka__Conversations__Gap: "${Nytka__Conversations__Gap:-00:02:00}"
+      Nytka__Audio__RetentionDays: "${Nytka__Audio__RetentionDays:-14}"
     ports:
-      # Loopback: no auth, and it serves full transcripts. Put an authenticating proxy in front to
-      # share it.
-      - "127.0.0.1:${MCP_PORT:-8089}:8080"
+      # Loopback by default: put a reverse proxy in front, or set NYTKA_BIND to a tailnet address.
+      - "${NYTKA_BIND:-127.0.0.1}:${NYTKA_PORT:-8080}:8080"
     healthcheck:
-      # Degraded, still a 200, until ingest has backfilled anything to read.
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
       interval: 30s
       timeout: 5s

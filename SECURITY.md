@@ -7,11 +7,11 @@ vulnerability"). Don't open a public issue. Expect an acknowledgement within 7 d
 
 ## Scope notes
 
-The warehouse holds recorded conversations, of the wearer and of the people around them, and the
-ingest process holds an Omi developer API key. Report any path where a transcript, a memory, the key
-or a private identifier can leak into logs, images or files, and any way to reach the MCP server
-from beyond the host that runs it.
+The server holds recorded speech and transcripts of the wearer and of the people around them, an
+admin token, and possibly a key for a transcription provider. Report any way to reach the API
+without the token, any path where audio, a transcript or a token can leak into logs, error
+messages, images or files, and any way a chunk upload can read or overwrite data it should not.
 
 ## Supported versions
 
-Only the latest commit on `main`.
+The latest release.
