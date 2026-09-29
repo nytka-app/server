@@ -1,3 +1,4 @@
+using Dapper;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Nytka.Storage;
@@ -45,6 +46,24 @@ public sealed class PostgresFixture : IAsyncLifetime
             """,
             connection);
         await command.ExecuteNonQueryAsync();
+    }
+
+    public async Task<T> ScalarAsync<T>(string sql, object? args = null)
+    {
+        await using var connection = await DataSource.OpenConnectionAsync();
+        return (await connection.ExecuteScalarAsync<T>(sql, args))!;
+    }
+
+    public async Task ExecuteAsync(string sql, object? args = null)
+    {
+        await using var connection = await DataSource.OpenConnectionAsync();
+        await connection.ExecuteAsync(sql, args);
+    }
+
+    public async Task<List<T>> QueryAsync<T>(string sql, object? args = null)
+    {
+        await using var connection = await DataSource.OpenConnectionAsync();
+        return (await connection.QueryAsync<T>(sql, args)).ToList();
     }
 }
 

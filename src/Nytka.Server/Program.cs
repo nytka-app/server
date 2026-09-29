@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Nytka.Server;
 using Nytka.Server.Api;
 using Nytka.Server.Auth;
+using Nytka.Server.Jobs;
 using Nytka.Storage;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -25,6 +26,10 @@ builder.Services.AddOptions<NytkaOptions>()
 builder.Services.AddNytkaStorage();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddProblemDetails();
+builder.Services.AddSingleton<JobRunner>();
+builder.Services.AddSingleton<Scheduler>();
+builder.Services.AddHostedService<JobRunnerService>();
+builder.Services.AddHostedService<SchedulerService>();
 
 var app = builder.Build();
 

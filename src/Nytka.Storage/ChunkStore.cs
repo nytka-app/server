@@ -80,4 +80,13 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
         await transaction.CommitAsync(ct);
         return StoreOutcome.Stored;
     }
+
+    /// <summary>Sessions that still hold chunk audio the pipeline has not finished with.</summary>
+    public async Task<IReadOnlyList<Guid>> SessionsWithPendingAudioAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var sessions = await connection.QueryAsync<Guid>(new CommandDefinition(
+            "select distinct session_id from audio_chunks where body is not null", cancellationToken: ct));
+        return sessions.ToList();
+    }
 }

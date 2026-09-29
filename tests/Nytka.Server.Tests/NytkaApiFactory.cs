@@ -1,13 +1,23 @@
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
+using Nytka.Server.Jobs;
 
 namespace Nytka.Server.Tests;
 
-/// <summary>The real server on a real (Testcontainers) database, with a fake clock.</summary>
-public sealed class NytkaApiFactory(PostgresFixture db, Action<IDictionary<string, string?>>? configure = null)
+/// <summary>
+/// The real server on a real (Testcontainers) database, with a fake clock. The job runner and the
+/// scheduler do not run on their own: tests call <see cref="RunJobsAsync"/> and
+/// <see cref="Scheduler.TickAsync"/> when they want them.
+/// </summary>
+public sealed class NytkaApiFactory(
+    PostgresFixture db,
+    Action<IDictionary<string, string?>>? configure = null,
+    Action<IServiceCollection>? services = null)
     : WebApplicationFactory<Program>
 {
     public const string Token = "test-admin-token-0123456789-abcdefghij";
@@ -20,6 +30,11 @@ public sealed class NytkaApiFactory(PostgresFixture db, Action<IDictionary<strin
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
         return client;
     }
+
+    public T Get<T>()
+        where T : notnull => Services.GetRequiredService<T>();
+
+    public Task<int> RunJobsAsync() => Get<JobRunner>().RunDueJobsAsync(CancellationToken.None);
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -36,6 +51,20 @@ public sealed class NytkaApiFactory(PostgresFixture db, Action<IDictionary<strin
             builder.UseSetting(key, value);
         }
 
-        builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(Time));
+        // ConfigureTestServices runs after Program.cs registered its services, so these win.
+        builder.ConfigureTestServices(s =>
+        {
+            s.AddSingleton<TimeProvider>(Time);
+
+            var background = s.Where(d => d.ServiceType == typeof(IHostedService)
+                    && (d.ImplementationType == typeof(JobRunnerService) || d.ImplementationType == typeof(SchedulerService)))
+                .ToList();
+            foreach (var descriptor in background)
+            {
+                s.Remove(descriptor);
+            }
+
+            services?.Invoke(s);
+        });
     }
 }

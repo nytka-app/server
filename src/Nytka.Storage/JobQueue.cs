@@ -13,13 +13,64 @@ public sealed class JobQueue(NpgsqlDataSource dataSource)
     public async Task EnqueueAsync(string kind, object payload, string? dedupeKey, DateTimeOffset runAfter, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        await connection.ExecuteAsync(new CommandDefinition(
+        await EnqueueAsync(connection, null, kind, payload, dedupeKey, runAfter, ct);
+    }
+
+    /// <summary>Queues a job inside the caller's transaction: it exists only if that transaction commits.</summary>
+    public Task EnqueueAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, string kind, object payload, string? dedupeKey,
+        DateTimeOffset runAfter, CancellationToken ct) =>
+        connection.ExecuteAsync(new CommandDefinition(
             """
             insert into jobs (kind, payload, dedupe_key, run_after, created_at)
             values (@kind, cast(@payload as jsonb), @dedupeKey, @runAfter, now())
             on conflict (dedupe_key) where dedupe_key is not null do nothing
             """,
             new { kind, payload = JsonSerializer.Serialize(payload), dedupeKey, runAfter },
+            transaction, cancellationToken: ct));
+
+    /// <summary>
+    /// Leases the next due job until <c>now + lease</c> and counts the attempt. A job whose lease
+    /// ran out (the process died mid-job) is due again.
+    /// </summary>
+    public async Task<JobRecord?> DequeueAsync(DateTimeOffset now, TimeSpan lease, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<JobRecord>(new CommandDefinition(
+            """
+            update jobs set locked_until = @lockedUntil, attempts = attempts + 1
+            where id = (
+                select id from jobs
+                where run_after <= @now and (locked_until is null or locked_until < @now)
+                order by run_after, id
+                for update skip locked
+                limit 1)
+            returning id as Id, kind as Kind, payload::text as Payload, attempts as Attempts
+            """,
+            new { now, lockedUntil = now + lease },
             cancellationToken: ct));
+    }
+
+    public Task CompleteAsync(long id, CancellationToken ct) =>
+        ExecuteAsync("delete from jobs where id = @id", new { id }, ct);
+
+    /// <summary>Puts a job back to run at <paramref name="runAfter"/> with fresh attempts.</summary>
+    public Task RescheduleAsync(long id, DateTimeOffset runAfter, CancellationToken ct) =>
+        ExecuteAsync(
+            "update jobs set run_after = @runAfter, locked_until = null, attempts = 0, last_error = null where id = @id",
+            new { id, runAfter },
+            ct);
+
+    /// <summary>Records a failed attempt; the job runs again at <paramref name="runAfter"/>.</summary>
+    public Task FailAsync(long id, string error, DateTimeOffset runAfter, CancellationToken ct) =>
+        ExecuteAsync(
+            "update jobs set run_after = @runAfter, locked_until = null, last_error = @error where id = @id",
+            new { id, error, runAfter },
+            ct);
+
+    private async Task ExecuteAsync(string sql, object args, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition(sql, args, cancellationToken: ct));
     }
 }
