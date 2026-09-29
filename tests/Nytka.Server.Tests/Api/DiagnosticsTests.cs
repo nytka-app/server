@@ -74,6 +74,8 @@ public sealed class DiagnosticsTests(PostgresFixture db) : IAsyncLifetime
     [InlineData("""[{"id":"nope","at":"2026-09-29T09:15:00Z"}]""")]
     [InlineData("""[{"id":"0199c2f0-0000-7000-8000-000000000000","at":"yesterday"}]""")]
     [InlineData("""[{"id":"0199c2f0-0000-7000-8000-000000000000","at":12}]""")]
+    [InlineData("""[{"id":"0199c2f0-0000-7000-8000-000000000000","at":"2026-09-29T09:15:00Z","x":"a\u0000b"}]""")]
+    [InlineData("""[{"id":"0199c2f0-0000-7000-8000-000000000000","at":"2026-09-29T09:15:00Z","x":"\ud800"}]""")]
     public async Task Malformed_bodies_are_rejected(string json)
     {
         var response = await Post(_server.CreateAuthorizedClient(), json);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Npgsql;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -53,7 +54,17 @@ public static class DiagnosticsEndpoints
             return Malformed();
         }
 
-        await diagnostics.StoreAsync(samples, time.GetUtcNow(), ct);
+        try
+        {
+            await diagnostics.StoreAsync(samples, time.GetUtcNow(), ct);
+        }
+        catch (PostgresException error) when (error.SqlState.StartsWith("22", StringComparison.Ordinal))
+        {
+            // Valid JSON that jsonb refuses (\u0000, a lone surrogate, a number out of range). A 400 stops
+            // the app retrying it, and the exception, whose context quotes the payload, is never logged.
+            return Malformed();
+        }
+
         return Results.Ok(new UploadResponse(samples.Count));
     }
 
