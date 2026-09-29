@@ -6,6 +6,7 @@ using Nytka.Audio.Decoding;
 using Nytka.Audio.Frames;
 using Nytka.Audio.Vad;
 using Nytka.Audio.Wav;
+using Nytka.Server.Ai;
 using Nytka.Server.Jobs;
 using Nytka.Storage;
 
@@ -22,6 +23,7 @@ public sealed class ProcessSessionHandler(
     ConversationStore conversations,
     BatchStore batches,
     JobQueue jobs,
+    ILlmClient llm,
     IVoiceActivityDetector vad,
     IOptions<NytkaOptions> options,
     TimeProvider time,
@@ -132,14 +134,25 @@ public sealed class ProcessSessionHandler(
             var start = DateTimeOffset.FromUnixTimeMilliseconds(Math.Max(planned.StartMs, timeline.StartMs));
             var end = DateTimeOffset.FromUnixTimeMilliseconds(Math.Min(planned.EndMs, timeline.EndMs));
 
-            var conversationId = await conversations.AssignAsync(
+            var assignment = await conversations.AssignAsync(
                 connection, transaction, start, end, options.Value.Conversations.Gap, now, ct);
+            var conversationId = assignment.Id;
+            if (assignment.Merged && llm.IsConfigured)
+            {
+                // The merged conversation reads differently: summarize it again, and never show pending without a job.
+                await conversations.MarkEnrichmentPendingAsync(connection, transaction, conversationId, resetFailures: true, ct);
+                await jobs.EnqueueAsync(
+                    connection, transaction, JobKinds.EnrichConversation, new EnrichPayload(conversationId, false),
+                    JobKinds.EnrichConversationKey(conversationId), now, ct);
+            }
+
             var batchId = await batches.CreateAsync(
                 connection, transaction,
                 new NewBatch(conversationId, start, end, WavWriter.Write(audio.Samples), audio.Map.ToJson(), SpeechAudio(sessionId, audio.SpeechFrames)),
                 now, ct);
             await jobs.EnqueueAsync(
-                connection, transaction, JobKinds.Transcribe, new BatchPayload(batchId), JobKinds.TranscribeKey(batchId), now, ct);
+                connection, transaction, JobKinds.Transcribe, new BatchPayload(batchId), JobKinds.TranscribeKey(batchId), now, ct,
+                JobPriority.ForAudioEndingAt(end, now));
         }
 
         await chunks.MarkProcessedAsync(
