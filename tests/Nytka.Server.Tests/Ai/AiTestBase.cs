@@ -39,7 +39,12 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
     protected void StartServer(Action<IDictionary<string, string?>>? configure = null)
     {
         Server?.Dispose();
-        Server = new NytkaApiFactory(db, configure, services =>
+        // Memory extraction would share the fake model and count as one more request.
+        Server = new NytkaApiFactory(db, settings =>
+        {
+            settings["Nytka:Memories:Enabled"] = "false";
+            configure?.Invoke(settings);
+        }, services =>
         {
             services.AddSingleton<ILlmClient>(Llm);
             services.AddSingleton<IEventSubscriber>(Events);

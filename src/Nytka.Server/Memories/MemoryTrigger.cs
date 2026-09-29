@@ -1,0 +1,39 @@
+using Npgsql;
+using Nytka.Server.Ai;
+using Nytka.Server.Events;
+using Nytka.Server.Jobs;
+using Nytka.Server.Pipeline;
+using Nytka.Server.Settings;
+using Nytka.Storage;
+
+namespace Nytka.Server.Memories;
+
+/// <summary>
+/// Queues <c>extract-memories</c> for every stored summary (<c>conversation.ready</c>), in the summary's own
+/// transaction, when <c>memories.enabled</c> is on and the model is configured.
+/// </summary>
+public sealed class MemoryTrigger(
+    IServiceProvider services, SettingsService settings, MemoryStore memories, JobQueue queue, TimeProvider time)
+    : IEventSubscriber
+{
+    public async Task OnEventAsync(
+        NytkaEvent nytkaEvent, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
+    {
+        if (nytkaEvent.Type != NytkaEvent.ConversationReady
+            || !MemorySettings.IsEnabled(settings)
+            || !services.GetRequiredService<ILlmClient>().IsConfigured)
+        {
+            return;
+        }
+
+        var now = time.GetUtcNow();
+        if (!await memories.MarkPendingAsync(connection, transaction, nytkaEvent.SubjectId, now, ct))
+        {
+            return;
+        }
+
+        await queue.EnqueueAsync(
+            connection, transaction, JobKinds.ExtractMemories, new ExtractPayload(nytkaEvent.SubjectId),
+            JobKinds.ExtractMemoriesKey(nytkaEvent.SubjectId), now, ct);
+    }
+}
