@@ -5,9 +5,12 @@ using Npgsql;
 namespace Nytka.Storage;
 
 /// <summary>One search hit: a conversation (best of its title, summary and segments) or a memory.</summary>
-/// <remarks><see cref="Snippet"/> is plain text with <see cref="SearchStore.MarkStart"/> and <see cref="SearchStore.MarkEnd"/> around matches.</remarks>
+/// <remarks>
+/// <see cref="Snippet"/> is plain text with <see cref="SearchStore.MarkStart"/> and <see cref="SearchStore.MarkEnd"/> around matches.
+/// <see cref="SegmentId"/> is the conversation's best-matching segment, null for a memory and when only the title or summary matched.
+/// </remarks>
 public sealed record SearchHitRow(
-    string Kind, Guid Id, float Score, string? Title, string Snippet, DateTime At, Guid? ConversationId);
+    string Kind, Guid Id, float Score, string? Title, string Snippet, DateTime At, Guid? ConversationId, long? SegmentId = null);
 
 /// <summary>
 /// Full-text search over transcripts, titles, summaries and memories (config <c>nytka</c>). Postgres loads the
@@ -56,31 +59,34 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     }
 
     /// <summary>
-    /// Every term must match, each as a prefix. Ranked by <c>ts_rank_cd</c> with its default weights (title 1.0,
+    /// Every term must match (or any one, with <c>anyTerm</c>), each as a prefix. Ranked by <c>ts_rank_cd</c> with its default weights (title 1.0,
     /// summary and memory 0.4, transcript 0.1), best score first. Fetches <paramref name="limit"/> rows from
     /// <paramref name="offset"/>; the caller asks for one extra to learn whether a page follows. Rows the indexer has
-    /// not reached yet are not found.
+    /// not reached yet are not found. <paramref name="from"/> and <paramref name="to"/> (exclusive) keep conversations
+    /// that started, and memories that were last changed, inside that range.
     /// </summary>
     public async Task<IReadOnlyList<SearchHitRow>> SearchAsync(
-        IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct)
+        IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct,
+        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false)
     {
         try
         {
-            return await QueryAsync(terms, conversations, memories, limit, offset, ct);
+            return await QueryAsync(terms, conversations, memories, limit, offset, from, to, anyTerm, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ConfigFileError)
         {
             // The dictionary files went away while the server ran: fall back to simple, then ask again.
             await SetupDictionaryAsync(Simple, ct);
-            return await QueryAsync(terms, conversations, memories, limit, offset, ct);
+            return await QueryAsync(terms, conversations, memories, limit, offset, from, to, anyTerm, ct);
         }
     }
 
     private async Task<IReadOnlyList<SearchHitRow>> QueryAsync(
-        IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct)
+        IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset,
+        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, CancellationToken ct)
     {
         var parameters = new DynamicParameters();
-        var query = string.Join(" && ", terms.Select((term, i) =>
+        var query = string.Join(anyTerm ? " || " : " && ", terms.Select((term, i) =>
         {
             parameters.Add($"t{i}", term + ":*");
             return $"to_tsquery('nytka', @t{i})";
@@ -89,6 +95,8 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         parameters.Add("memories", memories);
         parameters.Add("limit", limit);
         parameters.Add("offset", offset);
+        parameters.Add("from", from);
+        parameters.Add("to", to);
 
         await using var connection = await DataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<SearchHitRow>(new CommandDefinition(
@@ -100,7 +108,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 where @conversations and c.search @@ q.query
             ),
             best_segment as (
-                select distinct on (s.conversation_id) s.conversation_id as id, s.text,
+                select distinct on (s.conversation_id) s.conversation_id as id, s.id as segment_id, s.text,
                        ts_rank_cd(s.search, q.query) as score
                 from segments s cross join q
                 where @conversations and s.search @@ q.query
@@ -110,15 +118,19 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 select 'conversation' as kind, c.id, greatest(ts.score, bs.score) as score,
                        coalesce(c.title, c.ai_title) as title,
                        coalesce(bs.text, c.ai_summary, '') as source, c.started_at as at,
-                       null::uuid as conversation_id
+                       null::uuid as conversation_id, bs.segment_id
                 from conversations c
                 left join title_summary ts on ts.id = c.id
                 left join best_segment bs on bs.id = c.id
-                where ts.id is not null or bs.id is not null
+                where (ts.id is not null or bs.id is not null)
+                  and (cast(@from as timestamptz) is null or c.started_at >= cast(@from as timestamptz))
+                  and (cast(@to as timestamptz) is null or c.started_at < cast(@to as timestamptz))
                 union all
-                select 'memory', m.id, ts_rank_cd(m.search, q.query), null, m.text, m.updated_at, m.conversation_id
+                select 'memory', m.id, ts_rank_cd(m.search, q.query), null, m.text, m.updated_at, m.conversation_id, null::bigint
                 from memories m cross join q
                 where @memories and m.deleted_at is null and m.search @@ q.query
+                  and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
+                  and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
             ),
             page as (
                 select * from hits order by score desc, at desc, id limit @limit offset @offset
@@ -126,7 +138,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
             select p.kind as Kind, p.id as Id, p.score as Score, p.title as Title,
                    case when p.source = '' then ''
                         else ts_headline('nytka', translate(p.source, U&'\E000\E001', ''), q.query, {Headline}) end as Snippet,
-                   p.at as At, p.conversation_id as ConversationId
+                   p.at as At, p.conversation_id as ConversationId, p.segment_id as SegmentId
             from page p cross join q
             order by p.score desc, p.at desc, p.id
             """,
