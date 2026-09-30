@@ -28,13 +28,23 @@ public sealed class PlaybackMapTests
     }
 
     [Fact]
-    public void A_dropped_frame_splits_a_run_and_jitter_does_not()
+    public void Bursty_delivery_stays_one_run_and_a_pause_splits()
     {
-        var jittery = new[] { At(0), At(23), At(38), At(60) };
-        Assert.Single(PlaybackMap.Build(jittery).Runs);
+        // Frames stamped in bursts of three, 60 ms apart: single spacings are 0 or 60 ms.
+        var bursty = Enumerable.Range(0, 30).Select(i => At((i / 3) * 60)).ToArray();
+        Assert.Single(PlaybackMap.Build(bursty).Runs);
 
-        var dropped = new[] { At(0), At(20), At(60), At(80) };
-        Assert.Equal(2, PlaybackMap.Build(dropped).Runs.Count);
+        var paused = new[] { At(0), At(20), At(40), At(340), At(360) };
+        var runs = PlaybackMap.Build(paused).Runs;
+        Assert.Equal([new PlaybackRun(0, 0, 60), new PlaybackRun(60, 340, 380)], runs);
+    }
+
+    [Fact]
+    public void A_run_ends_at_its_latest_frame()
+    {
+        var map = PlaybackMap.Build([At(0), At(60), At(40), At(60)]);
+
+        Assert.Equal([new PlaybackRun(0, 0, 80)], map.Runs);
     }
 
     [Fact]
