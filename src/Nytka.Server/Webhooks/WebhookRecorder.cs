@@ -19,7 +19,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
 
     /// <summary>The types a webhook can ask for, <c>ping</c> (the test call's own) aside.</summary>
     public static readonly IReadOnlyList<string> Types =
-        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated];
+        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated];
 
     public const string Ping = "ping";
 
@@ -119,6 +119,13 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                 return await connection.QuerySingleOrDefaultAsync<MemoryData>(new CommandDefinition(
                     "select id as Id, text as Text, conversation_id as ConversationId from memories where id = @id and deleted_at is null",
                     new { id = e.SubjectId }, transaction, cancellationToken: ct));
+            case NytkaEvent.BookmarkCreated:
+                return await connection.QuerySingleOrDefaultAsync<BookmarkData>(new CommandDefinition(
+                    """
+                    select b.id as Id, b.at as At, b.note as Note, b.source as Source
+                    from bookmarks b where b.id = @id
+                    """,
+                    new { id = e.SubjectId }, transaction, cancellationToken: ct));
             default:
                 return null;
         }
@@ -158,4 +165,6 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         DateTime? DoneAt, DateTime CreatedAt);
 
     private sealed record MemoryData(Guid Id, string Text, Guid? ConversationId);
+
+    private sealed record BookmarkData(Guid Id, DateTime At, string? Note, string Source);
 }

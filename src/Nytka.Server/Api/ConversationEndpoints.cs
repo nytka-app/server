@@ -28,7 +28,8 @@ public static class ConversationEndpoints
 
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
-        bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments);
+        bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
+        IReadOnlyList<BookmarkRef> Bookmarks);
 
     public sealed record EnrichResponse(string AiStatus);
 
@@ -47,10 +48,11 @@ public static class ConversationEndpoints
     }
 
     private static async Task<IResult> GetAsync(
-        Guid id, ConversationStore conversations, TaskStore tasks, CancellationToken ct) =>
-        await DetailAsync(id, conversations, tasks, ct);
+        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, CancellationToken ct) =>
+        await DetailAsync(id, conversations, tasks, bookmarks, ct);
 
-    private static async Task<IResult> DetailAsync(Guid id, ConversationStore conversations, TaskStore tasks, CancellationToken ct)
+    private static async Task<IResult> DetailAsync(
+        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, CancellationToken ct)
     {
         if (await conversations.GetAsync(id, ct) is not { } conversation)
         {
@@ -61,12 +63,14 @@ public static class ConversationEndpoints
         return Results.Ok(new ConversationDetail(
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Title,
             conversation.Summary, conversation.AiStatus, conversation.TitleEdited, conversation.AiMessage,
-            conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments));
+            conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments,
+            await bookmarks.ForConversationAsync(id, ct)));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
     private static async Task<IResult> PatchAsync(
-        Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, TimeProvider time, CancellationToken ct)
+        Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TimeProvider time,
+        CancellationToken ct)
     {
         string? title = null;
         if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("title", out var value))
@@ -88,7 +92,7 @@ public static class ConversationEndpoints
         }
 
         return await conversations.SetTitleAsync(id, title, time.GetUtcNow(), ct)
-            ? await DetailAsync(id, conversations, tasks, ct)
+            ? await DetailAsync(id, conversations, tasks, bookmarks, ct)
             : NotFound();
     }
 
