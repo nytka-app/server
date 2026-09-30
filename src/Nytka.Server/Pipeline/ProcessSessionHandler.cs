@@ -8,6 +8,7 @@ using Nytka.Audio.Vad;
 using Nytka.Audio.Wav;
 using Nytka.Server.Ai;
 using Nytka.Server.Jobs;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Pipeline;
@@ -26,6 +27,7 @@ public sealed class ProcessSessionHandler(
     ILlmClient llm,
     IVoiceActivityDetector vad,
     IOptions<NytkaOptions> options,
+    SettingsService settings,
     TimeProvider time,
     ILogger<ProcessSessionHandler> logger) : IJobHandler
 {
@@ -76,6 +78,7 @@ public sealed class ProcessSessionHandler(
         var timeline = Timeline.Decode(used.SelectMany(c => ChunkFormat.Read(c.Body).Frames).ToList());
         var processedThrough = session.ProcessedThroughAt is { } at ? new DateTimeOffset(at).ToUnixTimeMilliseconds() : long.MinValue;
         var detection = Detector.Detect(VadScanner.Scan(timeline, vad)).TrimBefore(processedThrough);
+        detection = DropMuted(detection, timeline, sessionId);
         var idle = !waiting && !more && session.LastReceivedAt <= (now - IdleAfter).UtcDateTime;
         var plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: idle);
         var newThrough = Math.Max(processedThrough, plan.ProcessedThroughMs(timeline.EndMs));
@@ -109,6 +112,29 @@ public sealed class ProcessSessionHandler(
         return await chunks.HasPendingBeyondAsync(sessionId, usedSeqs, ct)
             ? JobOutcome.RunAgain(TimeSpan.Zero)
             : JobOutcome.Done;
+    }
+
+    /// <summary>
+    /// Removes speech captured inside a mute window (the pendant records while the phone is away and
+    /// the phone mutes only live audio). Windows are widened by one frame so no frame that touches
+    /// one is kept. Logs how many seconds went, nothing else.
+    /// </summary>
+    private SpeechDetection DropMuted(SpeechDetection detection, Timeline timeline, Guid sessionId)
+    {
+        if (MuteWindows.TryParse(settings.Get(CoreSettings.MuteKey) ?? "[]", out var windows) is { })
+        {
+            throw new InvalidOperationException("The setting mute.windows is not valid; nothing is processed until it is fixed.");
+        }
+
+        var muted = windows.Intervals(UserTimeZone.Resolve(settings), timeline.StartMs, timeline.EndMs, Frame.DurationMs);
+        var kept = detection.Subtract(muted, Detector.MinSpeechMs);
+        var droppedMs = detection.DurationMs - kept.DurationMs;
+        if (droppedMs > 0)
+        {
+            logger.LogInformation("Session {SessionId}: dropped {Seconds} s of speech inside mute windows.", sessionId, droppedMs / 1000);
+        }
+
+        return kept;
     }
 
     private static List<PendingChunk> TakeWindow(IReadOnlyList<PendingChunk> loaded)

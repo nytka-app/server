@@ -50,6 +50,8 @@ services:
       Nytka__Stt__Language: "${Nytka__Stt__Language:-}"
       Nytka__Conversations__Gap: "${Nytka__Conversations__Gap:-}"
       Nytka__Audio__RetentionDays: "${Nytka__Audio__RetentionDays:-}"
+      Nytka__Mute__Windows: "${Nytka__Mute__Windows:-}"
+      Nytka__User__TimeZone: "${Nytka__User__TimeZone:-}"
       Nytka__Llm__BaseUrl: "${Nytka__Llm__BaseUrl:-}"
       Nytka__Llm__ApiKey: "${Nytka__Llm__ApiKey:-}"
       Nytka__Llm__Model: "${Nytka__Llm__Model:-}"

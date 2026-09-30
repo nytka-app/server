@@ -20,4 +20,65 @@ public sealed record SpeechDetection(IReadOnlyList<SpeechRegion> Closed, SpeechR
 
         return new SpeechDetection(closed, open);
     }
+
+    /// <summary>
+    /// Removes the muted stretches (sorted, not overlapping). A region cut by one keeps its parts
+    /// outside it, and a kept part shorter than <paramref name="minPieceMs"/> goes too. The open
+    /// region stays open only for the part that still reaches the end of the audio.
+    /// </summary>
+    public SpeechDetection Subtract(IReadOnlyList<SpeechRegion> muted, long minPieceMs)
+    {
+        if (muted.Count == 0)
+        {
+            return this;
+        }
+
+        var closed = Closed.SelectMany(r => Cut(r, muted, minPieceMs)).ToList();
+        SpeechRegion? open = null;
+        if (Open is { } o)
+        {
+            var pieces = Cut(o, muted, minPieceMs);
+            if (pieces.Count > 0 && pieces[^1].EndMs == o.EndMs)
+            {
+                open = pieces[^1];
+                pieces.RemoveAt(pieces.Count - 1);
+            }
+
+            closed.AddRange(pieces);
+        }
+
+        return new SpeechDetection(closed, open);
+    }
+
+    /// <summary>Total speech in the detection, in ms.</summary>
+    public long DurationMs => Closed.Sum(r => r.DurationMs) + (Open?.DurationMs ?? 0);
+
+    private static List<SpeechRegion> Cut(SpeechRegion region, IReadOnlyList<SpeechRegion> muted, long minPieceMs)
+    {
+        var pieces = new List<SpeechRegion>();
+        var start = region.StartMs;
+        var cut = false;
+        foreach (var mute in muted)
+        {
+            if (mute.EndMs <= start || mute.StartMs >= region.EndMs)
+            {
+                continue;
+            }
+
+            cut = true;
+            if (mute.StartMs > start)
+            {
+                pieces.Add(new SpeechRegion(start, mute.StartMs));
+            }
+
+            start = Math.Max(start, mute.EndMs);
+        }
+
+        if (start < region.EndMs)
+        {
+            pieces.Add(new SpeechRegion(start, region.EndMs));
+        }
+
+        return cut ? pieces.Where(p => p.DurationMs >= minPieceMs).ToList() : pieces;
+    }
 }
