@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/nytka-app/server/compare/v0.6.0...v0.7.0) (2026-09-30)
+
+
+### Features
+
+* drop audio captured inside mute windows before transcription ([#41](https://github.com/nytka-app/server/issues/41)) ([49f6fb3](https://github.com/nytka-app/server/commit/49f6fb36add948d54788f100176dc8d0162da9f7))
+
 ## [0.6.0](https://github.com/nytka-app/server/compare/v0.5.0...v0.6.0) (2026-09-30)
 
 
