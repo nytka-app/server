@@ -10,26 +10,32 @@ public readonly record struct PlaybackRun(int OffsetMs, long StartMs, long EndMs
 
 /// <summary>
 /// Maps stream positions to capture times. Pauses are not stored, so the stream is shorter than the
-/// conversation; each capture-time jump starts a new run.
+/// conversation; a frame whose capture time strays from where its run predicts starts a new run.
 /// </summary>
 public sealed record PlaybackMap(int DurationMs, IReadOnlyList<PlaybackRun> Runs)
 {
-    /// <summary>Frames closer or further than this from 20 ms apart (a dropped frame, a clock step) split a run.</summary>
-    public const int SpacingToleranceMs = 10;
+    /// <summary>
+    /// How far a frame may stray from its run's 20 ms grid and still extend it. Bluetooth delivers frames
+    /// in bursts, so single spacings vary widely; a pause between speech regions is longer than this.
+    /// </summary>
+    public const int DriftToleranceMs = 200;
 
     public static PlaybackMap Build(IReadOnlyList<Frame> frames)
     {
         var runs = new List<PlaybackRun>();
+        var runStart = 0;
         for (var i = 0; i < frames.Count; i++)
         {
             var frame = frames[i];
-            if (i > 0 && Math.Abs(frame.CapturedAtMs - frames[i - 1].CapturedAtMs - Frame.DurationMs) <= SpacingToleranceMs)
+            if (runs.Count > 0
+                && Math.Abs(frame.CapturedAtMs - (runs[^1].StartMs + ((long)(i - runStart) * Frame.DurationMs))) <= DriftToleranceMs)
             {
-                runs[^1] = runs[^1] with { EndMs = frame.EndMs };
+                runs[^1] = runs[^1] with { EndMs = Math.Max(runs[^1].EndMs, frame.EndMs) };
             }
             else
             {
                 runs.Add(new PlaybackRun(i * Frame.DurationMs, frame.CapturedAtMs, frame.EndMs));
+                runStart = i;
             }
         }
 
