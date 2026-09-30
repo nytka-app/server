@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/nytka-app/server/compare/v0.8.0...v0.8.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **audio:** split playback runs on drift, not on single-frame spacing ([#49](https://github.com/nytka-app/server/issues/49)) ([92e4fd0](https://github.com/nytka-app/server/commit/92e4fd0824765020302be820e644d71553f8d55c))
+
 ## [0.8.0](https://github.com/nytka-app/server/compare/v0.7.0...v0.8.0) (2026-09-30)
 
 
