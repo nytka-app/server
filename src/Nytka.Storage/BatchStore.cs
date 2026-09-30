@@ -150,6 +150,15 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             cancellationToken: ct));
     }
 
+    /// <summary>A conversation's speech audio bodies (chunk format) in capture order.</summary>
+    public async Task<IReadOnlyList<byte[]>> SpeechAudioBodiesAsync(Guid conversationId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<byte[]>(new CommandDefinition(
+            "select body from speech_audio where conversation_id = @conversationId order by started_at, id",
+            new { conversationId }, cancellationToken: ct))).AsList();
+    }
+
     public async Task<int> DeleteSpeechAudioEndedBeforeAsync(DateTimeOffset before, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
