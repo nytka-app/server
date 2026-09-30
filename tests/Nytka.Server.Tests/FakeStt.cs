@@ -30,7 +30,7 @@ public sealed class FakeStt
     public HttpMessageHandler CreateHandler() => new Handler(this);
 
     public sealed record RecordedRequest(
-        Uri? Uri, string? Authorization, IReadOnlyDictionary<string, string> Fields,
+        HttpMethod Method, Uri? Uri, string? Authorization, IReadOnlyDictionary<string, string> Fields,
         byte[] File, string? FileName, string? FileType);
 
     private sealed class Handler(FakeStt stt) : HttpMessageHandler
@@ -41,7 +41,7 @@ public sealed class FakeStt
             byte[] file = [];
             string? fileName = null, fileType = null;
 
-            foreach (var part in (MultipartContent)request.Content!)
+            foreach (var part in request.Content as MultipartContent ?? [])
             {
                 var name = part.Headers.ContentDisposition?.Name?.Trim('"');
                 if (name == "file")
@@ -57,7 +57,7 @@ public sealed class FakeStt
             }
 
             var recorded = new RecordedRequest(
-                request.RequestUri, request.Headers.Authorization?.ToString(), fields, file, fileName, fileType);
+                request.Method, request.RequestUri, request.Headers.Authorization?.ToString(), fields, file, fileName, fileType);
             lock (stt._requests)
             {
                 stt._requests.Add(recorded);

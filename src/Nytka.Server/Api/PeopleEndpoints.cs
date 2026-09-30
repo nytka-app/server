@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Nytka.Server.Auth;
+using Nytka.Server.Transcription;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -21,8 +22,40 @@ public static class PeopleEndpoints
         people.MapPost("", CreateAsync);
         people.MapPatch("/{id:guid}", RenameAsync);
         people.MapDelete("/{id:guid}", DeleteAsync);
+        people.MapPost("/{id:guid}/merge", MergeAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
+        api.MapGet("/voices", VoicesAsync).AllowRead();
         return api;
+    }
+
+    public const int MaxVoices = 50;
+
+    public sealed record VoiceList(IReadOnlyList<UnnamedVoice> Items);
+
+    /// <summary>Voices heard but not named, busiest first: the app offers them for naming.</summary>
+    private static async Task<IResult> VoicesAsync(PeopleStore people, CancellationToken ct) =>
+        Results.Ok(new VoiceList(await people.UnnamedVoicesAsync(MaxVoices, ct)));
+
+    /// <summary>Body <c>{ intoId }</c>. Moves every voice of the person to <c>intoId</c> and deletes the person.</summary>
+    private static async Task<IResult> MergeAsync(Guid id, HttpRequest http, PeopleStore people, CancellationToken ct)
+    {
+        var body = await ReadObjectAsync(http, ct);
+        if (body is not { } json
+            || !json.TryGetProperty("intoId", out var value)
+            || value.ValueKind != JsonValueKind.String
+            || !Guid.TryParse(value.GetString(), out var intoId))
+        {
+            return Invalid("intoId", "Must be the id of another person.");
+        }
+
+        if (intoId == id)
+        {
+            return Invalid("intoId", "Must differ from the person being merged.");
+        }
+
+        return await people.MergeAsync(id, intoId, ct) == PersonWrite.Ok
+            ? Results.Ok(await people.GetAsync(intoId, ct))
+            : NotFound();
     }
 
     public sealed record PersonList(IReadOnlyList<PersonRow> Items);
@@ -84,8 +117,28 @@ public static class PeopleEndpoints
         };
     }
 
-    private static async Task<IResult> DeleteAsync(Guid id, PeopleStore people, CancellationToken ct) =>
-        await people.DeleteAsync(id, ct) ? Results.NoContent() : NotFound();
+    /// <summary>
+    /// With <c>forget=true</c> the transcription service is also asked to delete the voiceprints of the person's voices;
+    /// that answers 200 <c>{ forgotten }</c>, true only when every call succeeded. Otherwise 204.
+    /// </summary>
+    private static async Task<IResult> DeleteAsync(
+        Guid id, bool? forget, PeopleStore people, VoiceprintClient voiceprints, ILogger<VoiceprintClient> log, CancellationToken ct)
+    {
+        var voices = forget == true ? (await people.GetAsync(id, ct))?.Voices : null;
+        if (!await people.DeleteAsync(id, ct))
+        {
+            return NotFound();
+        }
+
+        if (forget != true)
+        {
+            return Results.NoContent();
+        }
+
+        var forgotten = await voiceprints.ForgetAsync(voices ?? [], ct);
+        log.LogInformation("Forgot the voiceprints of {Voices} voices: {Forgotten}", voices?.Length ?? 0, forgotten);
+        return Results.Ok(new { forgotten });
+    }
 
     private static async Task<IResult> UnlinkAsync(Guid id, string speakerId, PeopleStore people, CancellationToken ct) =>
         await people.UnlinkVoiceAsync(id, speakerId, ct) ? Results.NoContent() : NotFound();
