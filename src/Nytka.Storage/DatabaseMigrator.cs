@@ -2,6 +2,7 @@ using System.Reflection;
 using DbUp;
 using DbUp.Engine.Output;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace Nytka.Storage;
 
@@ -13,7 +14,10 @@ public sealed class DatabaseMigrator(string connectionString, ILogger<DatabaseMi
 {
     public void Run()
     {
-        EnsureDatabase.For.PostgresqlDatabase(connectionString);
+        // DbUp keeps the server-level connection of this check idle in a pool of its own; one per
+        // host start adds up across test hosts until Postgres refuses clients.
+        EnsureDatabase.For.PostgresqlDatabase(
+            new NpgsqlConnectionStringBuilder(connectionString) { Pooling = false }.ConnectionString);
 
         var upgrader = DeployChanges.To
             .PostgresqlDatabase(connectionString)

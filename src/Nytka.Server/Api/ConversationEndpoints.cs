@@ -29,7 +29,7 @@ public static class ConversationEndpoints
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source);
 
     public sealed record EnrichResponse(string AiStatus);
 
@@ -64,7 +64,7 @@ public static class ConversationEndpoints
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Title,
             conversation.Summary, conversation.AiStatus, conversation.TitleEdited, conversation.AiMessage,
             conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments,
-            await bookmarks.ForConversationAsync(id, ct)));
+            await bookmarks.ForConversationAsync(id, ct), conversation.Source));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
