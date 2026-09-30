@@ -62,7 +62,11 @@ public sealed class McpBookmarkToolTests(PostgresFixture db) : IAsyncLifetime
 
         var first = Structured(await client.CallToolAsync("list_bookmarks", new Dictionary<string, object?> { ["limit"] = 2 }));
         var second = Structured(await client.CallToolAsync(
-            "list_bookmarks", new Dictionary<string, object?> { ["before"] = first.GetProperty("nextBefore").GetDateTime() }));
+            "list_bookmarks", new Dictionary<string, object?>
+            {
+                ["before"] = first.GetProperty("nextBefore").GetDateTime(),
+                ["beforeId"] = first.GetProperty("nextBeforeId").GetGuid(),
+            }));
 
         var items = first.GetProperty("items").EnumerateArray().ToList();
         Assert.Equal(["third", null], items.Select(i => i.GetProperty("note").GetString()));

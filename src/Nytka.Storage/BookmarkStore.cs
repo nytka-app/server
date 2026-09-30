@@ -44,13 +44,19 @@ public sealed class BookmarkStore(NpgsqlDataSource dataSource)
             Select + " where b.id = @id", new { id }, cancellationToken: ct));
     }
 
-    /// <summary>Newest first; <paramref name="before"/> keeps bookmarks made before that time.</summary>
-    public async Task<IReadOnlyList<BookmarkRow>> ListAsync(DateTimeOffset? before, int limit, CancellationToken ct)
+    /// <summary>
+    /// Newest first. <paramref name="before"/> keeps bookmarks made before that time; with <paramref name="beforeId"/> too it
+    /// keeps those after the (time, id) pair in the list's order, so bookmarks with equal times are neither repeated nor skipped.
+    /// </summary>
+    public async Task<IReadOnlyList<BookmarkRow>> ListAsync(DateTimeOffset? before, Guid? beforeId, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<BookmarkRow>(new CommandDefinition(
-            Select + " where (cast(@before as timestamptz) is null or b.at < cast(@before as timestamptz)) order by b.at desc, b.id desc limit @limit",
-            new { before, limit }, cancellationToken: ct))).ToList();
+            Select + 
+            " where (cast(@before as timestamptz) is null or b.at < cast(@before as timestamptz)"
+            + " or (cast(@beforeId as uuid) is not null and b.at = cast(@before as timestamptz) and b.id < cast(@beforeId as uuid)))"
+            + " order by b.at desc, b.id desc limit @limit",
+            new { before, beforeId, limit }, cancellationToken: ct))).ToList();
     }
 
     public async Task<bool> SetNoteAsync(Guid id, string? note, CancellationToken ct)

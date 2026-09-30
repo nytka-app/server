@@ -10,7 +10,7 @@ namespace Nytka.Server.Api;
 /// The bookmark endpoints (docs/specs/v0.8.md): moments the wearer marked. Listing needs <c>read</c>; every change
 /// needs <c>admin</c>. A bookmark holds no conversation id: <c>conversationId</c> is worked out from its time.
 /// </summary>
-public static class BookmarkEndpoints
+public static partial class BookmarkEndpoints
 {
     public const int DefaultLimit = 30;
     public const int MaxLimit = 100;
@@ -26,14 +26,15 @@ public static class BookmarkEndpoints
         return api;
     }
 
-    public sealed record BookmarkPage(IReadOnlyList<BookmarkRow> Items, DateTime? NextBefore);
+    public sealed record BookmarkPage(IReadOnlyList<BookmarkRow> Items, DateTime? NextBefore, Guid? NextBeforeId);
 
-    private static async Task<IResult> ListAsync(DateTimeOffset? before, int? limit, BookmarkStore bookmarks, CancellationToken ct)
+    private static async Task<IResult> ListAsync(DateTimeOffset? before, Guid? beforeId, int? limit, BookmarkStore bookmarks, CancellationToken ct)
     {
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         // Npgsql takes only UTC offsets for timestamptz.
-        var items = await bookmarks.ListAsync(before?.ToUniversalTime(), take, ct);
-        return Results.Ok(new BookmarkPage(items, items.Count == take ? items[^1].At : null));
+        var items = await bookmarks.ListAsync(before?.ToUniversalTime(), beforeId, take, ct);
+        var full = items.Count == take;
+        return Results.Ok(new BookmarkPage(items, full ? items[^1].At : null, full ? items[^1].Id : null));
     }
 
     /// <summary>
@@ -61,7 +62,7 @@ public static class BookmarkEndpoints
                 errors["id"] = ["Must be a UUID."];
             }
 
-            if (!json.TryGetProperty("at", out var atValue) || atValue.ValueKind != JsonValueKind.String || !atValue.TryGetDateTimeOffset(out at))
+            if (!json.TryGetProperty("at", out var atValue) || atValue.ValueKind != JsonValueKind.String || !HasOffset(atValue.GetString()!) || !atValue.TryGetDateTimeOffset(out at))
             {
                 errors["at"] = ["Must be an ISO 8601 time with an offset."];
             }
@@ -116,7 +117,7 @@ public static class BookmarkEndpoints
     private static async Task<IResult> DeleteAsync(Guid id, BookmarkStore bookmarks, CancellationToken ct) =>
         await bookmarks.DeleteAsync(id, ct) ? Results.NoContent() : NotFound();
 
-    private static readonly string NoteMessage = $"Must be text of up to {MaxNoteLength} characters, or null.";
+    private static readonly string NoteMessage = $"Must be text of up to {MaxNoteLength} characters without NUL, or null.";
 
     /// <summary>The trimmed note, null when absent or blank; false when it is not a string or is too long.</summary>
     private static bool ReadNote(JsonElement value, out string? note)
@@ -133,7 +134,7 @@ public static class BookmarkEndpoints
         }
 
         var text = value.GetString()!.Trim();
-        if (text.EnumerateRunes().Count() > MaxNoteLength)
+        if (text.Contains('\0') || text.EnumerateRunes().Count() > MaxNoteLength)
         {
             return false;
         }
@@ -141,6 +142,12 @@ public static class BookmarkEndpoints
         note = text.Length == 0 ? null : text;
         return true;
     }
+
+    /// <summary>A time with an explicit offset (<c>Z</c> or <c>+hh:mm</c>); one without would mean the server's zone.</summary>
+    private static bool HasOffset(string value) => OffsetPattern().IsMatch(value);
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"T.*(Z|[+-]\d{2}:\d{2})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex OffsetPattern();
 
     private static async Task<JsonElement?> ReadObjectAsync(HttpRequest request, CancellationToken ct)
     {

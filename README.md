@@ -460,7 +460,7 @@ through OAuth cannot connect.
 | `get_conversation` | `id` (UUID), `transcript?` (default true) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done }], transcript, truncated }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
-| `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore }` |
+| `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `search` | `query`, `kinds?` (a list of `conversation` and `memory`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
 
 Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
@@ -550,8 +550,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai` or `user`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
-| GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time; `limit` defaults to 30, caps at 100 |
-| POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
+| GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time and `beforeId` the id of the last item of the previous page (`nextBefore`, `nextBeforeId`), so equal times are not skipped; `limit` defaults to 30, caps at 100 |
+| POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `at` with an explicit offset, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
 | PATCH, DELETE | `/api/v1/bookmarks/{id}` | admin | PATCH body `{ note }`, `null` clears it; DELETE answers `204` |
 | GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |

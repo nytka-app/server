@@ -70,6 +70,9 @@ public sealed class BookmarkApiTests(PostgresFixture db) : AiTestBase(db)
     [InlineData("""{"id":"nope","at":"2026-09-30T10:00:00Z","source":"app"}""")]
     [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","source":"app"}""")]
     [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"soon","source":"app"}""")]
+    [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"2026-09-30T10:00:00","source":"app"}""")]
+    [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"2026-09-30","source":"app"}""")]
+    [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"2026-09-30T10:00:00Z","source":"app","note":"a\u0000b"}""")]
     [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"2026-09-30T10:00:00Z"}""")]
     [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"2026-09-30T10:00:00Z","source":"watch"}""")]
     [InlineData("""{"id":"018f0000-0000-7000-8000-000000000001","at":"2026-09-30T10:00:00Z","source":"app","note":5}""")]
@@ -113,9 +116,38 @@ public sealed class BookmarkApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal([Id(3), Id(2)], first.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
         var next = first.GetProperty("nextBefore").GetDateTimeOffset();
         Assert.Equal(start.AddMinutes(2), next);
+        Assert.Equal(Id(2), first.GetProperty("nextBeforeId").GetGuid());
         var second = await Client.GetFromJsonAsync<JsonElement>($"/api/v1/bookmarks?limit=2&before={Uri.EscapeDataString(next.ToString("o"))}");
         Assert.Equal([Id(1)], second.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
         Assert.Equal(JsonValueKind.Null, second.GetProperty("nextBefore").ValueKind);
+    }
+
+    [Fact]
+    public async Task List_pages_bookmarks_with_equal_times_by_time_and_id()
+    {
+        var at = Now.AddMinutes(-10);
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            await Post(n, at);
+        }
+
+        await Post(4, at.AddMinutes(-1));
+
+        var seen = new List<Guid>();
+        string query = "limit=2";
+        while (true)
+        {
+            var page = await Client.GetFromJsonAsync<JsonElement>($"/api/v1/bookmarks?{query}");
+            seen.AddRange(page.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()));
+            if (page.GetProperty("nextBefore").ValueKind == JsonValueKind.Null)
+            {
+                break;
+            }
+
+            query = $"limit=2&before={Uri.EscapeDataString(page.GetProperty("nextBefore").GetDateTimeOffset().ToString("o"))}&beforeId={page.GetProperty("nextBeforeId").GetGuid()}";
+        }
+
+        Assert.Equal([Id(3), Id(2), Id(1), Id(4)], seen);
     }
 
     [Fact]
@@ -146,6 +178,7 @@ public sealed class BookmarkApiTests(PostgresFixture db) : AiTestBase(db)
 
         Assert.Equal(HttpStatusCode.BadRequest, (await Client.PatchAsJsonAsync(path, new { note = new string('a', 201) })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Client.PatchAsJsonAsync(path, new { other = 1 })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PatchAsJsonAsync(path, new { note = "a\0b" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Client.PatchAsJsonAsync($"/api/v1/bookmarks/{Id(9)}", new { note = "x" })).StatusCode);
     }
 

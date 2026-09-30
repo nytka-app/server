@@ -10,7 +10,7 @@ namespace Nytka.Server.Mcp;
 
 public sealed record McpBookmark(Guid Id, DateTime At, string? Note, string Source, Guid? ConversationId);
 
-public sealed record McpBookmarkList(IReadOnlyList<McpBookmark> Items, DateTime? NextBefore);
+public sealed record McpBookmarkList(IReadOnlyList<McpBookmark> Items, DateTime? NextBefore, Guid? NextBeforeId);
 
 /// <summary>The <c>list_bookmarks</c> tool (docs/specs/v0.8.md): the fields and limits of <c>GET /api/v1/bookmarks</c>.</summary>
 [McpServerToolType]
@@ -31,6 +31,7 @@ public sealed class McpBookmarkTools(BookmarkStore bookmarks)
     [Description("Lists the moments the wearer bookmarked, newest first. Pass nextBefore as before to read the next page.")]
     public async Task<CallToolResult> ListBookmarksAsync(
         [Description("Only bookmarks made before this time (ISO 8601 with an offset, or a date).")] string? before = null,
+        [Description("With before: the id of the last bookmark of the previous page (nextBeforeId), so bookmarks made at the same time are not skipped.")] string? beforeId = null,
         [Description("How many to return, 1 to 100; the default is 30.")] int limit = 30,
         CancellationToken ct = default)
     {
@@ -42,10 +43,18 @@ public sealed class McpBookmarkTools(BookmarkStore bookmarks)
                 : throw new McpProtocolException("before must be an ISO 8601 time with an offset, or a date.", McpErrorCode.InvalidParams);
         }
 
+        Guid? beforeGuid = null;
+        if (beforeId is not null)
+        {
+            beforeGuid = Guid.TryParse(beforeId, out var parsed)
+                ? parsed
+                : throw new McpProtocolException("beforeId must be a UUID.", McpErrorCode.InvalidParams);
+        }
+
         var take = Math.Clamp(limit, 1, 100);
-        var items = (await bookmarks.ListAsync(beforeTime, take, ct))
+        var items = (await bookmarks.ListAsync(beforeTime, beforeGuid, take, ct))
             .Select(b => new McpBookmark(b.Id, b.At, b.Note, b.Source, b.ConversationId)).ToList();
-        var element = JsonSerializer.SerializeToElement(new McpBookmarkList(items, items.Count == take ? items[^1].At : null), Json);
+        var element = JsonSerializer.SerializeToElement(new McpBookmarkList(items, items.Count == take ? items[^1].At : null, items.Count == take ? items[^1].Id : null), Json);
         return new CallToolResult { Content = [new TextContentBlock { Text = element.GetRawText() }], StructuredContent = element };
     }
 }
