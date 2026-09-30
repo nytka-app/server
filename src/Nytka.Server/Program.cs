@@ -85,6 +85,7 @@ var api = app.MapGroup("/api/v1").RequireNytkaAuth();
 api.MapInfo();
 api.MapChunks();
 api.MapConversations();
+api.MapAudio();
 api.MapStatus();
 api.MapDiagnostics();
 api.MapTokens();
@@ -95,6 +96,7 @@ api.MapSearch();
 api.MapWebhooks();
 api.MapPeople();
 api.MapImport();
+api.MapBookmarks();
 app.MapNytkaMcp();
 
 app.Run();

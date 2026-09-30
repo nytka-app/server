@@ -14,6 +14,11 @@ public static partial class OmiExportParser
 {
     public const int MaxMemoryLength = 300;
 
+    /// <summary>Times outside 1970 to 9998 are refused: UUID v7 ids start at the epoch and a later date overflows.</summary>
+    private static readonly long FirstTicks = DateTimeOffset.UnixEpoch.UtcTicks;
+
+    private static readonly long LastTicks = new DateTimeOffset(9999, 1, 1, 0, 0, 0, TimeSpan.Zero).UtcTicks - 1;
+
     /// <summary>Offsets are clamped to 0 (Omi writes small negative ones) and to this many seconds, about 9 years.</summary>
     private const double MaxOffsetSeconds = 3e8;
 
@@ -94,7 +99,7 @@ public static partial class OmiExportParser
             var start = Seconds(item, "start") ?? 0;
             var end = Math.Max(Seconds(item, "end") ?? start, start);
             segments.Add(new ImportSegment(
-                startedAt.AddSeconds(start), startedAt.AddSeconds(end), text, Blank(Text(item, "speaker")), Bool(item, "is_user")));
+                At(startedAt, start), At(startedAt, end), text, Blank(Text(item, "speaker")), Bool(item, "is_user")));
         }
 
         return segments.OrderBy(s => s.StartedAt).ToList();
@@ -169,6 +174,13 @@ public static partial class OmiExportParser
         return trimmed[..(boundary > 0 ? boundary : cut)].TrimEnd();
     }
 
+    /// <summary><paramref name="start"/> plus <paramref name="seconds"/>, or an <see cref="OmiExportException"/> past the last accepted day.</summary>
+    private static DateTimeOffset At(DateTimeOffset start, double seconds)
+    {
+        var ticks = start.UtcTicks + (long)(seconds * TimeSpan.TicksPerSecond);
+        return ticks <= LastTicks ? new DateTimeOffset(ticks, TimeSpan.Zero) : throw new OmiExportException();
+    }
+
     private static string? Text(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()?.Replace("\0", "")
@@ -209,7 +221,8 @@ public static partial class OmiExportParser
         if (text is not null && HasOffset().IsMatch(text)
             && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
         {
-            return time.ToUniversalTime();
+            var utc = time.UtcTicks;
+            return utc >= FirstTicks && utc <= LastTicks ? time.ToUniversalTime() : throw new OmiExportException();
         }
 
         return lenient ? null : throw new OmiExportException();

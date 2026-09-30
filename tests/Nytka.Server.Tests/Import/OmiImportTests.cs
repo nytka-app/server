@@ -289,6 +289,25 @@ public sealed class OmiImportTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0, await db.ScalarAsync<int>("select count(*) from memories"));
     }
 
+    [Theory]
+    [InlineData("1969-12-31T23:59:59+00:00")]
+    [InlineData("0001-01-01T00:00:00+00:00")]
+    [InlineData("9999-06-01T00:00:00+00:00")]
+    [InlineData("9998-12-31T23:59:59+00:00", 5.0)]
+    public async Task A_date_outside_1970_to_9998_is_a_400_not_a_500(string time, double? offset = null)
+    {
+        var json = OmiFixture.Json.Replace("\"2026-03-02T10:00:00+02:00\"", $"\"{time}\"");
+        if (offset is not null)
+        {
+            json = json.Replace("\"start\": 5.0, \"end\": 30.0", $"\"start\": 0, \"end\": {offset}");
+        }
+
+        var response = await Post(json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await db.ScalarAsync<int>("select count(*) from conversations"));
+    }
+
     [Fact]
     public async Task A_body_over_100_MB_is_a_413()
     {
