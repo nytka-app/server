@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/nytka-app/server/compare/v0.5.0...v0.6.0) (2026-09-30)
+
+
+### Features
+
+* **ai:** local time, tighter tasks and memories, brief summaries for short talk ([#39](https://github.com/nytka-app/server/issues/39)) ([1b7d5df](https://github.com/nytka-app/server/commit/1b7d5dffba2784a4c840119ea7f6be6a2f7ce149))
+* **server:** list unnamed voices, merge people, forget voiceprints (v0.6) ([#38](https://github.com/nytka-app/server/issues/38)) ([9620c0b](https://github.com/nytka-app/server/commit/9620c0b8685f1306daf8817d82ea0cf0246d761b))
+
+
+### Bug Fixes
+
+* **audio:** past the 30 s soft cap, close a batch only at a pause of 1 s or more ([#37](https://github.com/nytka-app/server/issues/37)) ([20f6c54](https://github.com/nytka-app/server/commit/20f6c5483a6ca3bb68ca5056dcfe5df4e2cc57c1))
+
 ## [0.5.0](https://github.com/nytka-app/server/compare/v0.4.1...v0.5.0) (2026-09-29)
 
 
