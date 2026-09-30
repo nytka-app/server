@@ -529,6 +529,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
 | DELETE | `/api/v1/conversations/{id}` | admin | Deletes it with its transcript, audio, tasks and memories |
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
+| GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
+| GET | `/api/v1/conversations/{id}/audio/index` | read | `{ durationMs, runs: [{ offsetMs, startedAt, endedAt }] }`: each stretch of continuous capture and where it starts in the stream; `404` as above |
 | GET | `/api/v1/tasks?status=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt }`; `status` is `open` (default) or `done`; `limit` defaults to 50, caps at 200 |
 | PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done? }`, `text` 1 to 200 characters; DELETE answers `204` |
 | GET, PATCH | `/api/v1/settings` | admin | GET: `{ items: [{ key, type, value, isSet, source, locked, default }] }`. PATCH body `{ values: { "<key>": value or null } }`, all or nothing, `null` restores the default; `400` for an unknown key or a bad value, `409` for a locked key or any API key |
