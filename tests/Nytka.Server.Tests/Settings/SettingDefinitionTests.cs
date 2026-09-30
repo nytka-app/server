@@ -15,6 +15,8 @@ public class SettingDefinitionTests
     [InlineData("conversations.gap", "Nytka__Conversations__Gap")]
     [InlineData("audio.retentionDays", "Nytka__Audio__RetentionDays")]
     [InlineData("memories.userName", "Nytka__Memories__UserName")]
+    [InlineData("digest.enabled", "Nytka__Digest__Enabled")]
+    [InlineData("digest.hour", "Nytka__Digest__Hour")]
     public void A_key_names_its_environment_variable(string key, string variable) =>
         Assert.Equal(variable, Define(key).EnvironmentVariable);
 

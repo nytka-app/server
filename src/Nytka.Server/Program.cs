@@ -5,6 +5,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Api;
 using Nytka.Server.Ask;
 using Nytka.Server.Auth;
+using Nytka.Server.Digests;
 using Nytka.Server.Events;
 using Nytka.Server.Import;
 using Nytka.Server.Jobs;
@@ -65,6 +66,7 @@ builder.Services.AddNytkaAsk();
 builder.Services.AddNytkaMcp();
 builder.Services.AddNytkaMemories();
 builder.Services.AddNytkaSearch();
+builder.Services.AddNytkaDigests();
 builder.Services.AddNytkaWebhooks();
 
 var app = builder.Build();
@@ -100,6 +102,7 @@ api.MapWebhooks();
 api.MapPeople();
 api.MapImport();
 api.MapBookmarks();
+api.MapDigests();
 app.MapNytkaMcp();
 
 app.Run();

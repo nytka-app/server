@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
+using Nytka.Server.Digests;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Jobs;
@@ -8,12 +10,12 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle) and the conversations that need a run of the model. Dedupe keys make every call
+/// to go idle), the conversations that need a run of the model and the day's digest. Dedupe keys make every call
 /// safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
-    IOptionsMonitor<LlmOptions> llmOptions, TimeProvider time)
+    IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -35,6 +37,31 @@ public sealed class Scheduler(
         }
 
         await QueueEnrichmentsAsync(now, ct);
+        await QueueDigestAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Queues today's digest once the local hour has come, unless it exists. A day without conversations makes no row, so
+    /// the job repeats until midnight; it reads and ends quietly. Nothing is queued while the digest is off or no model is set.
+    /// </summary>
+    private async Task QueueDigestAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (!llm.IsConfigured || !DigestSettings.IsEnabled(settings))
+        {
+            return;
+        }
+
+        var zone = UserTimeZone.Resolve(settings);
+        if (DigestDay.HourOf(now, zone) < DigestSettings.Hour(settings))
+        {
+            return;
+        }
+
+        var date = DigestDay.Text(DigestDay.Today(now, zone));
+        if (!await digests.ExistsAsync(date, ct))
+        {
+            await queue.EnqueueAsync(JobKinds.MakeDigest, new DigestPayload(date, false), JobKinds.MakeDigestKey(date), now, ct);
+        }
     }
 
     /// <summary>Nothing is queued while the model is not configured.</summary>
