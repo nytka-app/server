@@ -179,6 +179,23 @@ public sealed class AskTests(PostgresFixture db) : IAsyncLifetime
         Assert.Contains("Europe/Kyiv", AnswerRequest().System);
     }
 
+    [Theory]
+    [InlineData("0001-01-01", "9999-12-31")]
+    [InlineData("0001-01-01", null)]
+    [InlineData(null, "9999-12-31")]
+    public async Task A_date_out_of_range_counts_as_no_date(string? from, string? to)
+    {
+        var id = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, aiTitle: "Garden plans");
+        await Index();
+        Model(Plan(["garden"], from, to), Answer("Plans [1]."));
+
+        var response = await _server.CreateAuthorizedClient().PostAsync("/api/v1/ask", Body(Question));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(id, result.GetProperty("sources")[0].GetProperty("id").GetGuid());
+    }
+
     [Fact]
     public async Task The_search_is_limited_to_the_planned_dates()
     {

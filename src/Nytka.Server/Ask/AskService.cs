@@ -163,8 +163,10 @@ public sealed partial class AskService(
         return (from is { } a ? StartOfDay(a, zone) : null, to is { } b ? StartOfDay(b.AddDays(1), zone) : null);
     }
 
+    /// <summary>A plan date; years outside 1970 to 9998 count as none, so the day arithmetic after it cannot overflow.</summary>
     private static DateOnly? Day(string? value) =>
-        DateOnly.TryParseExact(value?.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day) ? day : null;
+        DateOnly.TryParseExact(value?.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
+        && day.Year is >= 1970 and <= 9998 ? day : null;
 
     private static DateTimeOffset StartOfDay(DateOnly day, TimeZoneInfo zone)
     {
