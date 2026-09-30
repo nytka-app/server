@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0](https://github.com/nytka-app/server/compare/v0.7.0...v0.8.0) (2026-09-30)
+
+
+### Features
+
+* ask a question of your history with numbered sources (v0.8, S-A) ([#46](https://github.com/nytka-app/server/issues/46)) ([2c075ba](https://github.com/nytka-app/server/commit/2c075bab43096a983bba30f5b3ae7a4a07622256))
+* bookmarks (v0.8, track S-B) ([#45](https://github.com/nytka-app/server/issues/45)) ([061a400](https://github.com/nytka-app/server/commit/061a40068bd2af5b5acf375d7b4bcef47eddc109))
+* import an Omi export (v0.7) ([#47](https://github.com/nytka-app/server/issues/47)) ([72f6c90](https://github.com/nytka-app/server/commit/72f6c9050462406e6b4c181370f6c28aa7f21d79))
+* playback audio and index routes (v0.8 S-P) ([#44](https://github.com/nytka-app/server/issues/44)) ([2f63e47](https://github.com/nytka-app/server/commit/2f63e47e6f26e19163aefcfaf07ca7601d892de2))
+
 ## [0.7.0](https://github.com/nytka-app/server/compare/v0.6.0...v0.7.0) (2026-09-30)
 
 
