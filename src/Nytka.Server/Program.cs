@@ -93,6 +93,7 @@ api.MapMemories();
 api.MapSearch();
 api.MapWebhooks();
 api.MapPeople();
+api.MapBookmarks();
 app.MapNytkaMcp();
 
 app.Run();
