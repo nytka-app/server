@@ -256,6 +256,37 @@ person wearing the pendant.
   Conversations summarized before you upgraded to v0.4 have no memories; regenerate a summary to feed
   one in.
 
+## Import from Omi
+
+Omi's "Export All Data" file (`omi-export.json`, from `GET /v1/users/export`) goes into Nytka once, so
+your conversations, memories and tasks from before Nytka sit next to the new ones. The file has no
+audio.
+
+```bash
+curl -sS -X POST "$NYTKA_URL/api/v1/import/omi" \
+  -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @omi-export.json
+```
+
+The answer counts what happened:
+`{ conversations: { imported, alreadyImported, overlapping, discarded, empty }, segments, tasks: { imported, skipped }, memories: { imported, skipped } }`.
+
+- Each kept Omi conversation becomes a closed conversation with `source: "omi"`, at its Omi times,
+  with Omi's title and summary and its transcript. Discarded conversations and ones with no text
+  (`empty`) are left out. Imported conversations are searchable, never merge with the ones the pendant
+  captures, and trigger no webhook, memory extraction or summary; `POST
+  /api/v1/conversations/{id}/enrich` still writes a new summary when you ask.
+- Posting the same file again creates nothing: conversations already imported count as
+  `alreadyImported`, and a memory or task whose text is already there is `skipped`.
+- An Omi conversation whose time overlaps one Nytka captured (the pendant may have sent to both) is
+  not imported and counts as `overlapping`. Add `?overlapping=import` to import those as well.
+- Memories go in with `source: "omi"`, linked to their conversation when it came in, cut at 300
+  characters; dismissed ones are left out. Tasks join the conversation they came from.
+- The file is read whole and applied in one transaction, so a bad file changes nothing: `400` when it
+  is not an Omi export or a time has no offset, `413` above 100 MB. Needs an admin token. Nothing from
+  the file reaches a log or an error.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries and memories
@@ -523,8 +554,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
-| GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus }`; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, source }`, `source` is `nytka` or `omi`; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks` and `segments` (`{ id, startedAt, endedAt, text, speaker }`) |
+| POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
 | DELETE | `/api/v1/conversations/{id}` | admin | Deletes it with its transcript, audio, tasks and memories |
@@ -535,7 +567,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |
 | DELETE | `/api/v1/tokens/{id}` | admin | Revokes it: `204` |
-| GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai` or `user`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai`, `user` or `omi`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
 | GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |

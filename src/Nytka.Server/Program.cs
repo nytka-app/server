@@ -5,6 +5,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Api;
 using Nytka.Server.Auth;
 using Nytka.Server.Events;
+using Nytka.Server.Import;
 using Nytka.Server.Jobs;
 using Nytka.Server.Mcp;
 using Nytka.Server.Memories;
@@ -93,6 +94,7 @@ api.MapMemories();
 api.MapSearch();
 api.MapWebhooks();
 api.MapPeople();
+api.MapImport();
 app.MapNytkaMcp();
 
 app.Run();

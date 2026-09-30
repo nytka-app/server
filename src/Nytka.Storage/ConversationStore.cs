@@ -5,11 +5,12 @@ namespace Nytka.Storage;
 
 /// <summary><paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.</summary>
 public sealed record ConversationSummary(
-    Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus);
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
+    string Source);
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source);
 
 /// <summary>
 /// <paramref name="Speaker"/> is the provider's label, <paramref name="SpeakerId"/> its stable id for the voice,
@@ -52,7 +53,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// the batch starts (or overlaps it) or starts less than <paramref name="gap"/> after it ends.
     /// When several qualify (stored audio that arrives late can bridge two of them) the one that
     /// starts first survives: it takes the others' rows, covers all their times and the batch, and
-    /// opens. With none, a new conversation opens. Runs inside the caller's transaction.
+    /// opens. With none, a new conversation opens. Imported conversations (<c>source</c> other than
+    /// <c>nytka</c>) never match. Runs inside the caller's transaction.
     /// </summary>
     public async Task<Assignment> AssignAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, DateTimeOffset batchStart, DateTimeOffset batchEnd,
@@ -64,7 +66,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         var matches = (await connection.QueryAsync<Guid>(new CommandDefinition(
             """
             select id from conversations
-            where ended_at > @from and started_at < @to
+            where source = 'nytka' and ended_at > @from and started_at < @to
             order by started_at, id
             """,
             new { from = batchStart - gap, to = batchEnd + gap }, transaction, cancellationToken: ct))).ToList();
@@ -174,7 +176,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             select c.id as Id, c.started_at as StartedAt, c.ended_at as EndedAt, c.status as Status,
                    coalesce(p.text, '') as Preview, coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary,
-                   c.ai_status as AiStatus
+                   c.ai_status as AiStatus, c.source as Source
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -199,7 +201,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status,
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
                    ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
-                   ai_through_segment_id as AiThroughSegmentId
+                   ai_through_segment_id as AiThroughSegmentId, source as Source
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
