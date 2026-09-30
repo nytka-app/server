@@ -111,6 +111,28 @@ public sealed class AudioApiTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Skips_frames_over_the_Opus_maximum_in_the_stream_and_the_index()
+    {
+        var id = await Speak(Tone(3), Silence(2));
+        var client = _server.CreateAuthorizedClient();
+        var before = await client.GetFromJsonAsync<JsonElement>($"/api/v1/conversations/{id}/audio/index");
+        var bad = ChunkFormat.Write(new Chunk(Guid.NewGuid(), ChunkFormat.OpusFs320, 0, StartMs + 600_000,
+            [new Frame(0, StartMs + 600_000, new byte[70_000 - 4_465])]));
+        await db.ExecuteAsync(
+            """
+            insert into speech_audio (conversation_id, batch_id, started_at, ended_at, body)
+            select conversation_id, batch_id, now(), now(), @bad from speech_audio where conversation_id = @id limit 1
+            """,
+            new { id, bad });
+
+        var stream = await client.GetAsync($"/api/v1/conversations/{id}/audio");
+        var after = await client.GetFromJsonAsync<JsonElement>($"/api/v1/conversations/{id}/audio/index");
+
+        Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
+        Assert.Equal(before.GetProperty("durationMs").GetInt32(), after.GetProperty("durationMs").GetInt32());
+    }
+
+    [Fact]
     public async Task Answers_404_without_speech_audio_and_for_unknown_conversations()
     {
         var id = await Speak(Tone(3), Silence(2));

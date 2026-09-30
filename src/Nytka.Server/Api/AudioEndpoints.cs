@@ -16,6 +16,9 @@ public static class AudioEndpoints
 {
     public const string OggMediaType = "audio/ogg";
 
+    /// <summary>The largest Opus packet; the chunk format allows more, and a longer frame is not audio.</summary>
+    public const int MaxOpusPacketBytes = 1275;
+
     public static RouteGroupBuilder MapAudio(this RouteGroupBuilder api)
     {
         var audio = api.MapGroup("/conversations/{id:guid}/audio");
@@ -56,7 +59,7 @@ public static class AudioEndpoints
                 r.OffsetMs, DateTimeOffset.FromUnixTimeMilliseconds(r.StartMs).UtcDateTime, DateTimeOffset.FromUnixTimeMilliseconds(r.EndMs).UtcDateTime))]));
     }
 
-    /// <summary>The frames of every stored piece, in order. A piece that does not parse is skipped, never reported.</summary>
+    /// <summary>The frames of every stored piece, in order. A piece that does not parse and a frame over the Opus maximum are skipped, never reported.</summary>
     private static async Task<List<Frame>> FramesAsync(Guid id, BatchStore batches, CancellationToken ct)
     {
         var frames = new List<Frame>();
@@ -64,7 +67,7 @@ public static class AudioEndpoints
         {
             try
             {
-                frames.AddRange(ChunkFormat.Read(body).Frames);
+                frames.AddRange(ChunkFormat.Read(body).Frames.Where(f => f.Payload.Length <= MaxOpusPacketBytes));
             }
             catch (ChunkFormatException)
             {
