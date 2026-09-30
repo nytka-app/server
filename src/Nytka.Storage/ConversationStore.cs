@@ -5,7 +5,8 @@ namespace Nytka.Storage;
 
 /// <summary><paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.</summary>
 public sealed record ConversationSummary(
-    Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus);
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
+    int Bookmarks);
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
@@ -174,7 +175,9 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             select c.id as Id, c.started_at as StartedAt, c.ended_at as EndedAt, c.status as Status,
                    coalesce(p.text, '') as Preview, coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary,
-                   c.ai_status as AiStatus
+                   c.ai_status as AiStatus,
+                   (select count(*)::int from bookmarks b
+                    where b.at >= c.started_at - interval '30 seconds' and b.at <= c.ended_at + interval '30 seconds') as Bookmarks
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text

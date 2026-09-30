@@ -45,7 +45,7 @@ public sealed class PostgresFixture : IAsyncLifetime
             """
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
                      segments, speech_audio, jobs, diagnostics, api_tokens, settings,
-                     webhooks, webhook_deliveries, people restart identity cascade
+                     webhooks, webhook_deliveries, people, bookmarks restart identity cascade
             """,
             connection);
         await command.ExecuteNonQueryAsync();

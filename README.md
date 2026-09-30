@@ -256,6 +256,16 @@ person wearing the pendant.
   Conversations summarized before you upgraded to v0.4 have no memories; regenerate a summary to feed
   one in.
 
+## Bookmarks
+
+A bookmark marks a moment: a single tap on the pendant, or a tap in the app, sends `POST
+/api/v1/bookmarks` with the time of the tap. The client makes the `id`, so an upload it retries changes
+nothing. A bookmark holds no conversation: a conversation lists the bookmarks made from 30 seconds
+before it starts to 30 seconds after it ends, so bookmarks follow merges, and one outside every
+conversation stays in `GET /api/v1/bookmarks` alone (`conversationId` is then null). Deleting a
+conversation keeps its bookmarks. The `bookmark.created` webhook and the `list_bookmarks` MCP tool
+carry the same fields.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries and memories
@@ -370,6 +380,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | `task.created` | A summary produced a new task | the task, as `GET /api/v1/tasks` shows it |
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
+| `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
 | `ping` | You called `test` | `{}` |
 
 A webhook gets nothing for events from before it existed, or while it is inactive. The change and its
@@ -449,6 +460,7 @@ through OAuth cannot connect.
 | `get_conversation` | `id` (UUID), `transcript?` (default true) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done }], transcript, truncated }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
+| `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `search` | `query`, `kinds?` (a list of `conversation` and `memory`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
 
 Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
@@ -523,8 +535,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
-| GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus }`; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
-| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks` and `segments` (`{ id, startedAt, endedAt, text, speaker }`) |
+| GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks }`, `bookmarks` being a count; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker }`) and `bookmarks` (`{ id, at, note }`) |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
 | DELETE | `/api/v1/conversations/{id}` | admin | Deletes it with its transcript, audio, tasks and memories |
@@ -540,6 +552,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai` or `user`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
+| GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time and `beforeId` the id of the last item of the previous page (`nextBefore`, `nextBeforeId`), so equal times are not skipped; `limit` defaults to 30, caps at 100 |
+| POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `at` with an explicit offset, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
+| PATCH, DELETE | `/api/v1/bookmarks/{id}` | admin | PATCH body `{ note }`, `null` clears it; DELETE answers `204` |
 | GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |

@@ -143,5 +143,6 @@ public sealed class EventPublisherTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("task.created", NytkaEvent.TaskCreated);
         Assert.Equal("task.completed", NytkaEvent.TaskCompleted);
         Assert.Equal("memory.created", NytkaEvent.MemoryCreated);
+        Assert.Equal("bookmark.created", NytkaEvent.BookmarkCreated);
     }
 }
