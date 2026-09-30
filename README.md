@@ -137,7 +137,7 @@ needs none.
 | Scope | May call |
 |---|---|
 | `admin` | Everything. The app needs it, and refuses a `read` token. |
-| `read` | `/mcp`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories and search. |
+| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories and search. |
 
 A valid token with too little scope gets `403`. A missing, unknown or revoked one gets `401`. A new
 endpoint is closed to `read` until it is marked.
@@ -387,6 +387,34 @@ machine and accept that with the flag. Personal self-hosting is fine either way;
 authors before commercial use or redistribution. This is a reading, not legal advice. See
 [NOTICE](NOTICE).
 
+## Ask
+
+`POST /api/v1/ask { "question": "..." }` and the `ask` MCP tool answer a question from your
+conversations and memories, with numbered sources. A `read` token may call it: it changes nothing. It
+needs the [language model](#the-language-model) (`503` without one; `504` when the model does not
+answer within `llm.timeoutSeconds`; `502` when it fails otherwise).
+
+```json
+{ "answer": "You planned to leave on Friday [1].",
+  "sources": [{ "n": 1, "kind": "conversation", "id": "...", "conversationId": "...",
+                "title": "Weekend trip", "at": "2026-09-29T08:00:00Z", "snippet": "..." }] }
+```
+
+The server makes two model calls. The first turns the question into up to three short keyword
+queries and, when the question names a period, a range of local days (in `user.timeZone`). The queries
+run through the search (any word of a query may match), limited to that range; a question about a
+period only takes the conversations of those days, newest first. At most 8 conversations and 10
+memories go to the second call, best first. A conversation brings its title, summary, tasks and the
+lines of its transcript around the best-matching one, cut so that everything fits
+`llm.maxInputChars`. The model answers with `[n]` markers; the server drops a marker that names no
+source and returns only the sources it cites, renumbered from 1 in order of first mention. A source
+is a `conversation` (`conversationId` is its own id) or a `memory` (`conversationId` is the
+conversation it came from, or null); `at` is the conversation's start or the memory's last change.
+
+The question, the sources sent to the model and the answer are not stored and not logged; failures
+carry fixed sentences. Both calls go to the model you configured, so what your history holds leaves
+the server the way summaries do.
+
 ## Webhooks
 
 A webhook tells another tool, such as Home Assistant, n8n or a script, that something new exists.
@@ -493,6 +521,7 @@ through OAuth cannot connect.
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `search` | `query`, `kinds?` (a list of `conversation` and `memory`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
+| `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
 Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
 structured content and as JSON text. A tool returns the fields its REST endpoint returns, with the
@@ -593,6 +622,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `description`, `active`; DELETE answers `204` and drops its deliveries |
 | POST | `/api/v1/webhooks/{id}/test` | admin | Queues a `ping`: `202 { deliveryId }` |
 | GET | `/api/v1/webhooks/{id}/deliveries?limit=` | admin | `{ items }`, newest first: `{ id, eventType, status, attempts, lastStatusCode, lastError, createdAt, deliveredAt }`; `limit` defaults to 30, caps at 100 |
+| POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
 An unknown id is a `404`, a missing or wrong token a `401`, a token with too little scope a `403`.

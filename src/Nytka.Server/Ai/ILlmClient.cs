@@ -20,9 +20,12 @@ public sealed record LlmRequest(string SchemaName, string SchemaJson, string Sys
 /// <summary>
 /// The model endpoint failed, or its answer was unusable. The message never holds the answer or the
 /// prompt: it can echo the transcript, and messages end up in logs and in <c>ai_message</c>.
-/// <see cref="StatusCode"/> is the HTTP status when there was one.
+/// <see cref="StatusCode"/> is the HTTP status when there was one; <see cref="TimedOut"/> says the endpoint did not
+/// answer within <c>llm.timeoutSeconds</c>.
 /// </summary>
-public sealed class LlmException(string message, int? statusCode = null) : Exception(message)
+public sealed class LlmException(string message, int? statusCode = null, bool timedOut = false) : Exception(message)
 {
     public int? StatusCode { get; } = statusCode;
+
+    public bool TimedOut { get; } = timedOut;
 }

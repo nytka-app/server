@@ -49,7 +49,7 @@ public sealed class LlmClient(HttpClient http, IOptionsMonitor<LlmOptions> optio
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new LlmException("The language model endpoint did not answer in time.");
+            throw new LlmException("The language model endpoint did not answer in time.", timedOut: true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
