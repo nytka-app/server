@@ -41,8 +41,9 @@ public sealed class Scheduler(
     }
 
     /// <summary>
-    /// Queues today's digest once the local hour has come, unless it exists. A day without conversations makes no row, so
-    /// the job repeats until midnight; it reads and ends quietly. Nothing is queued while the digest is off or no model is set.
+    /// Queues the digest of today once the local hour has come, and of yesterday (a catch-up after an outage or failed runs),
+    /// unless the date has one or has no conversation that counts: a date with nothing to say queues no job. Nothing is queued
+    /// while the digest is off or no model is set.
     /// </summary>
     private async Task QueueDigestAsync(DateTimeOffset now, CancellationToken ct)
     {
@@ -52,15 +53,21 @@ public sealed class Scheduler(
         }
 
         var zone = UserTimeZone.Resolve(settings);
-        if (DigestDay.HourOf(now, zone) < DigestSettings.Hour(settings))
+        var today = DigestDay.Today(now, zone);
+        await QueueDigestForAsync(today.AddDays(-1), zone, now, ct);
+        if (DigestDay.HourOf(now, zone) >= DigestSettings.Hour(settings))
         {
-            return;
+            await QueueDigestForAsync(today, zone, now, ct);
         }
+    }
 
-        var date = DigestDay.Text(DigestDay.Today(now, zone));
-        if (!await digests.ExistsAsync(date, ct))
+    private async Task QueueDigestForAsync(DateOnly date, TimeZoneInfo zone, DateTimeOffset now, CancellationToken ct)
+    {
+        var text = DigestDay.Text(date);
+        var (from, to) = DigestDay.Bounds(date, zone);
+        if (!await digests.ExistsAsync(text, ct) && await digests.HasConversationsAsync(from, to, ct))
         {
-            await queue.EnqueueAsync(JobKinds.MakeDigest, new DigestPayload(date, false), JobKinds.MakeDigestKey(date), now, ct);
+            await queue.EnqueueAsync(JobKinds.MakeDigest, new DigestPayload(text, false), JobKinds.MakeDigestKey(text), now, ct);
         }
     }
 

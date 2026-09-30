@@ -309,8 +309,10 @@ needs the language model.
 
 - **What goes to the model.** One request with that day's summarized conversations (title, local time,
   summary), the tasks and the memories created that day, and no transcript. A day with no summarized
-  conversation makes no digest and no request. A conversation summarized after the digest was made
-  is not added; the digest of a date is made once.
+  conversation makes no digest and no request. A busy day sends its newest 80 conversations and says
+  so in the prompt. A conversation summarized after the digest was made is not added; the digest of
+  a date is made once. The server also makes yesterday's digest if it is missing (after an outage or
+  failed runs), and never one for a day without a summarized conversation.
 - **Read it.** `GET /api/v1/digests` lists them, newest date first, and `GET /api/v1/digests/{id}`
   returns one. The `digest.ready` webhook carries `{ id, localDate, headline, overview }`, enough for an
   ntfy or n8n message, and the `list_digests` MCP tool returns the list. A highlight whose conversation
@@ -320,7 +322,7 @@ needs the language model.
   again). It answers `202 { localDate }`, `400` for a missing, malformed or future date and `409`
   without a model. It works while `Nytka__Digest__Enabled` is `false`.
 - **When it fails.** A run makes three attempts; after the third it is tried again an hour later while
-  the date is still today. Logs and errors say only what failed, never the digest or its input.
+  the date is today or yesterday. Logs and errors say only what failed, never the digest or its input.
 
 ## Search
 
@@ -643,7 +645,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time and `beforeId` the id of the last item of the previous page (`nextBefore`, `nextBeforeId`), so equal times are not skipped; `limit` defaults to 30, caps at 100 |
 | POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `at` with an explicit offset, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
 | PATCH, DELETE | `/api/v1/bookmarks/{id}` | admin | PATCH body `{ note }`, `null` clears it; DELETE answers `204` |
-| GET | `/api/v1/digests?before=&limit=` | read | `{ items, nextBefore }`, newest date first; a digest is `{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }`; `before` is a date (`yyyy-MM-dd`) and keeps earlier ones, `nextBefore` is the last date of a full page; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/digests?before=&limit=` | read | `{ items, nextBefore }`, newest date first; a digest is `{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }`; `before` is a date (`yyyy-MM-dd`) and keeps earlier ones, `nextBefore` is the last date of the page, set only when an earlier digest exists; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
 | GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |

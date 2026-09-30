@@ -68,7 +68,8 @@ public sealed class MakeDigestHandler(
         {
             // Only the third attempt gives up; the earlier ones throw and the runner tries again.
             logger.LogWarning("Making the digest failed after {Attempts} attempts: {Message}", job.Attempts, Describe(error));
-            return date == DigestDay.Today(time.GetUtcNow(), zone) ? JobOutcome.RunAgain(RetryAfter) : JobOutcome.Done;
+            // The scheduler catches up yesterday too, so yesterday is retried as well; older dates are dropped.
+            return date >= DigestDay.Today(time.GetUtcNow(), zone).AddDays(-1) ? JobOutcome.RunAgain(RetryAfter) : JobOutcome.Done;
         }
     }
 

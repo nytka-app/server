@@ -17,12 +17,16 @@ public sealed record DigestRow(
 
 public sealed record DigestPage(IReadOnlyList<DigestRow> Items, string? NextBefore);
 
+
 /// <summary>A conversation as the digest reads it.</summary>
 public sealed record DigestConversation(Guid Id, DateTime StartedAt, string? Title, string? Summary);
 
-/// <summary>What one local day holds, read in one place: its conversations, tasks and memories, oldest first.</summary>
+/// <summary>
+/// What one local day holds, read in one place: its newest <see cref="DigestStore.MaxConversations"/> conversations (oldest first,
+/// of <paramref name="TotalConversations"/>), its tasks and its memories.
+/// </summary>
 public sealed record DigestInput(
-    IReadOnlyList<DigestConversation> Conversations, IReadOnlyList<string> Tasks, IReadOnlyList<string> Memories);
+    IReadOnlyList<DigestConversation> Conversations, int TotalConversations, IReadOnlyList<string> Tasks, IReadOnlyList<string> Memories);
 
 /// <summary>Daily digests (<c>digests</c>).</summary>
 public sealed class DigestStore(NpgsqlDataSource dataSource)
@@ -32,6 +36,8 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
     public const int MaxMemories = 100;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private const string CountsForDigest = "started_at >= @from and started_at < @to and (coalesce(title, ai_title) is not null or ai_summary is not null)";
 
     private const string Select =
         "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview, body::text as Body, created_at as CreatedAt from digests";
@@ -65,8 +71,17 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var items = (await connection.QueryAsync<Raw>(new CommandDefinition(
             Select + " where (cast(@before as date) is null or local_date < cast(@before as date)) order by local_date desc limit @limit",
-            new { before, limit }, cancellationToken: ct))).Select(r => r.ToRow()).ToList();
-        return new DigestPage(items, items.Count == limit ? items[^1].LocalDate : null);
+            new { before, limit = limit + 1 }, cancellationToken: ct))).Select(r => r.ToRow()).ToList();
+        return new DigestPage(items.Take(limit).ToList(), items.Count > limit ? items[limit - 1].LocalDate : null);
+    }
+
+    /// <summary>Whether a conversation counts for the digest of <c>[from, to)</c>: the same predicate <see cref="ReadDayAsync"/> reads by.</summary>
+    public async Task<bool> HasConversationsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            $"select exists (select 1 from conversations where {CountsForDigest})",
+            new { from = from.ToUniversalTime(), to = to.ToUniversalTime() }, cancellationToken: ct));
     }
 
     /// <summary>
@@ -77,12 +92,15 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var args = new { from = from.ToUniversalTime(), to = to.ToUniversalTime() };
+        var total = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            $"select count(*) from conversations where {CountsForDigest}", args, cancellationToken: ct));
         var conversations = (await connection.QueryAsync<DigestConversation>(new CommandDefinition(
             $"""
-            select id as Id, started_at as StartedAt, coalesce(title, ai_title) as Title, ai_summary as Summary
-            from conversations
-            where started_at >= @from and started_at < @to and (coalesce(title, ai_title) is not null or ai_summary is not null)
-            order by started_at, id limit {MaxConversations}
+            select * from (
+                select id as Id, started_at as StartedAt, coalesce(title, ai_title) as Title, ai_summary as Summary
+                from conversations where {CountsForDigest}
+                order by started_at desc, id desc limit {MaxConversations}) newest
+            order by StartedAt, Id
             """,
             args, cancellationToken: ct))).ToList();
         var tasks = (await connection.QueryAsync<string>(new CommandDefinition(
@@ -91,7 +109,7 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
         var memories = (await connection.QueryAsync<string>(new CommandDefinition(
             $"select text from memories where deleted_at is null and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",
             args, cancellationToken: ct))).ToList();
-        return new DigestInput(conversations, tasks, memories);
+        return new DigestInput(conversations, total, tasks, memories);
     }
 
     /// <summary>

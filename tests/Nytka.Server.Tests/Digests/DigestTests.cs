@@ -116,7 +116,7 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
     public async Task It_skips_a_day_without_conversations_without_a_call_or_a_row()
     {
         Start();
-        await Conversation(Morning.AddDays(-1));
+        await Conversation(Morning.AddDays(-2));
         await Conversation(Morning.AddDays(1));
         await Conversation(Morning, title: "Untitled", summary: null);
         await Db.ExecuteAsync("update conversations set title = null, ai_title = null");
@@ -125,6 +125,83 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
 
         Assert.Empty(DigestRequests);
         Assert.Equal(0, await Digests());
+    }
+
+    [Fact]
+    public async Task An_empty_day_queues_no_job_at_any_tick()
+    {
+        Start();
+        await Conversation(Morning, title: "Untitled", summary: null);
+        await Db.ExecuteAsync("update conversations set title = null, ai_title = null");
+
+        for (var i = 0; i < 5; i++)
+        {
+            await Server.Get<Scheduler>().TickAsync(default);
+            Assert.Equal(0, await DigestJobs());
+            Server.Time.Advance(TimeSpan.FromMinutes(20));
+        }
+    }
+
+    [Fact]
+    public async Task Yesterday_is_caught_up_once_when_it_has_conversations_and_no_digest()
+    {
+        Start(now: new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero));
+        var yesterday = await Conversation(Morning.AddDays(-1));
+
+        await Server.Get<Scheduler>().TickAsync(default);
+        await Server.Get<Scheduler>().TickAsync(default);
+
+        Assert.Equal(["make-digest:2026-09-28"], await Db.QueryAsync<string>("select dedupe_key from jobs where kind = 'make-digest'"));
+        await Server.RunJobsAsync();
+        Assert.Equal("2026-09-28", await Db.ScalarAsync<string>("select to_char(local_date, 'YYYY-MM-DD') from digests"));
+        Assert.Contains(yesterday.ToString(), Assert.Single(DigestRequests).User);
+        await Server.Get<Scheduler>().TickAsync(default);
+        Assert.Equal(0, await DigestJobs());
+    }
+
+    [Fact]
+    public async Task Yesterday_is_not_queued_when_it_has_a_digest_or_nothing_to_say()
+    {
+        Start(now: new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero));
+        await Conversation(Morning.AddDays(-1));
+        await Db.ExecuteAsync(
+            "insert into digests (id, local_date, headline, overview, body, created_at) values (@id, '2026-09-28', 'h', 'o', '{\"highlights\":[],\"decisions\":[],\"openQuestions\":[]}', @now)",
+            new { id = Guid.NewGuid(), now = Evening });
+
+        await Server.Get<Scheduler>().TickAsync(default);
+
+        Assert.Equal(0, await DigestJobs());
+    }
+
+    [Fact]
+    public async Task A_day_over_the_cap_keeps_the_newest_conversations_and_says_so()
+    {
+        Start();
+        var day = new DateTimeOffset(2026, 9, 29, 0, 5, 0, TimeSpan.Zero);
+        for (var i = 0; i < 85; i++)
+        {
+            await Conversation(day.AddMinutes(i * 5), $"Talk-{i:D3}");
+        }
+
+        await TickAndRun();
+
+        var user = Assert.Single(DigestRequests).User;
+        Assert.Contains("Only the most recent 80 of 85 conversations", user);
+        Assert.Contains("Talk-084", user);
+        Assert.Contains("Talk-005", user);
+        Assert.DoesNotContain("Talk-004", user);
+        Assert.True(user.IndexOf("Talk-005", StringComparison.Ordinal) < user.IndexOf("Talk-084", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_day_within_the_cap_has_no_such_line()
+    {
+        Start();
+        await Conversation(Morning);
+
+        await TickAndRun();
+
+        Assert.DoesNotContain("Only the most recent", Assert.Single(DigestRequests).User);
     }
 
     [Fact]
@@ -164,6 +241,7 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
             settings["Nytka:Digest:Enabled"] = "true";
             settings["Nytka:Digest:Hour"] = "10";
         });
+        await Conversation(new DateTimeOffset(2026, 9, 29, 9, 0, 0, TimeSpan.Zero));
 
         await Server.Get<Scheduler>().TickAsync(default);
 
@@ -175,6 +253,7 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
     {
         // 21:30 UTC is 00:30 the next day in Kyiv: the digest is for the 30th, and holds what started after local midnight.
         Start("Europe/Kyiv");
+        // 20:30 UTC is 23:30 local on the 29th: that day is caught up on its own.
         await Conversation(new DateTimeOffset(2026, 9, 29, 20, 30, 0, TimeSpan.Zero), "Before midnight");
         var late = await Conversation(new DateTimeOffset(2026, 9, 29, 21, 10, 0, TimeSpan.Zero), "After midnight");
         Server.Time.SetUtcNow(new DateTimeOffset(2026, 9, 30, 18, 30, 0, TimeSpan.Zero));
@@ -182,7 +261,7 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
 
         await TickAndRun();
 
-        var request = Assert.Single(DigestRequests);
+        var request = Assert.Single(DigestRequests, r => r.User.StartsWith("Date: 2026-09-30", StringComparison.Ordinal));
         Assert.Contains(late.ToString(), request.User);
         Assert.Contains("After midnight", request.User);
         Assert.Contains("00:10", request.User);
@@ -190,7 +269,7 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
         Assert.Contains("09:00", request.User);
         Assert.DoesNotContain("Before midnight", request.User);
         Assert.Contains("Europe/Kyiv", request.System);
-        Assert.Equal("2026-09-30", await Db.ScalarAsync<string>("select to_char(local_date, 'YYYY-MM-DD') from digests"));
+        Assert.Equal(["2026-09-29", "2026-09-30"], await Db.QueryAsync<string>("select to_char(local_date, 'YYYY-MM-DD') from digests order by local_date"));
     }
 
     [Fact]
@@ -198,7 +277,7 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
     {
         Start();
         var inside = await Conversation(Morning, "Inside", "Summary of the inside talk.");
-        await Conversation(Morning.AddDays(-1), "Yesterday's talk");
+        await Conversation(Morning.AddDays(-2), "Yesterday's talk");
         await Db.ExecuteAsync(
             """
             insert into tasks (id, conversation_id, text, fingerprint, created_at, updated_at, deleted_at)
@@ -294,10 +373,10 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
     public async Task A_failed_past_date_is_dropped_after_three_attempts()
     {
         Start();
-        await Conversation(Morning.AddDays(-1));
+        await Conversation(Morning.AddDays(-2));
         Llm.Respond = _ => throw new LlmException("The language model endpoint answered 500.", 500);
 
-        Assert.Equal(HttpStatusCode.Accepted, (await Admin.PostAsync("/api/v1/digests/run?date=2026-09-28", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, (await Admin.PostAsync("/api/v1/digests/run?date=2026-09-27", null)).StatusCode);
         await RunThreeAttempts();
 
         Assert.Equal(0, await DigestJobs());
@@ -426,6 +505,9 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(["2026-09-01"], second.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("localDate").GetString()));
         Assert.Equal(JsonValueKind.Null, second.GetProperty("nextBefore").ValueKind);
         Assert.Equal(HttpStatusCode.BadRequest, (await Admin.GetAsync("/api/v1/digests?before=soon")).StatusCode);
+        var all = await Admin.GetFromJsonAsync<JsonElement>("/api/v1/digests?limit=3");
+        Assert.Equal(3, all.GetProperty("items").GetArrayLength());
+        Assert.Equal(JsonValueKind.Null, all.GetProperty("nextBefore").ValueKind);
     }
 
     [Fact]

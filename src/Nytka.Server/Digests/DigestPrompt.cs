@@ -55,7 +55,13 @@ public static class DigestPrompt
     public static string User(DateOnly date, DigestInput input, TimeZoneInfo zone)
     {
         var message = new StringBuilder();
-        message.Append("Date: ").Append(date.ToString("yyyy-MM-dd dddd", CultureInfo.InvariantCulture)).Append("\n\nConversations (id | time | title | summary):\n");
+        message.Append("Date: ").Append(date.ToString("yyyy-MM-dd dddd", CultureInfo.InvariantCulture)).Append('\n');
+        if (input.TotalConversations > input.Conversations.Count)
+        {
+            message.Append($"Only the most recent {input.Conversations.Count} of {input.TotalConversations} conversations of the day are included.\n");
+        }
+
+        message.Append("\nConversations (id | time | title | summary):\n");
         foreach (var conversation in input.Conversations)
         {
             var time = TimeZoneInfo.ConvertTime(new DateTimeOffset(conversation.StartedAt, TimeSpan.Zero), zone);
