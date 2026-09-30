@@ -56,7 +56,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(
             [
-                "stt.url", "stt.apiKey", "stt.model", "stt.language", "conversations.gap", "audio.retentionDays",
+                "stt.url", "stt.apiKey", "stt.model", "stt.language", "conversations.gap", "user.timeZone", "audio.retentionDays",
                 "llm.baseUrl", "llm.apiKey", "llm.model", "llm.outputLanguage",
                 "memories.enabled", "memories.userName", "search.dictionary",
             ],
