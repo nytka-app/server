@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/nytka-app/server/compare/v0.8.1...v0.9.0) (2026-09-30)
+
+
+### Features
+
+* daily digest ([#51](https://github.com/nytka-app/server/issues/51)) ([1af0f4d](https://github.com/nytka-app/server/commit/1af0f4d0de3b4aa391d0f628c2191ecbb3aec3cf))
+
 ## [0.8.1](https://github.com/nytka-app/server/compare/v0.8.0...v0.8.1) (2026-09-30)
 
 
