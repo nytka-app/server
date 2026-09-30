@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
+using Nytka.Server.Digests;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Jobs;
@@ -8,12 +10,12 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle) and the conversations that need a run of the model. Dedupe keys make every call
+/// to go idle), the conversations that need a run of the model and the day's digest. Dedupe keys make every call
 /// safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
-    IOptionsMonitor<LlmOptions> llmOptions, TimeProvider time)
+    IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -35,6 +37,38 @@ public sealed class Scheduler(
         }
 
         await QueueEnrichmentsAsync(now, ct);
+        await QueueDigestAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Queues the digest of today once the local hour has come, and of yesterday (a catch-up after an outage or failed runs),
+    /// unless the date has one or has no conversation that counts: a date with nothing to say queues no job. Nothing is queued
+    /// while the digest is off or no model is set.
+    /// </summary>
+    private async Task QueueDigestAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (!llm.IsConfigured || !DigestSettings.IsEnabled(settings))
+        {
+            return;
+        }
+
+        var zone = UserTimeZone.Resolve(settings);
+        var today = DigestDay.Today(now, zone);
+        await QueueDigestForAsync(today.AddDays(-1), zone, now, ct);
+        if (DigestDay.HourOf(now, zone) >= DigestSettings.Hour(settings))
+        {
+            await QueueDigestForAsync(today, zone, now, ct);
+        }
+    }
+
+    private async Task QueueDigestForAsync(DateOnly date, TimeZoneInfo zone, DateTimeOffset now, CancellationToken ct)
+    {
+        var text = DigestDay.Text(date);
+        var (from, to) = DigestDay.Bounds(date, zone);
+        if (!await digests.ExistsAsync(text, ct) && await digests.HasConversationsAsync(from, to, ct))
+        {
+            await queue.EnqueueAsync(JobKinds.MakeDigest, new DigestPayload(text, false), JobKinds.MakeDigestKey(text), now, ct);
+        }
     }
 
     /// <summary>Nothing is queued while the model is not configured.</summary>

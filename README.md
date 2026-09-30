@@ -102,6 +102,8 @@ you copy without thinking would lock its setting.
 | `Nytka__Llm__BackfillDays` | no | `7` | env only | How far back conversations without a summary are summarized |
 | `Nytka__Memories__Enabled` | no | `true` | editable | `false` stops memory extraction |
 | `Nytka__Memories__UserName` | no | empty | editable | Who "you" is for the model, up to 64 characters; empty means the person wearing the pendant |
+| `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](#daily-digest); it needs the language model |
+| `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
@@ -116,7 +118,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*` and `Nytka__Search__Dictionary` are checked when first used, so type them as
+  `Nytka__Memories__*`, `Nytka__Digest__*` and `Nytka__Search__Dictionary` are checked when first used, so type them as
   the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
   `Nytka__Search__Dictionary` stops indexing.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
@@ -297,6 +299,31 @@ conversation stays in `GET /api/v1/bookmarks` alone (`conversationId` is then nu
 conversation keeps its bookmarks. The `bookmark.created` webhook and the `list_bookmarks` MCP tool
 carry the same fields.
 
+## Daily digest
+
+Once a day the server writes a short account of your day: a headline, an overview of two to four
+sentences, highlights (each tied to the conversation it comes from), decisions and open questions.
+It is off by default. Set `Nytka__Digest__Enabled=true` and it makes the digest of each local day
+after `Nytka__Digest__Hour` (21 by default), in `Nytka__User__TimeZone` and in `llm.outputLanguage`. It
+needs the language model.
+
+- **What goes to the model.** One request with that day's summarized conversations (title, local time,
+  summary), the tasks and the memories created that day, and no transcript. A day with no summarized
+  conversation makes no digest and no request. A busy day sends its newest 80 conversations and says
+  so in the prompt. A conversation summarized after the digest was made is not added; the digest of
+  a date is made once. The server also makes yesterday's digest if it is missing (after an outage or
+  failed runs), and never one for a day without a summarized conversation.
+- **Read it.** `GET /api/v1/digests` lists them, newest date first, and `GET /api/v1/digests/{id}`
+  returns one. The `digest.ready` webhook carries `{ id, localDate, headline, overview }`, enough for an
+  ntfy or n8n message, and the `list_digests` MCP tool returns the list. A highlight whose conversation
+  you deleted later keeps its id; treat it as plain text.
+- **Make or redo one.** `POST /api/v1/digests/run?date=2026-09-29` (admin) queues a run for that local
+  date, today or earlier, that replaces the date's digest with a new one (and sends `digest.ready`
+  again). It answers `202 { localDate }`, `400` for a missing, malformed or future date and `409`
+  without a model. It works while `Nytka__Digest__Enabled` is `false`.
+- **When it fails.** A run makes three attempts; after the third it is tried again an hour later while
+  the date is today or yesterday. Logs and errors say only what failed, never the digest or its input.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries and memories
@@ -440,6 +467,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
+| `digest.ready` | A daily digest was made, by the schedule or on demand | `{ id, localDate, headline, overview }` |
 | `ping` | You called `test` | `{}` |
 
 A webhook gets nothing for events from before it existed, or while it is inactive. The change and its
@@ -520,6 +548,7 @@ through OAuth cannot connect.
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
+| `list_digests` | `before?` (a date, `yyyy-MM-dd`), `limit?` (1 to 100, default 30) | `{ items: [{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }], nextBefore }` |
 | `search` | `query`, `kinds?` (a list of `conversation` and `memory`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
@@ -616,6 +645,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time and `beforeId` the id of the last item of the previous page (`nextBefore`, `nextBeforeId`), so equal times are not skipped; `limit` defaults to 30, caps at 100 |
 | POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `at` with an explicit offset, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
 | PATCH, DELETE | `/api/v1/bookmarks/{id}` | admin | PATCH body `{ note }`, `null` clears it; DELETE answers `204` |
+| GET | `/api/v1/digests?before=&limit=` | read | `{ items, nextBefore }`, newest date first; a digest is `{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }`; `before` is a date (`yyyy-MM-dd`) and keeps earlier ones, `nextBefore` is the last date of the page, set only when an earlier digest exists; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
+| POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
 | GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
@@ -645,6 +677,7 @@ transcripts and your webhook secrets.
   conversation.
 - Transcripts, titles, summaries, tasks and memories stay until you delete them. Deleting a
   conversation deletes its audio, transcript, tasks and memories.
+- Daily digests stay until you delete their rows; they hold model-written text about your day, so a dump holds them too.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.

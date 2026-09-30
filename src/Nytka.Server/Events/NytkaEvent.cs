@@ -20,4 +20,7 @@ public sealed record NytkaEvent(string Type, Guid SubjectId)
 
     /// <summary>A bookmark was added; the subject is the bookmark.</summary>
     public const string BookmarkCreated = "bookmark.created";
+
+    /// <summary>A daily digest was stored; the subject is the digest.</summary>
+    public const string DigestReady = "digest.ready";
 }

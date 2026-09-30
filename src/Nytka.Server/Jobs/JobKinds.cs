@@ -11,6 +11,7 @@ public static class JobKinds
     public const string EnrichConversation = "enrich-conversation";
     public const string ExtractMemories = "extract-memories";
     public const string DeliverWebhook = "deliver-webhook";
+    public const string MakeDigest = "make-digest";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four and one nobody
@@ -20,6 +21,7 @@ public static class JobKinds
     {
         [EnrichConversation] = JobLane.Ai,
         [ExtractMemories] = JobLane.Ai,
+        [MakeDigest] = JobLane.Ai,
         [DeliverWebhook] = JobLane.Hooks,
     };
 
@@ -32,6 +34,9 @@ public static class JobKinds
     public static string ExtractMemoriesKey(Guid conversation) => $"{ExtractMemories}:{conversation}";
 
     public static string DeliverWebhookKey(Guid delivery) => $"{DeliverWebhook}:{delivery}";
+
+    /// <summary>One scheduled job per local date; an on-demand run has a key of its own, so it never merges into a scheduled one.</summary>
+    public static string MakeDigestKey(string localDate, bool replace = false) => $"{MakeDigest}:{localDate}" + (replace ? ":run" : "");
 
     public static JobLane LaneOf(string kind) => Claimed.GetValueOrDefault(kind, JobLane.Audio);
 

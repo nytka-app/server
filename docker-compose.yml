@@ -62,6 +62,8 @@ services:
       Nytka__Llm__BackfillDays: "${Nytka__Llm__BackfillDays:-}"
       Nytka__Memories__Enabled: "${Nytka__Memories__Enabled:-}"
       Nytka__Memories__UserName: "${Nytka__Memories__UserName:-}"
+      Nytka__Digest__Enabled: "${Nytka__Digest__Enabled:-}"
+      Nytka__Digest__Hour: "${Nytka__Digest__Hour:-}"
       Nytka__Search__Dictionary: "${Nytka__Search__Dictionary:-}"
     ports:
       # Loopback by default: put a reverse proxy in front, or set NYTKA_BIND to a tailnet address.
