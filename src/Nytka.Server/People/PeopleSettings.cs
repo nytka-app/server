@@ -9,12 +9,14 @@ public sealed class PeopleSettings : ISettingsGroup
     public const string SuggestNamesKey = "people.suggestNames";
     public const string VoiceMatchingKey = "people.voiceMatching";
     public const string VoiceThresholdKey = "people.voiceThreshold";
+    public const string FactsKey = "people.facts";
 
     public IReadOnlyList<SettingDefinition> Definitions { get; } =
     [
         new(SuggestNamesKey, SettingType.Bool, "true", SettingValidators.Bool),
         new(VoiceMatchingKey, SettingType.Bool, "false", SettingValidators.Bool),
         new(VoiceThresholdKey, SettingType.Number, "0.7", SettingValidators.Number(0.5, 0.95)),
+        new(FactsKey, SettingType.Bool, "true", SettingValidators.Bool),
     ];
 
     public static bool SuggestNames(SettingsService settings) => settings.Get(SuggestNamesKey) != "false";
@@ -24,4 +26,6 @@ public sealed class PeopleSettings : ISettingsGroup
 
     public static float VoiceThreshold(SettingsService settings) =>
         (float)double.Parse(settings.Get(VoiceThresholdKey)!, NumberStyles.Float, CultureInfo.InvariantCulture);
+
+    public static bool FactsEnabled(SettingsService settings) => settings.Get(FactsKey) != "false";
 }

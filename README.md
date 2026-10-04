@@ -176,6 +176,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Memories__Enabled` | no | `true` | editable | `false` stops memory extraction |
 | `Nytka__Memories__UserName` | no | empty | editable | Who "you" is for the model, up to 64 characters; empty means the person wearing the pendant |
 | `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](#people) for unnamed voices; it needs the language model |
+| `Nytka__People__Facts` | no | `true` | editable | `false` stops [facts about people](#facts-about-people) from being taken from conversations; it needs the language model |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
@@ -458,6 +459,30 @@ person wearing the pendant.
   Conversations summarized before memory extraction shipped (release 0.4.0) have no memories;
   regenerate a summary to feed one in.
 
+## Facts about people
+
+A fact is a short, lasting thing about one person you named: where they live, their work, family,
+habits, preferences, commitments. After each stored summary the server asks the model for up to ten
+facts of up to 300 characters, in `llm.outputLanguage`, when the conversation is not brief and has
+someone to write about: a speaker you confirmed as a person (by naming their voice or marking a line,
+see [Speaker labels](#transcription-endpoints)), or a line that names a person you know, as a whole word
+in any case. It sends the title, the transcript with a segment id on each line, those people with their
+30 newest facts, and `Nytka__Memories__UserName`. Your own lines (`Wearer`) are never a person's; facts
+about you stay memories.
+
+- **Each fact names its evidence line and a basis, both set by the server.** `said`: the person's own line.
+  `about`: your line or another confirmed person's. `mentioned`: a line of a speaker nobody confirmed that
+  names the person. A fact whose evidence line is none of these is dropped, whatever the model said.
+- A fact the person already holds is not added again with the same wording, even one you deleted.
+  Extraction never rewrites a fact you edited or added. Deleting a conversation deletes the facts taken
+  from it; deleting a person deletes theirs; merging two people moves them, and the target's row wins a
+  duplicate.
+- List, add, edit and delete facts with `/api/v1/people/{id}/facts`. A fact you add has `source: user`
+  and no basis; adding text you deleted earlier brings it back, and text a live fact holds is a `409`.
+- `Nytka__People__Facts=false`, or no model, means no extraction. The facts you have stay.
+- A failed extraction is tried three times, then again an hour later, three rounds at most.
+- Facts are not in Ask, the daily digest or search yet, and no webhook payload carries a transcript.
+
 ## Import from Omi
 
 Omi's "Export All Data" file (`omi-export.json`, from `GET /v1/users/export`) goes into Nytka once, so
@@ -692,6 +717,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
+| `person.fact.created` | A fact about a person was added, by extraction or by hand | `{ id, personId, personName, text, basis, conversationId }`; `basis` and `conversationId` are null for a fact you added |
 | `digest.ready` | A daily digest was made, by the schedule or on demand | `{ id, localDate, headline, overview }` |
 | `ping` | You called `test` | `{}` |
 
@@ -941,6 +967,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
 | GET | `/api/v1/people/voice-eval?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for [voice grouping](#voice-grouping): `{ segmentId, conversationId, durationMs, groupId, personId, matchPersonId, similarity }`, no text and no vector; `limit` defaults to 500, caps at 5000 |
 | DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |
+| GET | `/api/v1/people/{id}/facts?before=&limit=` | read | `{ items, nextBefore }`, newest first; a fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }`, `source` is `ai` or `user`, `basis` is `said`, `about`, `mentioned` or null; `limit` defaults to 50, caps at 200; `404` for an unknown person |
+| POST | `/api/v1/people/{id}/facts` | admin | Body `{ text }`, 1 to 300 characters; `201` with the fact (`source: user`); `409` when a live fact of the person holds it; `404` for an unknown person |
+| PATCH, DELETE | `/api/v1/people/{id}/facts/{factId}` | admin | PATCH body `{ text }`, `200` with the fact; DELETE answers `204`; `404` for an unknown fact |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
@@ -969,6 +998,7 @@ transcripts and your webhook secrets.
   database. A webhook secret is, as plain text, because signing needs it.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
 - Name suggestions (the name, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
+- Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.
 - Once you enroll [your voice](#your-voice): your voiceprint (192 numbers, plus the enrolled mean it
   resets to) until you delete it, and a fingerprint of each checked segment for as long as its speech

@@ -19,7 +19,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
 
     /// <summary>The types a webhook can ask for, <c>ping</c> (the test call's own) aside.</summary>
     public static readonly IReadOnlyList<string> Types =
-        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady];
+        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated];
 
     public const string Ping = "ping";
 
@@ -126,6 +126,15 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                     from bookmarks b where b.id = @id
                     """,
                     new { id = e.SubjectId }, transaction, cancellationToken: ct));
+            case NytkaEvent.PersonFactCreated:
+                return await connection.QuerySingleOrDefaultAsync<PersonFactData>(new CommandDefinition(
+                    """
+                    select f.id as Id, f.person_id as PersonId, p.name as PersonName, f.text as Text, f.basis as Basis,
+                           f.conversation_id as ConversationId
+                    from person_facts f join people p on p.id = f.person_id
+                    where f.id = @id and f.deleted_at is null
+                    """,
+                    new { id = e.SubjectId }, transaction, cancellationToken: ct));
             case NytkaEvent.DigestReady:
                 return await connection.QuerySingleOrDefaultAsync<DigestData>(new CommandDefinition(
                     "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview from digests where id = @id",
@@ -171,6 +180,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private sealed record MemoryData(Guid Id, string Text, Guid? ConversationId);
 
     private sealed record BookmarkData(Guid Id, DateTime At, string? Note, string Source);
+
+    private sealed record PersonFactData(Guid Id, Guid PersonId, string PersonName, string Text, string? Basis, Guid? ConversationId);
 
     private sealed record DigestData(Guid Id, string LocalDate, string Headline, string Overview);
 }
