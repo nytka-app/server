@@ -213,11 +213,10 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
 
     private const string SegmentSelect = $"""
         select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
-               s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, p.id as PersonId, p.name as PersonName,
+               s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser,
+               {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
                {SpeakerLabel.IsUserSource} as IsUserSource
-        from segments s
-        left join person_voices pv on pv.speaker_id = s.speaker_id
-        left join people p on p.id = pv.person_id
+        from segments s {SpeakerLabel.Joins}
         """;
 
     public async Task<IReadOnlyList<SegmentRow>> SegmentsAsync(Guid id, CancellationToken ct)

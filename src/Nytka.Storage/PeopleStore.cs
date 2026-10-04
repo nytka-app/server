@@ -25,25 +25,35 @@ public static class SpeakerLabel
         + "when s.is_user is not null then 'provider' end";
 
     /// <summary>
-    /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>: the wearer, else the person the voice
-    /// was named after, else the provider's own label.
+    /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>, following docs/specs/people.md (Which
+    /// label wins): the wearer, else the person set on the segment, else the person the voice was named after, else the
+    /// provider's own label.
     /// </summary>
-    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(p.name, s.speaker) end";
+    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(sp.name, p.name, s.speaker) end";
+
+    /// <summary>SQL for the id of the person a segment aliased <c>s</c> belongs to, after <see cref="Joins"/>; null when none.</summary>
+    public const string PersonId = "coalesce(s.person_id, pv.person_id)";
+
+    /// <summary>SQL for the name of that person, after <see cref="Joins"/>.</summary>
+    public const string PersonName = "coalesce(sp.name, p.name)";
 
     public const string Joins =
-        "left join person_voices pv on pv.speaker_id = s.speaker_id left join people p on p.id = pv.person_id";
+        "left join person_voices pv on pv.speaker_id = s.speaker_id left join people p on p.id = pv.person_id "
+        + "left join people sp on sp.id = s.person_id";
 }
 
-public sealed record PersonRow(Guid Id, string Name, DateTime CreatedAt, string[] Voices, int Segments);
+public sealed record PersonRow(Guid Id, string Name, string? Note, DateTime CreatedAt, string[] Voices, int Segments);
 
 public enum PersonWrite { Ok, NotFound, NameTaken }
+
+public enum SegmentLink { Ok, NoSegment, NoPerson }
 
 public sealed record UnnamedVoice(string SpeakerId, string? Label, int Segments, DateTime LastSeenAt);
 
 /// <summary>People: names given to the voices a transcription provider tells apart (<c>people</c>, <c>person_voices</c>).</summary>
 public sealed class PeopleStore(NpgsqlDataSource dataSource)
 {
-    private sealed record Row(Guid Id, string Name, DateTime CreatedAt);
+    private sealed record Row(Guid Id, string Name, string? Note, DateTime CreatedAt);
 
     private sealed record Voice(Guid PersonId, string SpeakerId);
 
@@ -53,19 +63,19 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var people = (await connection.QueryAsync<Row>(new CommandDefinition(
-            "select id as Id, name as Name, created_at as CreatedAt from people order by lower(name)", cancellationToken: ct))).ToList();
+            "select id as Id, name as Name, note as Note, created_at as CreatedAt from people order by lower(name)", cancellationToken: ct))).ToList();
         var voices = (await connection.QueryAsync<Voice>(new CommandDefinition(
             "select person_id as PersonId, speaker_id as SpeakerId from person_voices order by speaker_id", cancellationToken: ct))).ToList();
         var counts = (await connection.QueryAsync<Count>(new CommandDefinition(
             $"""
-            select pv.person_id as PersonId, count(*)::int as Segments
-            from segments s join person_voices pv on pv.speaker_id = s.speaker_id
-            where {SpeakerLabel.IsUser} is not true
-            group by pv.person_id
+            select {SpeakerLabel.PersonId} as PersonId, count(*)::int as Segments
+            from segments s {SpeakerLabel.Joins}
+            where {SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is not null
+            group by {SpeakerLabel.PersonId}
             """, cancellationToken: ct))).ToDictionary(c => c.PersonId, c => c.Segments);
         return people
             .Select(p => new PersonRow(
-                p.Id, p.Name, p.CreatedAt,
+                p.Id, p.Name, p.Note, p.CreatedAt,
                 voices.Where(v => v.PersonId == p.Id).Select(v => v.SpeakerId).ToArray(),
                 counts.GetValueOrDefault(p.Id)))
             .ToList();
@@ -117,14 +127,18 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
             """,
             new { id = Guid.NewGuid(), name, now }, transaction, cancellationToken: ct));
 
-    /// <summary>Renames a person. A name another person already has is refused.</summary>
-    public async Task<PersonWrite> RenameAsync(Guid id, string name, CancellationToken ct)
+    /// <summary>
+    /// Renames a person (<paramref name="name"/> null keeps the name) and sets or clears the note
+    /// (<paramref name="setNote"/> false keeps it). A name another person already has is refused.
+    /// </summary>
+    public async Task<PersonWrite> UpdateAsync(Guid id, string? name, bool setNote, string? note, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         try
         {
             return await connection.ExecuteAsync(new CommandDefinition(
-                "update people set name = @name where id = @id", new { id, name }, cancellationToken: ct)) == 1
+                "update people set name = coalesce(cast(@name as text), name), note = case when @setNote then cast(@note as text) else note end where id = @id",
+                new { id, name, setNote, note }, cancellationToken: ct)) == 1
                 ? PersonWrite.Ok
                 : PersonWrite.NotFound;
         }
@@ -134,7 +148,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
         }
     }
 
-    /// <summary>Deletes the person and their voice links; the segments keep the provider's labels.</summary>
+    /// <summary>Deletes the person and their voice links; the segments fall back to the provider's labels.</summary>
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -161,7 +175,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
                    count(*)::int as Segments,
                    max(s.started_at) as LastSeenAt
             from segments s
-            where s.speaker_id is not null and {SpeakerLabel.IsUser} is not true
+            where s.speaker_id is not null and s.person_id is null and {SpeakerLabel.IsUser} is not true
               and not exists (select 1 from person_voices pv where pv.speaker_id = s.speaker_id)
             group by s.speaker_id
             order by count(*) desc, max(s.started_at) desc, s.speaker_id
@@ -169,7 +183,24 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
             """, new { limit }, cancellationToken: ct))).ToList();
     }
 
-    /// <summary>Moves every voice of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
+    /// <summary>Sets the person of one segment, or clears it (null) so the voice's name shows again.</summary>
+    public async Task<SegmentLink> SetSegmentPersonAsync(long segmentId, Guid? personId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        try
+        {
+            return await connection.ExecuteAsync(new CommandDefinition(
+                "update segments set person_id = @personId where id = @segmentId", new { segmentId, personId }, cancellationToken: ct)) == 1
+                ? SegmentLink.Ok
+                : SegmentLink.NoSegment;
+        }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.ForeignKeyViolation)
+        {
+            return SegmentLink.NoPerson;
+        }
+    }
+
+    /// <summary>Moves every voice and segment link of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
     public async Task<PersonWrite> MergeAsync(Guid id, Guid intoId, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -183,6 +214,8 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
 
         await connection.ExecuteAsync(new CommandDefinition(
             "update person_voices set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update segments set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(
             "delete from people where id = @id", new { id }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);

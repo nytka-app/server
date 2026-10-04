@@ -256,6 +256,11 @@ batches. Labels of other people hold across batches only when the provider names
 instance through its own voice enrollment. Which lines are yours Nytka decides itself once you enroll
 [your voice](#your-voice); until then, and for segments it does not check, it keeps the provider's
 `is_user`.
+The name a line shows comes from three steps, first match wins: the person set on that segment
+(`PATCH /api/v1/segments/{id}` with `personId`), then the person who owns the segment's `speaker_id`,
+then the provider's `speaker`; your own lines show as `Wearer` before any of them. Deleting a person
+returns their lines to the next step. `PATCH /api/v1/people/{id}` also keeps your own note on a
+person (up to 500 characters), which no model reads or writes.
 
 ## Your voice
 
@@ -813,7 +818,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, and `voice` when the speaker model is there |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync` and `people`, and `voice` when the speaker model is there |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -855,7 +860,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/voice/reset` | admin | Back to the enrolled voiceprint, forgetting what it learned; `200` as GET, `404` with no voice enrolled |
 | DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts; your marks stay. `204`, also with nothing enrolled |
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
-| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser }`: `true` ("this is me"), `false` or `null` (clears the mark); `200` with the segment as a conversation shows it |
+| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
+| PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
@@ -882,6 +888,7 @@ transcripts and your webhook secrets.
 - Daily digests stay until you delete their rows; they hold model-written text about your day, so a dump holds them too.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
+- A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.
 - Once you enroll [your voice](#your-voice): your voiceprint (192 numbers, plus the enrolled mean it
   resets to) until you delete it, and a fingerprint of each checked segment for as long as its speech

@@ -19,9 +19,10 @@ public static class InfoEndpoints
     /// <summary>
     /// What this server can do beyond apiVersion 1, for the app to gate on. "offline-sync": late audio
     /// queues behind live speech and merges by capture time (migration 0005). "voice": the speaker model is
-    /// there, so the voice routes work (docs/specs/your-voice.md).
+    /// there, so the voice routes work (docs/specs/your-voice.md). "people": notes on people and a person on a segment
+    /// (docs/specs/people.md).
     /// </summary>
-    public static IReadOnlyList<string> Features(SpeakerModel voice) => voice.Available ? ["offline-sync", "voice"] : ["offline-sync"];
+    public static IReadOnlyList<string> Features(SpeakerModel voice) => voice.Available ? ["offline-sync", "voice", "people"] : ["offline-sync", "people"];
 
     public static RouteGroupBuilder MapInfo(this RouteGroupBuilder api)
     {

@@ -118,10 +118,8 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
             var segments = (await connection.QueryAsync<SegmentRow>(new CommandDefinition(
                 $"""
                 select s.conversation_id as ConversationId, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text,
-                       s.speaker as Speaker, s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, p.name as Person
-                from segments s
-                left join person_voices pv on pv.speaker_id = s.speaker_id
-                left join people p on p.id = pv.person_id
+                       s.speaker as Speaker, s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, {SpeakerLabel.PersonName} as Person
+                from segments s {SpeakerLabel.Joins}
                 where s.conversation_id = any(@ids)
                 order by s.started_at, s.id
                 """,
