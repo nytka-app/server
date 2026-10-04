@@ -11,6 +11,7 @@ using Nytka.Server.Import;
 using Nytka.Server.Jobs;
 using Nytka.Server.Mcp;
 using Nytka.Server.Memories;
+using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Search;
 using Nytka.Server.Settings;
@@ -70,6 +71,7 @@ builder.Services.AddNytkaSearch();
 builder.Services.AddNytkaDigests();
 builder.Services.AddNytkaWebhooks();
 builder.Services.AddNytkaVoice();
+builder.Services.AddNytkaPeople();
 
 var app = builder.Build();
 

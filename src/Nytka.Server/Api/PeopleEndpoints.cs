@@ -13,6 +13,7 @@ namespace Nytka.Server.Api;
 public static class PeopleEndpoints
 {
     public const int MaxNameLength = 80;
+    public const int MaxNoteLength = 500;
     public const int MaxSpeakerIdLength = 64;
 
     public static RouteGroupBuilder MapPeople(this RouteGroupBuilder api)
@@ -20,7 +21,7 @@ public static class PeopleEndpoints
         var people = api.MapGroup("/people");
         people.MapGet("", ListAsync).AllowRead();
         people.MapPost("", CreateAsync);
-        people.MapPatch("/{id:guid}", RenameAsync);
+        people.MapPatch("/{id:guid}", UpdateAsync);
         people.MapDelete("/{id:guid}", DeleteAsync);
         people.MapPost("/{id:guid}/merge", MergeAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
@@ -100,16 +101,37 @@ public static class PeopleEndpoints
         return before ? Results.Ok(person) : Results.Created($"/api/v1/people/{id}", person);
     }
 
-    /// <summary>Body <c>{ name }</c>. A name another person has is a 409.</summary>
-    private static async Task<IResult> RenameAsync(Guid id, HttpRequest http, PeopleStore people, CancellationToken ct)
+    /// <summary>
+    /// Body <c>{ name?, note? }</c>, at least one. <c>note: null</c> clears the note. A name another person has is a 409.
+    /// </summary>
+    private static async Task<IResult> UpdateAsync(Guid id, HttpRequest http, PeopleStore people, CancellationToken ct)
     {
         var body = await ReadObjectAsync(http, ct);
-        if (body is not { } json || Name(json) is not { } name)
+        if (body is not { } json)
         {
             return Invalid("name", $"Must be text of 1 to {MaxNameLength} characters.");
         }
 
-        return await people.RenameAsync(id, name, ct) switch
+        var hasName = json.TryGetProperty("name", out _);
+        var name = Name(json);
+        if (hasName && name is null)
+        {
+            return Invalid("name", $"Must be text of 1 to {MaxNameLength} characters.");
+        }
+
+        var hasNote = json.TryGetProperty("note", out var value);
+        var note = hasNote && value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim() : null;
+        if (hasNote && (value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null) || note is { Length: 0 or > MaxNoteLength }))
+        {
+            return Invalid("note", $"Must be text of 1 to {MaxNoteLength} characters, or null.");
+        }
+
+        if (!hasName && !hasNote)
+        {
+            return Invalid("name", "Give a name, a note or both.");
+        }
+
+        return await people.UpdateAsync(id, name, hasNote, note, ct) switch
         {
             PersonWrite.NotFound => NotFound(),
             PersonWrite.NameTaken => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Another person has that name."),

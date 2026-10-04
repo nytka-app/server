@@ -182,9 +182,13 @@ public static class VoiceEndpoints
         return Results.Ok(new VoiceSegmentPage(items, items.Count == take ? items[^1].StartedAt : null));
     }
 
-    /// <summary>Body <c>{ isUser }</c>: true, false, or null to clear the mark. Answers the segment as a conversation shows it.</summary>
+    /// <summary>
+    /// Body <c>{ isUser?, personId? }</c>, at least one. <c>isUser</c> is true, false, or null to clear the mark;
+    /// <c>personId</c> a person, or null to clear the segment's own person. Answers the segment as a conversation shows it.
+    /// </summary>
     private static async Task<IResult> MarkAsync(
-        long id, HttpRequest http, VoiceStore voices, ConversationStore conversations, SettingsService settings, CancellationToken ct)
+        long id, HttpRequest http, VoiceStore voices, PeopleStore people, ConversationStore conversations,
+        SettingsService settings, CancellationToken ct)
     {
         JsonElement body;
         try
@@ -196,18 +200,67 @@ public static class VoiceEndpoints
             body = default;
         }
 
-        if (body.ValueKind != JsonValueKind.Object
-            || !body.TryGetProperty("isUser", out var value)
-            || value.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null))
+        var hasUser = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("isUser", out _);
+        var hasPerson = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("personId", out _);
+        var errors = new Dictionary<string, string[]>();
+        var isUser = (bool?)null;
+        if (hasUser)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["isUser"] = ["Must be true, false or null."] });
+            var value = body.GetProperty("isUser");
+            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null)
+            {
+                isUser = value.ValueKind == JsonValueKind.Null ? null : value.GetBoolean();
+            }
+            else
+            {
+                errors["isUser"] = ["Must be true, false or null."];
+            }
         }
 
-        bool? isUser = value.ValueKind == JsonValueKind.Null ? null : value.GetBoolean();
-        return await voices.MarkAsync(id, isUser, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct)
-            ? Results.Ok(await conversations.SegmentAsync(id, ct))
-            : Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such segment.");
+        var personId = (Guid?)null;
+        if (hasPerson)
+        {
+            var value = body.GetProperty("personId");
+            if (value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out var parsed))
+            {
+                personId = parsed;
+            }
+            else if (value.ValueKind != JsonValueKind.Null)
+            {
+                errors["personId"] = ["Must be the id of a person, or null."];
+            }
+        }
+
+        if (!hasUser && !hasPerson)
+        {
+            errors["isUser"] = ["Give isUser, personId or both."];
+        }
+
+        if (errors.Count > 0)
+        {
+            return Results.ValidationProblem(errors);
+        }
+
+        if (hasPerson)
+        {
+            switch (await people.SetSegmentPersonAsync(id, personId, ct))
+            {
+                case SegmentLink.NoPerson:
+                    return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such person.");
+                case SegmentLink.NoSegment:
+                    return NoSegment();
+            }
+        }
+
+        if (hasUser && !await voices.MarkAsync(id, isUser, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct))
+        {
+            return NoSegment();
+        }
+
+        return await conversations.SegmentAsync(id, ct) is { } segment ? Results.Ok(segment) : NoSegment();
     }
+
+    private static IResult NoSegment() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such segment.");
 
     private static IResult TooLong() => Results.Problem(
         statusCode: StatusCodes.Status413PayloadTooLarge, title: $"An enrollment may not exceed {VoiceEnrollment.MaxSeconds} seconds.");
