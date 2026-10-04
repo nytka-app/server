@@ -110,6 +110,7 @@ api.MapBookmarks();
 api.MapDigests();
 api.MapExport();
 api.MapVoice();
+api.MapVoiceGroups();
 app.MapNytkaMcp();
 
 app.Run();

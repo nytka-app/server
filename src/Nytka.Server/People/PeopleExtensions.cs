@@ -12,6 +12,7 @@ public static class PeopleExtensions
         services.AddSingleton<ISettingsGroup, PeopleSettings>();
         services.AddSingleton<IEventSubscriber, NameSuggestionTrigger>();
         services.AddScoped<IJobHandler, SuggestNamesHandler>();
+        services.AddScoped<IJobHandler, GroupVoicesHandler>();
         return services;
     }
 }

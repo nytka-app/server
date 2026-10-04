@@ -184,6 +184,8 @@ you copy without thinking would lock its setting.
 | `Nytka__Voice__LearnThreshold` | no | `0.5` | editable | Similarity, 0.1 to 0.95, at or above which a segment of 2 s or longer updates the voiceprint; never below `Nytka__Voice__UserThreshold`: the app's change is refused with `400`, and a lower value from the environment counts as that threshold |
 | `Nytka__Voice__Learn` | no | `true` | editable | `false` stops matched segments from updating the voiceprint |
 | `Nytka__Voice__MinSegmentSeconds` | no | `1.0` | editable | Shortest segment, 1.0 to 5.0 seconds, that is fingerprinted; a shorter one gets no label from Nytka |
+| `Nytka__People__VoiceMatching` | no | `false` | editable | Group the voices of other people across conversations and match them to the voiceprints of people you named ([voice grouping](#voice-grouping)); `true` is refused (`400`) until your own voice is enrolled |
+| `Nytka__People__VoiceThreshold` | no | `0.7` | editable | Similarity, 0.5 to 0.95, at or above which a voice joins a group or matches a person's voiceprint |
 | `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
@@ -292,8 +294,8 @@ re-labels the stored segments.
 provider's `is_user`. A conversation's segments say which one decided in `isUserSource`. Marking a
 segment of 2 seconds or longer as yours also teaches the voiceprint.
 
-**Forget.** `DELETE /api/v1/voice` deletes the voiceprint, every segment fingerprint and every
-similarity and verdict in one go; the provider's labels come back. Your marks stay: they are
+**Forget.** `DELETE /api/v1/voice` deletes the voiceprint, every segment fingerprint, every
+[voice group](#voice-grouping) and every similarity and verdict in one go; the provider's labels come back. Your marks stay: they are
 statements, not biometrics.
 
 **Choosing the threshold.** `GET /api/v1/voice/segments` lists every segment's similarity and the three
@@ -327,6 +329,44 @@ A failed run is retried like [memories](#memories): three attempts, then an hour
 at most. The text of the conversation goes to your language model endpoint, as for a summary, together
 with the names of the people you already have; logs and errors hold neither. Turn it off with
 `Nytka__People__SuggestNames=false`; the suggestions already made stay.
+## Voice grouping
+
+Off by default. Your voice only tells you apart from everyone else; this opt-in layer also tells the
+others apart, so Nytka can ask "Who is this?" and later suggest the name of someone you already named.
+It needs [your voice](#your-voice) enrolled, the speaker model and `Nytka__Audio__RetentionDays` of 1 or
+more (with `0` fingerprints die in the transcription transaction, before any grouping runs); then
+`GET /api/v1/info` lists `voice-groups` under `features`. The app shows the switch with a sentence on the
+legal duty of recording people.
+
+**Grouping.** Every minute, while `Nytka__People__VoiceMatching` is on and a fingerprint waits, the
+`group-voices` job takes the fingerprints of segments that are not yours and have no person, in segment
+order. One that reaches `Nytka__People__VoiceThreshold` against the voiceprint of a person you confirmed
+before joins that person's pending voice match for its conversation. Otherwise it joins the group whose
+centroid it reaches the threshold with, which moves as a running mean, or starts a group. No model is
+called and no label changes: only you naming a group, or accepting a match, links segments to a person
+(the routes that do come with the cards). A group's fingerprints are the ones still held.
+
+**Confirming.** Naming a group or accepting a match links its segments to the person, blends the
+fingerprints still held into that person's voiceprint (weighted by count, as for yours) and deletes the
+group, in one transaction. A person's voiceprint is the one vector of someone else that outlives audio.
+
+**A group never outlives its audio.** Retention deletes the groups its fingerprints leave empty in the
+same statement, deleting a conversation does the same, and `DELETE /api/v1/voice` deletes every group
+together with your voiceprint. A group that only lost some of its fingerprints keeps its centroid.
+`DELETE /api/v1/people/{id}` deletes the person's voiceprint and pending matches with them.
+
+**Forget.** `DELETE /api/v1/people/voiceprints` deletes every group, every person voiceprint and every
+pending match. Segment links stay: they are statements, as your marks are. Turning the setting off stops
+new work and keeps what is stored until that call.
+
+**Measuring it.** `GET /api/v1/people/voice-eval` lists the fingerprinted segments of other people with
+their group, the person they were linked to, a pending match's person and the similarity, without text or
+vectors. Label a few hundred of them blind and join on `segmentId`; the procedure and the pass marks are
+in [docs/specs/people.md](docs/specs/people.md#how-we-measure-it). How well the model tells two other
+people apart in Ukrainian and Russian is unmeasured until you run it, so the switch starts off.
+
+No voiceprint, group centroid or fingerprint appears in an API answer, export, webhook, MCP answer or
+log; `pg_dump` holds them.
 
 ## The language model
 
@@ -852,7 +892,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync` and `people`, and `voice` when the speaker model is there |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync` and `people`, `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -892,13 +932,15 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/voice` | admin | `{ enrolled, enrolledAt, updatedAt, enrolledSamples, learnedSegments, modelAvailable }`; never the voiceprint |
 | POST | `/api/v1/voice/enrollment?mode=` | admin | Body: one or more chunks of Opus frames back to back (`application/vnd.nytka.frames.v1`) or a 16 kHz mono 16-bit WAV (`audio/wav`), at most 120 s; `mode` is `replace` (default) or `add`. `200 { speechSeconds, samples, minAgreement }`; `422` with `reason` `too-little-speech`, `too-few-samples` or `samples-disagree` and the same three numbers; `413` over 120 s; `415` another content type; `400` unreadable audio; `409` `add` to a voiceprint of another model; `503` without the speaker model |
 | POST | `/api/v1/voice/reset` | admin | Back to the enrolled voiceprint, forgetting what it learned; `200` as GET, `404` with no voice enrolled |
-| DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts; your marks stay. `204`, also with nothing enrolled |
+| DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts, and every voice group; your marks stay. `204`, also with nothing enrolled |
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker` or `label` (`groupId` is for voice groups, not made yet); see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice or the batch's segments; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
+| GET | `/api/v1/people/voice-eval?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for [voice grouping](#voice-grouping): `{ segmentId, conversationId, durationMs, groupId, personId, matchPersonId, similarity }`, no text and no vector; `limit` defaults to 500, caps at 5000 |
+| DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
@@ -934,6 +976,12 @@ transcripts and your webhook secrets.
   segment; they cannot be turned back into a voice. No API answer, webhook, MCP answer, export or log
   carries a voiceprint or a fingerprint; `pg_dump` does. Without an enrolled voice nothing is
   fingerprinted, and the enrollment's audio is never stored.
+- With [voice grouping](#voice-grouping) on, the fingerprints of other people's segments are kept as long as
+  their audio and gathered into groups (a centroid, the mean of the fingerprints in it), which go with their
+  last fingerprint. A person you confirmed keeps one voiceprint (a centroid and a sample count) until you
+  delete the person or call `DELETE /api/v1/people/voiceprints`; that voiceprint is the only vector of
+  someone else that outlives audio. Pending voice matches (a person, the segments, the best similarity) stay
+  until decided or forgotten. Nothing of this is in an API answer, export, webhook, MCP answer or log.
 
 The server logs no audio, no transcript text, no token, and no response body from the transcription
 endpoint, the language model or a webhook receiver.

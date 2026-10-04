@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Nytka.Server.Jobs;
+using Nytka.Server.People;
 using Nytka.Server.Settings;
 using Nytka.Server.Voice;
 using Nytka.Storage;
@@ -31,7 +32,7 @@ public static class SettingEndpoints
     private static IResult List(SettingsService settings) => Results.Ok(Describe(settings));
 
     private static async Task<IResult> PatchAsync(
-        HttpRequest http, SettingsService settings, JobQueue queue, TimeProvider time, CancellationToken ct)
+        HttpRequest http, SettingsService settings, JobQueue queue, VoiceStore voices, TimeProvider time, CancellationToken ct)
     {
         var request = await TokenEndpoints.ReadBodyAsync<PatchRequest>(http, ct);
         if (request?.Values is not { } raw)
@@ -61,6 +62,12 @@ public static class SettingEndpoints
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);
+        }
+
+        // A Conflicts check cannot see the voiceprint's table, so the endpoint does.
+        if (values.GetValueOrDefault(PeopleSettings.VoiceMatchingKey) == "true" && await voices.GetProfileAsync(ct) is null)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { [PeopleSettings.VoiceMatchingKey] = ["Enroll your voice first."] });
         }
 
         var update = await settings.UpdateAsync(values, ct);

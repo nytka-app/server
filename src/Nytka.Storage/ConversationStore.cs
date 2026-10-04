@@ -239,12 +239,16 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             $"{SegmentSelect} where s.id = @id", new { id }, cancellationToken: ct));
     }
 
-    /// <summary>Deletes the conversation; its batches, segments and speech audio go with it (on delete cascade).</summary>
+    /// <summary>Deletes the conversation; its batches, segments and speech audio go with it (on delete cascade), and so do the voice groups its fingerprints leave empty.</summary>
     public async Task<bool> DeleteAsync(Guid id, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        return await connection.ExecuteAsync(new CommandDefinition(
-            "delete from conversations where id = @id", new { id }, cancellationToken: ct)) > 0;
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var deleted = await connection.ExecuteAsync(new CommandDefinition(
+            "delete from conversations where id = @id", new { id }, transaction, cancellationToken: ct)) > 0;
+        await VoiceGroupStore.DeleteEmptyGroupsAsync(connection, transaction, ct);
+        await transaction.CommitAsync(ct);
+        return deleted;
     }
 
     /// <summary>Sets the title the user chose, or clears it (null) so the generated one shows. False when the conversation is gone.</summary>

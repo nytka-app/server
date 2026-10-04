@@ -208,7 +208,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
         }
     }
 
-    /// <summary>Moves every voice and segment link of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
+    /// <summary>Moves every voice, segment link and voiceprint of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
     public async Task<PersonWrite> MergeAsync(Guid id, Guid intoId, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -224,6 +224,14 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
             "update person_voices set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(
             "update segments set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
+        await VoiceGroupStore.MergeVoiceprintAsync(connection, transaction, id, intoId, ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update voice_matches set person_id = @intoId
+            where person_id = @id and not exists (
+                select 1 from voice_matches m where m.conversation_id = voice_matches.conversation_id and m.person_id = @intoId)
+            """,
+            new { id, intoId }, transaction, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(
             "delete from people where id = @id", new { id }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);

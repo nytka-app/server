@@ -14,6 +14,7 @@ public static class JobKinds
     public const string MakeDigest = "make-digest";
     public const string RescoreVoice = "rescore-voice";
     public const string SuggestNames = "suggest-names";
+    public const string GroupVoices = "group-voices";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, rescore-voice and one nobody
