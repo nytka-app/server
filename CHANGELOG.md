@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.0](https://github.com/nytka-app/server/compare/v0.13.0...v0.14.0) (2026-10-04)
+
+
+### Features
+
+* facts about people with a server-set basis (People P-3) ([#72](https://github.com/nytka-app/server/issues/72)) ([86452fb](https://github.com/nytka-app/server/commit/86452fb15c60c7c0d18c89c19a9be8d0537277ef))
+* name suggestions from what voices say about themselves (People P-2) ([#73](https://github.com/nytka-app/server/issues/73)) ([d081b8b](https://github.com/nytka-app/server/commit/d081b8b82394a80436dd81132a4e022ee500cfce))
+* person page, MCP tools and people in search (People P-5) ([#75](https://github.com/nytka-app/server/issues/75)) ([9a19cf7](https://github.com/nytka-app/server/commit/9a19cf756f0978a746b857e9782cea1a21a1bcb1))
+* voice groups and voiceprints, Layer 2 server core (People P-6) ([#71](https://github.com/nytka-app/server/issues/71)) ([5ec3530](https://github.com/nytka-app/server/commit/5ec35305b8a62881c59e89f2218cd81a18684c64))
+* Who is this? cards and their audio clips (People P-7) ([#76](https://github.com/nytka-app/server/issues/76)) ([7ee582e](https://github.com/nytka-app/server/commit/7ee582e33e55056ba878cd348e09ad2ab6fd5d51))
+
 ## [0.13.0](https://github.com/nytka-app/server/compare/v0.12.0...v0.13.0) (2026-10-04)
 
 
