@@ -13,6 +13,8 @@ public static class PeopleExtensions
         services.AddSingleton<IEventSubscriber, NameSuggestionTrigger>();
         services.AddScoped<IJobHandler, SuggestNamesHandler>();
         services.AddScoped<IJobHandler, GroupVoicesHandler>();
+        services.AddSingleton<IEventSubscriber, FactTrigger>();
+        services.AddScoped<IJobHandler, ExtractPersonFactsHandler>();
         return services;
     }
 }

@@ -76,7 +76,9 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
 
         await TickAndRun();
 
-        var lines = Assert.Single(Llm.Requests).User.Split('\n').Skip(4).ToList(); // date, People, blank, "Transcript:"
+        // A named voice also queues fact extraction, a second request.
+        var lines = Assert.Single(Llm.Requests, r => r.SchemaName == "conversation").User.Split('
+').Skip(4).ToList(); // date, People, blank, "Transcript:"
         Assert.Equal([$"Wearer: {Talk}", $"Anna: {Talk}", $"SPEAKER_5: {Talk}"], lines.Select(l => l[(l.IndexOf(' ') + 1)..]));
     }
 

@@ -26,7 +26,7 @@ public static class MemoryEndpoints
 
     public sealed record TextRequest(string? Text);
 
-    private sealed record ValidText(string? Text, string? Fingerprint, IResult? Problem);
+    internal sealed record ValidText(string? Text, string? Fingerprint, IResult? Problem);
 
     private static async Task<IResult> ListAsync(Guid? before, int? limit, MemoryStore memories, CancellationToken ct)
     {
@@ -72,7 +72,7 @@ public static class MemoryEndpoints
         await memories.DeleteAsync(id, time.GetUtcNow(), ct) ? Results.NoContent() : NotFound();
 
     /// <summary>The trimmed text and its fingerprint, or a 400. A text with no letter or digit has no fingerprint and cannot be told from another.</summary>
-    private static ValidText ValidateText(TextRequest? request)
+    internal static ValidText ValidateText(TextRequest? request)
     {
         var text = request?.Text?.Trim();
         var length = text?.EnumerateRunes().Count() ?? 0;

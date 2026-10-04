@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Npgsql;
 using Nytka.Server.Auth;
+using Nytka.Server.Events;
 using Nytka.Server.Transcription;
 using Nytka.Storage;
 
@@ -28,12 +30,68 @@ public static class PeopleEndpoints
         people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
         people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
+        people.MapGet("/{id:guid}/facts", FactsAsync).AllowRead();
+        people.MapPost("/{id:guid}/facts", AddFactAsync);
+        people.MapPatch("/{id:guid}/facts/{factId:guid}", EditFactAsync);
+        people.MapDelete("/{id:guid}/facts/{factId:guid}", DeleteFactAsync);
         api.MapGet("/voices", VoicesAsync).AllowRead();
         return api;
     }
 
     public const int MaxVoices = 50;
     public const int MaxSuggestions = 200;
+    public const int DefaultFactLimit = 50;
+    public const int MaxFactLimit = 200;
+
+    private static async Task<IResult> FactsAsync(Guid id, Guid? before, int? limit, PersonFactStore facts, CancellationToken ct) =>
+        await facts.ListAsync(id, before, Math.Clamp(limit ?? DefaultFactLimit, 1, MaxFactLimit), ct) is { } page
+            ? Results.Ok(page)
+            : NotFound();
+
+    /// <summary>Body <c>{ text }</c>. 201 with the fact (<c>source: user</c>, no basis); 409 when a live fact of the person holds it.</summary>
+    private static async Task<IResult> AddFactAsync(
+        Guid id, HttpRequest http, NpgsqlDataSource dataSource, PersonFactStore facts, IEventPublisher events, TimeProvider time,
+        CancellationToken ct)
+    {
+        var valid = MemoryEndpoints.ValidateText(await TokenEndpoints.ReadBodyAsync<MemoryEndpoints.TextRequest>(http, ct));
+        if (valid.Problem is not null)
+        {
+            return valid.Problem;
+        }
+
+        if (!await facts.ExistsAsync(id, ct))
+        {
+            return NotFound();
+        }
+
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        if (await facts.AddAsync(connection, transaction, id, valid.Text!, valid.Fingerprint!, time.GetUtcNow(), ct) is not { } factId)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "A fact of this person already holds this.");
+        }
+
+        await events.PublishAsync(new NytkaEvent(NytkaEvent.PersonFactCreated, factId), connection, transaction, ct);
+        await transaction.CommitAsync(ct);
+        return Results.Json(await facts.GetAsync(id, factId, ct), statusCode: StatusCodes.Status201Created);
+    }
+
+    private static async Task<IResult> EditFactAsync(
+        Guid id, Guid factId, HttpRequest http, PersonFactStore facts, TimeProvider time, CancellationToken ct)
+    {
+        var valid = MemoryEndpoints.ValidateText(await TokenEndpoints.ReadBodyAsync<MemoryEndpoints.TextRequest>(http, ct));
+        if (valid.Problem is not null)
+        {
+            return valid.Problem;
+        }
+
+        return await facts.UpdateTextAsync(id, factId, valid.Text!, time.GetUtcNow(), ct) && await facts.GetAsync(id, factId, ct) is { } fact
+            ? Results.Ok(fact)
+            : FactNotFound();
+    }
+
+    private static async Task<IResult> DeleteFactAsync(Guid id, Guid factId, PersonFactStore facts, TimeProvider time, CancellationToken ct) =>
+        await facts.DeleteAsync(id, factId, time.GetUtcNow(), ct) ? Results.NoContent() : FactNotFound();
 
     public sealed record VoiceList(IReadOnlyList<UnnamedVoice> Items);
 
@@ -229,6 +287,8 @@ public static class PeopleEndpoints
 
     private static IResult Invalid(string field, string message) =>
         Results.ValidationProblem(new Dictionary<string, string[]> { [field] = [message] });
+
+    private static IResult FactNotFound() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such fact.");
 
     private static IResult NotFound() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such person.");
 }
