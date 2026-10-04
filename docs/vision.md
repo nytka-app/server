@@ -172,10 +172,13 @@ the two do not match. The spec files keep their `v0.x` names.
 - **1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
   documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week. This is
   a real release number, the target of the 1.0 release.
-- **After 1.0.** Firmware updates from the app, live transcripts, people and calendar extraction, a
-  local model or stripping personal data before text reaches a cloud model, opt-in location tags, a
-  home-screen widget, vector search, an optional supporter key that unlocks nothing, and web, desktop
-  or iOS clients.
+- **People (after 1.0).** Name suggestions for unnamed voices from what is said, opt-in grouping of
+  other people's voices with "Who is this?" cards, facts and a page for each person, tasks owed to a
+  person, a brief before a calendar meeting, and one review inbox. Details:
+  [specs/people.md](specs/people.md).
+- **After 1.0.** Firmware updates from the app, live transcripts, a local model or stripping
+  personal data before text reaches a cloud model, opt-in location tags, a home-screen widget,
+  vector search, an optional supporter key that unlocks nothing, and web, desktop or iOS clients.
 - **Not planned.** A hosted service, user accounts, sharing, a plugin store, a Wear OS tile,
   transcription on the phone, several pendants per person, and database encryption inside the app
   (encrypt the disk instead).
