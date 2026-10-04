@@ -16,6 +16,9 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
 
     protected PostgresFixture Db => db;
 
+    /// <summary>Whether name suggestions run: off by default, since they would share the fake model.</summary>
+    protected virtual bool NameSuggestions => false;
+
     protected FakeLlm Llm { get; } = new();
 
     protected RecordingSubscriber Events { get; } = new();
@@ -41,10 +44,15 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
     protected void StartServer(Action<IDictionary<string, string?>>? configure = null)
     {
         Server?.Dispose();
-        // Memory extraction would share the fake model and count as one more request.
+        // Memory extraction and name suggestions would share the fake model and count as more requests.
         Server = new NytkaApiFactory(db, settings =>
         {
             settings["Nytka:Memories:Enabled"] = "false";
+            if (!NameSuggestions)
+            {
+                settings["Nytka:People:SuggestNames"] = "false";
+            }
+
             configure?.Invoke(settings);
         }, services =>
         {

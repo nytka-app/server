@@ -13,6 +13,7 @@ public static class JobKinds
     public const string DeliverWebhook = "deliver-webhook";
     public const string MakeDigest = "make-digest";
     public const string RescoreVoice = "rescore-voice";
+    public const string SuggestNames = "suggest-names";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, rescore-voice and one nobody
@@ -23,6 +24,7 @@ public static class JobKinds
         [EnrichConversation] = JobLane.Ai,
         [ExtractMemories] = JobLane.Ai,
         [MakeDigest] = JobLane.Ai,
+        [SuggestNames] = JobLane.Ai,
         [DeliverWebhook] = JobLane.Hooks,
     };
 
@@ -33,6 +35,8 @@ public static class JobKinds
     public static string EnrichConversationKey(Guid conversation) => $"{EnrichConversation}:{conversation}";
 
     public static string ExtractMemoriesKey(Guid conversation) => $"{ExtractMemories}:{conversation}";
+
+    public static string SuggestNamesKey(Guid conversation) => $"{SuggestNames}:{conversation}";
 
     public static string DeliverWebhookKey(Guid delivery) => $"{DeliverWebhook}:{delivery}";
 

@@ -92,6 +92,15 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
+        var id = await NameVoiceAsync(connection, transaction, name, speakerId, now, ct);
+        await transaction.CommitAsync(ct);
+        return id;
+    }
+
+    /// <summary>As <see cref="NameVoiceAsync(string, string, DateTimeOffset, CancellationToken)"/>, in the caller's transaction.</summary>
+    public static async Task<Guid> NameVoiceAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string name, string speakerId, DateTimeOffset now, CancellationToken ct)
+    {
         var id = await FindOrCreateAsync(connection, transaction, name, now, ct);
         await connection.ExecuteAsync(new CommandDefinition(
             """
@@ -99,7 +108,6 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
             on conflict (speaker_id) do update set person_id = excluded.person_id
             """,
             new { speakerId, id, now }, transaction, cancellationToken: ct));
-        await transaction.CommitAsync(ct);
         return id;
     }
 
@@ -112,7 +120,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
         return id;
     }
 
-    private static async Task<Guid> FindOrCreateAsync(
+    public static async Task<Guid> FindOrCreateAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string name, DateTimeOffset now, CancellationToken ct) =>
         await connection.QuerySingleAsync<Guid>(new CommandDefinition(
             """

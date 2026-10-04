@@ -12,6 +12,7 @@ public class JobKindsTests
     [InlineData(JobKinds.EnrichConversation, JobLane.Ai)]
     [InlineData(JobKinds.ExtractMemories, JobLane.Ai)]
     [InlineData(JobKinds.MakeDigest, JobLane.Ai)]
+    [InlineData(JobKinds.SuggestNames, JobLane.Ai)]
     [InlineData(JobKinds.DeliverWebhook, JobLane.Hooks)]
     [InlineData("nobody-handles-this", JobLane.Audio)]
     public void A_kind_runs_in_its_lane_and_an_unclaimed_kind_in_audio(string kind, JobLane lane) =>
@@ -43,10 +44,10 @@ public class JobKindsTests
         var audio = JobKinds.FilterOf(JobLane.Audio);
 
         Assert.False(ai.Exclude);
-        Assert.Equal(["enrich-conversation", "extract-memories", "make-digest"], ai.Kinds.Order());
+        Assert.Equal(["enrich-conversation", "extract-memories", "make-digest", "suggest-names"], ai.Kinds.Order());
         Assert.False(hooks.Exclude);
         Assert.Equal(["deliver-webhook"], hooks.Kinds);
         Assert.True(audio.Exclude);
-        Assert.Equal(["deliver-webhook", "enrich-conversation", "extract-memories", "make-digest"], audio.Kinds.Order());
+        Assert.Equal(["deliver-webhook", "enrich-conversation", "extract-memories", "make-digest", "suggest-names"], audio.Kinds.Order());
     }
 }

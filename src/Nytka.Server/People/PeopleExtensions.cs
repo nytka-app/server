@@ -1,3 +1,5 @@
+using Nytka.Server.Events;
+using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
 
 namespace Nytka.Server.People;
@@ -8,6 +10,8 @@ public static class PeopleExtensions
     public static IServiceCollection AddNytkaPeople(this IServiceCollection services)
     {
         services.AddSingleton<ISettingsGroup, PeopleSettings>();
+        services.AddSingleton<IEventSubscriber, NameSuggestionTrigger>();
+        services.AddScoped<IJobHandler, SuggestNamesHandler>();
         return services;
     }
 }

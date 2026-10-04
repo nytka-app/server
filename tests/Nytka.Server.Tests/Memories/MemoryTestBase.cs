@@ -84,7 +84,7 @@ public abstract class MemoryTestBase : IAsyncLifetime
         Db = db;
         Llm = new ScriptedLlm();
         Recorded = new RecordedEvents();
-        Server = new NytkaApiFactory(db, configure, s =>
+        Server = new NytkaApiFactory(db, Configure(configure), s =>
         {
             if (withLlm)
             {
@@ -96,6 +96,14 @@ public abstract class MemoryTestBase : IAsyncLifetime
     }
 
     protected PostgresFixture Db { get; }
+
+    /// <summary>The settings of a host for these tests: name suggestions off, since they would share the scripted model.</summary>
+    protected static Action<IDictionary<string, string?>> Configure(Action<IDictionary<string, string?>>? configure = null) =>
+        settings =>
+        {
+            settings["Nytka:People:SuggestNames"] = "false";
+            configure?.Invoke(settings);
+        };
 
     protected ScriptedLlm Llm { get; }
 
