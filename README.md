@@ -544,7 +544,7 @@ through OAuth cannot connect.
 | Tool | Input | Output |
 |---|---|---|
 | `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview }], nextBefore }` |
-| `get_conversation` | `id` (UUID), `transcript?` (default true) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done }], transcript, truncated }` |
+| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done }], transcript, truncated, part, parts }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
@@ -558,7 +558,9 @@ limits and defaults in the table (`search` has no `offset`). Pass `nextBefore` a
 next page. An unknown id is a tool error ("No such conversation."); a malformed id, time, status or
 kind is JSON-RPC error `-32602`. The transcript has one line per segment, in UTC and without a
 speaker label when there is none: `[HH:mm:ss] Speaker: text`. It is cut at a line boundary after
-60,000 characters (`truncated: true`) and is null when `transcript` is false.
+60,000 characters into parts. `part` picks one (from 1; one outside `1` to `parts` is `-32602`),
+`parts` counts them and `truncated` is true while a later part exists, so a client reads the rest with
+`part: 2`, `3` and so on. Only the first 20 parts are read. `transcript` is null when it is false.
 
 **Connect a client.** Give it the URL and a `read` token (see [Tokens and scopes](#tokens-and-scopes)).
 In Claude Code:
