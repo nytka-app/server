@@ -13,6 +13,21 @@ public class ConversationPromptTests
         Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
         Assert.Equal(["title", "summary", "tasks"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(["title", "summary", "tasks"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        var item = schema.GetProperty("properties").GetProperty("tasks").GetProperty("items");
+        Assert.False(item.GetProperty("additionalProperties").GetBoolean());
+        Assert.Equal(["text", "person"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["text", "person"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+    }
+
+    [Fact]
+    public void The_user_messages_list_the_people_a_task_may_name()
+    {
+        var started = new DateTimeOffset(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal("Date: 2026-09-29 Tuesday\nPeople: Olena, Ben\n\nTranscript:\nline", ConversationPrompt.User(started, "line", people: ["Olena", "Ben"]));
+        Assert.StartsWith("Date: 2026-09-29 Tuesday\nPeople: Olena\n\n", ConversationPrompt.UserForMerge(started, [], people: ["Olena"]), StringComparison.Ordinal);
+        Assert.DoesNotContain("People", ConversationPrompt.User(started, "line", people: []), StringComparison.Ordinal);
+        Assert.Contains("copied exactly from the \"People\" list", ConversationPrompt.System("auto"), StringComparison.Ordinal);
     }
 
     [Theory]

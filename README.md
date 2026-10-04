@@ -335,7 +335,8 @@ JSON object and puts the schema in the prompt.
 Nothing is queued while the base URL or the model is empty, and an open conversation is never
 summarized. At most 100 conversations are queued a minute. A conversation under 20 words is `skipped` ("Too short to summarize."). A run writes a
 title (up to 80 characters), a summary (up to 1,200) and up to ten tasks (200 characters each), in
-`llm.outputLanguage`, and asks for tasks only the wearer has to do. A transcript longer than
+`llm.outputLanguage`, and asks for tasks only the wearer has to do. Each task may name the person it
+is owed to, taken from the people you named in that conversation (see [Tasks](#tasks)). A transcript longer than
 `Nytka__Llm__MaxInputChars` is cut at line boundaries into windows; each is answered on its own and
 a last request merges them. More than six windows fail the run.
 
@@ -364,6 +365,13 @@ are no due dates and no hand-made tasks. Tick, reopen, edit or delete a task in 
 `PATCH` and `DELETE` on `/api/v1/tasks/{id}`. A later summary never adds a deleted task again with the same wording, and
 never removes or rewrites one you touched. `GET /api/v1/tasks` lists open or done tasks, newest
 first, with the title and day of their conversation.
+
+A task can name the person it is owed to or who asked for it (`personId`, `personName`). A summary
+sets it when it is created, only to a person whose voice you named in that conversation (the wearer
+never counts), matching the name ignoring case; any other name leaves it empty. A later summary never
+changes it. Set, change or clear it with `PATCH` and `personId` (`null` clears it; an unknown person
+is `404`); that counts as touching the task. Deleting the person clears it. What other people owe
+the wearer is not a task.
 
 ## Memories
 
@@ -614,7 +622,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | Event | Sent when | `data` |
 |---|---|---|
 | `conversation.ready` | A summary was stored, the first one and every re-run | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text }] }` |
-| `task.created` | A summary produced a new task | the task, as `GET /api/v1/tasks` shows it |
+| `task.created` | A summary produced a new task | the task, as `GET /api/v1/tasks` shows it, without `personId` and `personName` |
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
@@ -695,7 +703,7 @@ through OAuth cannot connect.
 | Tool | Input | Output |
 |---|---|---|
 | `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview }], nextBefore }` |
-| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done }], transcript, truncated, part, parts }` |
+| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
@@ -833,8 +841,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
 | GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
 | GET | `/api/v1/conversations/{id}/audio/index` | read | `{ durationMs, runs: [{ offsetMs, startedAt, endedAt }] }`: each stretch of continuous capture and where it starts in the stream; `404` as above |
-| GET | `/api/v1/tasks?status=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt }`; `status` is `open` (default) or `done`; `limit` defaults to 50, caps at 200 |
-| PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done? }`, `text` 1 to 200 characters; DELETE answers `204` |
+| GET | `/api/v1/tasks?status=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName }`; `status` is `open` (default) or `done`; `limit` defaults to 50, caps at 200 |
+| PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done?, personId? }`, `text` 1 to 200 characters, `personId` a person id or `null` (`404` for an unknown person); DELETE answers `204` |
 | GET, PATCH | `/api/v1/settings` | admin | GET: `{ items: [{ key, type, value, isSet, source, locked, default }] }`. PATCH body `{ values: { "<key>": value or null } }`, all or nothing, `null` restores the default; `400` for an unknown key or a bad value, `409` for a locked key or any API key |
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |

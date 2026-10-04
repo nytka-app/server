@@ -14,7 +14,7 @@ public sealed record McpConversationItem(
 
 public sealed record McpConversationList(IReadOnlyList<McpConversationItem> Items, DateTime? NextBefore);
 
-public sealed record McpTask(Guid Id, string Text, bool Done);
+public sealed record McpTask(Guid Id, string Text, bool Done, Guid? PersonId, string? PersonName);
 
 public sealed record McpConversation(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<McpTask> Tasks,
@@ -69,7 +69,7 @@ public sealed class McpTools(McpQueries queries)
             return Error("No such conversation.");
         }
 
-        var tasks = (await queries.ConversationTasksAsync(conversationId, ct)).Select(t => new McpTask(t.Id, t.Text, t.Done)).ToList();
+        var tasks = (await queries.ConversationTasksAsync(conversationId, ct)).Select(t => new McpTask(t.Id, t.Text, t.Done, t.PersonId, t.PersonName)).ToList();
         if (!transcript)
         {
             return Ok(new McpConversation(

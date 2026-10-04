@@ -29,10 +29,11 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
             values (1, @a, @start, @start, 'done', '[]', @start);
             insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker)
             values (@a, 1, @start, @start, 'Hello there', 'Anna'), (@a, 1, @start + interval '5 seconds', @start, 'Hi', null);
-            insert into tasks (id, conversation_id, text, fingerprint, done, done_at, created_at, updated_at)
-            values ('018f0000-0000-7000-8000-0000000000a1', @a, 'Open one', 'open one', false, null, @start, @start),
-                   ('018f0000-0000-7000-8000-0000000000a2', @a, 'Done one', 'done one', true, @start, @start, @start),
-                   ('018f0000-0000-7000-8000-0000000000a3', @b, 'Open two', 'open two', false, null, @start, @start);
+            insert into people (id, name, created_at) values ('018f0000-0000-7000-8000-0000000000b1', 'Olena', @start);
+            insert into tasks (id, conversation_id, text, fingerprint, done, done_at, person_id, created_at, updated_at)
+            values ('018f0000-0000-7000-8000-0000000000a1', @a, 'Open one', 'open one', false, null, '018f0000-0000-7000-8000-0000000000b1', @start, @start),
+                   ('018f0000-0000-7000-8000-0000000000a2', @a, 'Done one', 'done one', true, @start, null, @start, @start),
+                   ('018f0000-0000-7000-8000-0000000000a3', @b, 'Open two', 'open two', false, null, null, @start, @start);
             insert into tasks (id, conversation_id, text, fingerprint, deleted_at, created_at, updated_at)
             values ('018f0000-0000-7000-8000-0000000000a4', @a, 'Deleted', 'deleted', @start, @start, @start);
             """,
@@ -163,6 +164,7 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         var tasks = result.GetProperty("tasks").EnumerateArray().ToList();
         Assert.Equal(["Open one", "Done one"], tasks.Select(t => t.GetProperty("text").GetString()));
         Assert.Equal([false, true], tasks.Select(t => t.GetProperty("done").GetBoolean()));
+        Assert.Equal(["Olena", null], tasks.Select(t => t.GetProperty("personName").GetString()));
     }
 
     [Fact]
@@ -276,6 +278,8 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("Second", items[0].GetProperty("conversationTitle").GetString());
         Assert.Equal(Conversation, items[1].GetProperty("conversationId").GetGuid());
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("doneAt").ValueKind);
+        Assert.Equal("Olena", items[1].GetProperty("personName").GetString());
+        Assert.Equal(JsonValueKind.Null, items[0].GetProperty("personId").ValueKind);
         Assert.Equal(JsonValueKind.Null, result.GetProperty("nextBefore").ValueKind);
     }
 

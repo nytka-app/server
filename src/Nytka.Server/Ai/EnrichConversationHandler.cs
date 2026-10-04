@@ -80,10 +80,17 @@ public sealed class EnrichConversationHandler(
 
         var zone = UserTimeZone.Resolve(settings);
         var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text)), zone);
+        var people = segments
+            .Where(s => s.IsUser != true && s.PersonId is not null)
+            .Select(s => new TaskPerson(s.PersonId!.Value, s.PersonName!))
+            .DistinctBy(p => p.Id)
+            .ToList();
         ConversationAnswer answer;
         try
         {
-            answer = await AskAsync(new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, IsBrief(segments.Sum(s => Words(s.Text))), ct);
+            answer = await AskAsync(
+                new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, IsBrief(segments.Sum(s => Words(s.Text))),
+                people.Select(p => p.Name).ToList(), ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -104,7 +111,7 @@ public sealed class EnrichConversationHandler(
             throw;
         }
 
-        switch (await StoreAsync(conversationId, answer, through, segments.Count, ct))
+        switch (await StoreAsync(conversationId, answer, people, through, segments.Count, ct))
         {
             case EnrichmentStore.Stale:
                 // A late batch or a merge changed the conversation during the call: read it again once it is closed.
@@ -127,7 +134,8 @@ public sealed class EnrichConversationHandler(
 
     /// <summary>One call for a transcript that fits a window; one per window and a merge call for a longer one.</summary>
     private async Task<ConversationAnswer> AskAsync(
-        DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief, CancellationToken ct)
+        DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
+        IReadOnlyList<string> people, CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -145,13 +153,13 @@ public sealed class EnrichConversationHandler(
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
-            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone), ct));
+            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people), ct));
         }
 
         var answer = parts.Count == 1
             ? parts[0]
             : await CompleteAsync(
-                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName), ConversationPrompt.UserForMerge(startedAt, parts, zone), ct);
+                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName), ConversationPrompt.UserForMerge(startedAt, parts, zone, people), ct);
         return brief ? answer with { Tasks = [] } : answer;
     }
 
@@ -161,14 +169,15 @@ public sealed class EnrichConversationHandler(
 
     /// <summary>Stores the result, reconciles the tasks and publishes the events, in one transaction.</summary>
     private async Task<EnrichmentStore> StoreAsync(
-        Guid conversationId, ConversationAnswer answer, long? through, int segmentCount, CancellationToken ct)
+        Guid conversationId, ConversationAnswer answer, IReadOnlyList<TaskPerson> people, long? through, int segmentCount,
+        CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var title = ConversationPrompt.Cut(answer.Title, ConversationPrompt.MaxTitle);
         var summary = ConversationPrompt.Cut(answer.Summary, ConversationPrompt.MaxSummary);
         var aiTasks = answer.Tasks
-            .Select(t => ConversationPrompt.Cut(t, ConversationPrompt.MaxTask))
-            .Select(t => new AiTask(t, TextFingerprint.Of(t)))
+            .Select(t => (Text: ConversationPrompt.Cut(t.Text, ConversationPrompt.MaxTask), t.Person))
+            .Select(t => new AiTask(t.Text, TextFingerprint.Of(t.Text), PersonNamed(people, t.Person)))
             .Where(t => t.Fingerprint.Length > 0)
             .DistinctBy(t => t.Fingerprint)
             .Take(ConversationPrompt.MaxTasks)
@@ -195,6 +204,12 @@ public sealed class EnrichConversationHandler(
         await transaction.CommitAsync(ct);
         return stored;
     }
+
+    /// <summary>The listed person a name equals, ignoring case; null for no name or an unlisted one.</summary>
+    private static Guid? PersonNamed(IReadOnlyList<TaskPerson> people, string? name) =>
+        name is null ? null : people.FirstOrDefault(p => string.Equals(p.Name, name.Trim(), StringComparison.OrdinalIgnoreCase))?.Id;
+
+    private sealed record TaskPerson(Guid Id, string Name);
 
     /// <summary>A client error other than 429: retrying with the same request and key cannot help.</summary>
     private static bool IsPermanent(LlmException error) => error.StatusCode is >= 400 and < 500 and not 429;

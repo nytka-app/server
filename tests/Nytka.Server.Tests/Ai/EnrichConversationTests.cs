@@ -76,7 +76,7 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
 
         await TickAndRun();
 
-        var lines = Assert.Single(Llm.Requests).User.Split('\n').Skip(3).ToList();
+        var lines = Assert.Single(Llm.Requests).User.Split('\n').Skip(4).ToList(); // date, People, blank, "Transcript:"
         Assert.Equal([$"Wearer: {Talk}", $"Anna: {Talk}", $"SPEAKER_5: {Talk}"], lines.Select(l => l[(l.IndexOf(' ') + 1)..]));
     }
 
@@ -155,6 +155,8 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
     [InlineData("""{"title":"t","summary":"s"}""")]
     [InlineData("""{"title":"t","summary":"s","tasks":[],"extra":1}""")]
     [InlineData("""{"title":"t","summary":3,"tasks":[]}""")]
+    [InlineData("""{"title":"t","summary":"s","tasks":["Call Ben"]}""")] // the old shape: strings
+    [InlineData("""{"title":"t","summary":"s","tasks":[{"text":"Call Ben"}]}""")] // person is required
     public async Task A_broken_answer_fails_the_attempt(string answer)
     {
         var id = await Seed(Talk);
@@ -172,6 +174,88 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         Assert.Null(ai.AiTitle);
         Assert.Empty(await Tasks(id));
         Assert.Equal(0, await Jobs());
+    }
+
+    /// <summary>A closed conversation with the wearer's line, Olena's (a named voice) and an unnamed voice's.</summary>
+    private async Task<Guid> SeedWithOlena()
+    {
+        var id = await Seed(Talk);
+        await Db.ExecuteAsync("delete from segments");
+        await AddSegment(id, Talk, Now.AddMinutes(-9), "SPEAKER_0", "0", true);
+        await AddSegment(id, Talk, Now.AddMinutes(-8), "SPEAKER_4", "4", false);
+        await AddSegment(id, Talk, Now.AddMinutes(-7), "SPEAKER_5", "5", false);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (gen_random_uuid(), 'Olena', now())");
+        await Db.ExecuteAsync("insert into person_voices (speaker_id, person_id, created_at) select '4', id, now() from people");
+        return id;
+    }
+
+    private Task<List<string?>> TaskPeople(Guid conversationId) =>
+        Db.QueryAsync<string?>(
+            "select p.name from tasks t left join people p on p.id = t.person_id where t.conversation_id = @conversationId order by t.id",
+            new { conversationId });
+
+    [Fact]
+    public async Task A_task_names_the_person_it_is_owed_to_ignoring_case_and_unknown_names_leave_it_null()
+    {
+        var id = await SeedWithOlena();
+        Llm.Respond = _ => FakeLlm.AnswerFor("t", "s", ("Send the photos", "olena"), ("Call Ben", "Ben"), ("Buy milk", null), ("Water the plants", "SPEAKER_5"));
+
+        await TickAndRun();
+
+        var request = Assert.Single(Llm.Requests);
+        Assert.Contains("\nPeople: Olena\n", request.User, StringComparison.Ordinal);
+        Assert.Equal(["Olena", null, null, null], await TaskPeople(id));
+    }
+
+    [Fact]
+    public async Task The_wearer_is_not_listed_and_a_conversation_without_named_people_lists_none()
+    {
+        await Seed(Talk);
+
+        await TickAndRun();
+
+        Assert.DoesNotContain("People:", Assert.Single(Llm.Requests).User, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_person_the_summary_names_but_the_conversation_lacks_is_ignored()
+    {
+        var id = await Seed(Talk);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (gen_random_uuid(), 'Olena', now())");
+        Llm.Respond = _ => FakeLlm.AnswerFor("t", "s", ("Send the photos", "Olena"));
+
+        await TickAndRun();
+
+        Assert.Equal([null], await TaskPeople(id));
+    }
+
+    [Fact]
+    public async Task A_rerun_keeps_the_person_of_an_existing_task()
+    {
+        var id = await SeedWithOlena();
+        Llm.Respond = _ => FakeLlm.AnswerFor("t", "s", ("Send the photos", "Olena"));
+        await TickAndRun();
+        Llm.Respond = _ => FakeLlm.AnswerFor("t", "s", ("Send the photos", null));
+        Server.Time.Advance(TimeSpan.FromMinutes(5));
+        await AddSegment(id, Talk, Now, "SPEAKER_5", "5", false);
+
+        await TickAndRun();
+
+        Assert.Equal(2, Llm.Requests.Count);
+        Assert.Equal(["Olena"], await TaskPeople(id));
+    }
+
+    [Fact]
+    public async Task Deleting_the_person_clears_the_task()
+    {
+        var id = await SeedWithOlena();
+        Llm.Respond = _ => FakeLlm.AnswerFor("t", "s", ("Send the photos", "Olena"));
+        await TickAndRun();
+
+        await Db.ExecuteAsync("delete from people");
+
+        Assert.Equal([null], await TaskPeople(id));
+        Assert.Single(await Tasks(id));
     }
 
     [Fact]
