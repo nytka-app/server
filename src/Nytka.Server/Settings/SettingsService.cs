@@ -36,6 +36,8 @@ public sealed class SettingsService(
 
     public static bool IsEnvironmentOnly(string key) => EnvironmentOnly.Contains(key);
 
+    private readonly IReadOnlyList<ISettingsGroup> _groups = [.. groups];
+
     private readonly Lazy<IReadOnlyList<SettingDefinition>> _definitions = new(() => Catalog(groups));
 
     private readonly SemaphoreSlim _writes = new(1, 1);
@@ -92,7 +94,8 @@ public sealed class SettingsService(
 
     /// <summary>
     /// Checks every change and writes them all or none: a <c>null</c> or empty value restores the default.
-    /// A key with bad values, or an unknown one, is invalid; a locked one is refused.
+    /// A key with bad values, or an unknown one, is invalid, and so is a changed key that conflicts with another of its
+    /// group; a locked one is refused.
     /// </summary>
     public async Task<SettingsUpdate> UpdateAsync(IReadOnlyDictionary<string, string?> values, CancellationToken ct)
     {
@@ -148,6 +151,16 @@ public sealed class SettingsService(
                 {
                     candidate[key] = value;
                 }
+            }
+
+            // Only a key the change touches is refused, so a conflict the environment set never blocks other changes.
+            var conflicts = _groups
+                .SelectMany(g => g.Conflicts(key => Resolve(Find(key)!, candidate).Value))
+                .Where(c => changes.ContainsKey(c.Key))
+                .ToDictionary(c => c.Key, c => new[] { c.Value });
+            if (conflicts.Count > 0)
+            {
+                return new SettingsUpdate.Invalid(conflicts);
             }
 
             if (!TryBuild(candidate))

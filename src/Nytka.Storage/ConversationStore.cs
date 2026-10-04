@@ -14,11 +14,12 @@ public sealed record ConversationHeader(
 
 /// <summary>
 /// <paramref name="Speaker"/> is the provider's label, <paramref name="SpeakerId"/> its stable id for the voice,
-/// <paramref name="IsUser"/> whether it is the wearer's by <see cref="SpeakerLabel.IsUser"/>, and the person is the name the user gave the voice.
+/// <paramref name="IsUser"/> whether it is the wearer's by <see cref="SpeakerLabel.IsUser"/> and <paramref name="IsUserSource"/>
+/// which step of that rule decided it, and the person is the name the user gave the voice.
 /// </summary>
 public sealed record SegmentRow(
     long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, Guid? PersonId,
-    string? PersonName)
+    string? PersonName, string? IsUserSource)
 {
     /// <summary>What a model reads as the speaker: the wearer, else the person's name, else the provider's label.</summary>
     public string? Label() => IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
@@ -210,21 +211,33 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             new { id }, cancellationToken: ct));
     }
 
+    private const string SegmentSelect = $"""
+        select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
+               s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, p.id as PersonId, p.name as PersonName,
+               {SpeakerLabel.IsUserSource} as IsUserSource
+        from segments s
+        left join person_voices pv on pv.speaker_id = s.speaker_id
+        left join people p on p.id = pv.person_id
+        """;
+
     public async Task<IReadOnlyList<SegmentRow>> SegmentsAsync(Guid id, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<SegmentRow>(new CommandDefinition(
             $"""
-            select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
-                   s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, p.id as PersonId, p.name as PersonName
-            from segments s
-            left join person_voices pv on pv.speaker_id = s.speaker_id
-            left join people p on p.id = pv.person_id
+            {SegmentSelect}
             where s.conversation_id = @id
             order by s.started_at, s.id
             """,
             new { id }, cancellationToken: ct));
         return rows.ToList();
+    }
+
+    public async Task<SegmentRow?> SegmentAsync(long id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<SegmentRow>(new CommandDefinition(
+            $"{SegmentSelect} where s.id = @id", new { id }, cancellationToken: ct));
     }
 
     /// <summary>Deletes the conversation; its batches, segments and speech audio go with it (on delete cascade).</summary>

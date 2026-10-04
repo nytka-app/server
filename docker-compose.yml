@@ -70,6 +70,7 @@ services:
       Nytka__Voice__LearnThreshold: "${Nytka__Voice__LearnThreshold:-}"
       Nytka__Voice__Learn: "${Nytka__Voice__Learn:-}"
       Nytka__Voice__MinSegmentSeconds: "${Nytka__Voice__MinSegmentSeconds:-}"
+      Nytka__Voice__ModelPath: "${Nytka__Voice__ModelPath:-}"
     ports:
       # Loopback by default: put a reverse proxy in front, or set NYTKA_BIND to a tailnet address.
       - "${NYTKA_BIND:-127.0.0.1}:${NYTKA_PORT:-8080}:8080"

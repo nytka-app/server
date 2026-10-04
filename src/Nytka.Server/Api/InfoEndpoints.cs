@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Claims;
 using Nytka.Server.Auth;
+using Nytka.Server.Voice;
 
 namespace Nytka.Server.Api;
 
@@ -17,15 +18,16 @@ public static class InfoEndpoints
 
     /// <summary>
     /// What this server can do beyond apiVersion 1, for the app to gate on. "offline-sync": late audio
-    /// queues behind live speech and merges by capture time (migration 0005).
+    /// queues behind live speech and merges by capture time (migration 0005). "voice": the speaker model is
+    /// there, so the voice routes work (docs/specs/your-voice.md).
     /// </summary>
-    public static readonly string[] Features = ["offline-sync"];
+    public static IReadOnlyList<string> Features(SpeakerModel voice) => voice.Available ? ["offline-sync", "voice"] : ["offline-sync"];
 
     public static RouteGroupBuilder MapInfo(this RouteGroupBuilder api)
     {
         // The app reads scope to refuse a read token; a server without it counts as admin.
-        api.MapGet("/info", (ClaimsPrincipal user) => Results.Ok(new InfoResponse(
-            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features)))
+        api.MapGet("/info", (ClaimsPrincipal user, SpeakerModel voice) => Results.Ok(new InfoResponse(
+            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice))))
             .AllowRead();
         return api;
     }

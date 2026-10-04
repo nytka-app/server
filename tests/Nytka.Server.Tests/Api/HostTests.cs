@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Nytka.Audio.Voice;
 
 namespace Nytka.Server.Tests.Api;
 
@@ -50,7 +51,10 @@ public class HostTests(PostgresFixture db)
         Assert.Equal(1, info.GetProperty("apiVersion").GetInt32());
         Assert.False(string.IsNullOrEmpty(info.GetProperty("serverVersion").GetString()));
         Assert.Equal("admin", info.GetProperty("scope").GetString());
-        Assert.Equal(["offline-sync"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+        // The build copies the speaker model beside the binaries when scripts/fetch-speaker-model.sh fetched it.
+        Assert.Equal(
+            File.Exists(SpeakerEmbedder.DefaultPath) ? ["offline-sync", "voice"] : ["offline-sync"],
+            info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
     }
 
     [Theory]

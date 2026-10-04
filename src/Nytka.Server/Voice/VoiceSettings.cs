@@ -21,11 +21,31 @@ public sealed class VoiceSettings : ISettingsGroup
         new(MinSegmentSecondsKey, SettingType.Number, "1.0", SettingValidators.Number(1.0, 5.0)),
     ];
 
+    /// <summary>A segment that may teach the voiceprint must be one labelled the wearer's.</summary>
+    public IReadOnlyDictionary<string, string> Conflicts(Func<string, string?> value)
+    {
+        if (SettingValidators.TryParseNumber(value(UserThresholdKey) ?? "", out var user)
+            && SettingValidators.TryParseNumber(value(LearnThresholdKey) ?? "", out var learn)
+            && learn < user)
+        {
+            return new Dictionary<string, string>
+            {
+                [UserThresholdKey] = $"Must not be above {LearnThresholdKey}.",
+                [LearnThresholdKey] = $"Must not be below {UserThresholdKey}.",
+            };
+        }
+
+        return new Dictionary<string, string>();
+    }
+
     public static bool IsEnabled(SettingsService settings) => settings.Get(EnabledKey) != "false";
 
     public static float UserThreshold(SettingsService settings) => Number(settings, UserThresholdKey);
 
-    /// <summary>Never below <see cref="UserThreshold"/>: only a segment labelled the wearer's may teach the voiceprint.</summary>
+    /// <summary>
+    /// Never below <see cref="UserThreshold"/>: only a segment labelled the wearer's may teach the voiceprint. The API refuses
+    /// such a change (<see cref="Conflicts"/>); the environment can still set one, and this covers it.
+    /// </summary>
     public static float LearnThreshold(SettingsService settings) =>
         Math.Max(Number(settings, LearnThresholdKey), UserThreshold(settings));
 

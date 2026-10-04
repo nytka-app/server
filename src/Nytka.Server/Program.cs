@@ -107,6 +107,7 @@ api.MapImport();
 api.MapBookmarks();
 api.MapDigests();
 api.MapExport();
+api.MapVoice();
 app.MapNytkaMcp();
 
 app.Run();

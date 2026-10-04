@@ -16,6 +16,15 @@ public static class SpeakerLabel
     public const string IsUser = "coalesce(s.is_user_manual, case when s.voice_checked then s.voice_is_user else s.is_user end)";
 
     /// <summary>
+    /// SQL for which step of <see cref="IsUser"/> decided a segment aliased <c>s</c>: <c>manual</c>, <c>voice</c> or
+    /// <c>provider</c>, or null when none did (a checked segment without a verdict, or no label at all).
+    /// </summary>
+    public const string IsUserSource =
+        "case when s.is_user_manual is not null then 'manual' "
+        + "when s.voice_checked then case when s.voice_is_user is not null then 'voice' end "
+        + "when s.is_user is not null then 'provider' end";
+
+    /// <summary>
     /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>: the wearer, else the person the voice
     /// was named after, else the provider's own label.
     /// </summary>

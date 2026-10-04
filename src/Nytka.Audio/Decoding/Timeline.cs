@@ -56,6 +56,24 @@ public sealed class Timeline
         return new Timeline(frames, starts, samples);
     }
 
+    /// <summary>
+    /// PCM recorded without a break, such as a WAV file, which carries no capture times: frame i starts 20·i ms
+    /// after 0. A partial last frame is dropped.
+    /// </summary>
+    public static Timeline Continuous(short[] samples)
+    {
+        var count = samples.Length / SamplesPerFrame;
+        var frames = new Frame[count];
+        var starts = new long[count];
+        for (var i = 0; i < count; i++)
+        {
+            starts[i] = (long)i * Frame.DurationMs;
+            frames[i] = new Frame((uint)i, starts[i], ReadOnlyMemory<byte>.Empty);
+        }
+
+        return new Timeline(frames, starts, samples[..(count * SamplesPerFrame)]);
+    }
+
     public long CaptureMsAt(int sampleIndex) =>
         _frameStarts[sampleIndex / SamplesPerFrame] + sampleIndex % SamplesPerFrame / SamplesPerMs;
 
