@@ -158,6 +158,8 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("A summary.", result.GetProperty("summary").GetString());
         Assert.Equal("[09:00:00] Anna: Hello there\n[09:00:05] Hi", result.GetProperty("transcript").GetString());
         Assert.False(result.GetProperty("truncated").GetBoolean());
+        Assert.Equal(1, result.GetProperty("part").GetInt32());
+        Assert.Equal(1, result.GetProperty("parts").GetInt32());
         var tasks = result.GetProperty("tasks").EnumerateArray().ToList();
         Assert.Equal(["Open one", "Done one"], tasks.Select(t => t.GetProperty("text").GetString()));
         Assert.Equal([false, true], tasks.Select(t => t.GetProperty("done").GetBoolean()));
@@ -193,6 +195,34 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         Assert.True(result.GetProperty("truncated").GetBoolean());
         Assert.InRange(transcript.Length, 1, 60_000);
         Assert.All(transcript.Split('\n'), line => Assert.StartsWith("[", line));
+    }
+
+    [Fact]
+    public async Task Get_conversation_reads_later_parts_and_rejects_one_out_of_range()
+    {
+        await db.ExecuteAsync(
+            """
+            insert into segments (conversation_id, batch_id, started_at, ended_at, text)
+            select @a, 1, @start + interval '1 minute' + n * interval '1 second', @start, repeat('x', 1000)
+            from generate_series(1, 100) n
+            """,
+            new { a = Conversation, start = Start });
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var first = Structured(await client.CallToolAsync("get_conversation", new Dictionary<string, object?> { ["id"] = Conversation }));
+        var parts = first.GetProperty("parts").GetInt32();
+        var last = Structured(await client.CallToolAsync(
+            "get_conversation", new Dictionary<string, object?> { ["id"] = Conversation, ["part"] = parts }));
+        var error = await Assert.ThrowsAsync<McpProtocolException>(() => client.CallToolAsync(
+            "get_conversation", new Dictionary<string, object?> { ["id"] = Conversation, ["part"] = parts + 1 }).AsTask());
+
+        Assert.True(parts >= 2);
+        Assert.True(first.GetProperty("truncated").GetBoolean());
+        Assert.Equal(parts, last.GetProperty("part").GetInt32());
+        Assert.False(last.GetProperty("truncated").GetBoolean());
+        Assert.NotEqual(first.GetProperty("transcript").GetString(), last.GetProperty("transcript").GetString());
+        Assert.EndsWith("x", last.GetProperty("transcript").GetString());
+        Assert.Equal(McpErrorCode.InvalidParams, error.ErrorCode);
     }
 
     [Fact]

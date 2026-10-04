@@ -149,6 +149,7 @@ public sealed class ExtractMemoriesHandler(
         You read a transcript of a conversation and pick out lasting facts about one person, called "you" below.
         A lasting fact is about you, stays true beyond this conversation, and comes from you saying it about yourself or from someone saying it about you and you confirming it: who you are, your family, friends, home, work, health, habits, preferences, goals and commitments.
         Never report facts about other speakers or third parties, one-off events, tasks, plans for a single day, or what someone else said they would do. A fact about another person counts only as your relation to them (for example, that a named person is your sister).
+        Audio from a TV, video, podcast, radio, song or game playing nearby, and text you read aloud from a script or screen, is not your life: take no facts from it. Take no facts inferred from your tone, manner of speech or vocabulary (for example swearing or humour).
         Lines labelled "Wearer" are yours. Other speaker labels may differ between parts of the transcript; the user message says who "you" is.
         Times and dates are in the time zone {timeZone}. Write dates in a fact as absolute dates, never as "tomorrow" or "Friday".
         Write each fact as one short sentence, at most {MaxTextLength} characters, in {outputLanguage}.

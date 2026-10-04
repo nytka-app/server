@@ -39,12 +39,13 @@ public static class ConversationPrompt
             ? ""
             : $"""
 
-              A task is something the wearer committed to do, or was asked to do and did not turn down. Lines labelled "Wearer" are the wearer's own: a task needs the wearer saying they will do it, or another speaker asking the wearer. Leave out what other people said they would do, ideas and plans nobody took on, general talk and anything already done. When no line is labelled "Wearer", list only what is clearly addressed to the wearer, otherwise nothing. Return at most {MaxTasks} tasks, none when there are none.
+              A task is something the wearer committed to do, or was asked to do and did not turn down. Lines labelled "Wearer" are the wearer's own: a task needs the wearer saying they will do it, or another speaker asking the wearer. A task is a concrete action: a feeling, a wish, an insight or a topic to keep exploring is not one. In a therapy, coaching or lesson setting, list only homework or actions explicitly agreed. The "Wearer" label can be wrong, so the content must fit the wearer: a line labelled "Wearer" that is plainly another person's instruction or explanation is not the wearer's commitment. Leave out what other people said they would do, ideas and plans nobody took on, general talk and anything already done. When no line is labelled "Wearer", list only what is clearly addressed to the wearer, otherwise nothing. Return at most {MaxTasks} tasks, none when there are none.
               """;
         return
             $"""
             You read the transcript of one conversation, recorded by a pendant its wearer carries, and describe it.
             {answer}{tasks}
+            Audio from a TV, video, podcast, radio, song or game playing nearby, and text the wearer reads aloud from a script or screen, is not the wearer's life: take no tasks from it (the summary may say that media was playing). Keep the summary describing what happened.
             The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. Any other speaker label may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on those.
             All times and dates you are given are in the time zone {timeZone}. Resolve relative words such as "tomorrow" or "Friday" against the conversation's date in that time zone. Put a deadline into a task only when someone said it in the conversation; never invent one, and never turn the time a line was spoken at into a deadline.
             Write the title, the summary and the tasks in {language}.

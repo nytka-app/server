@@ -18,7 +18,7 @@ public sealed record McpTask(Guid Id, string Text, bool Done);
 
 public sealed record McpConversation(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<McpTask> Tasks,
-    string? Transcript, bool Truncated);
+    string? Transcript, bool Truncated, int Part, int Parts);
 
 public sealed record McpTaskList(IReadOnlyList<McpTaskItem> Items, Guid? NextBefore);
 
@@ -31,6 +31,9 @@ public sealed class McpTools(McpQueries queries)
 {
     public const int PreviewLength = 140;
     public const int MaxTranscriptChars = 60_000;
+
+    /// <summary>The most parts <c>get_conversation</c> reads, so a huge conversation is never read whole.</summary>
+    public const int MaxTranscriptParts = 20;
 
     /// <summary>Like REST, every field is written, null ones too.</summary>
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
@@ -53,10 +56,11 @@ public sealed class McpTools(McpQueries queries)
     }
 
     [McpServerTool(Name = "get_conversation", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(McpConversation))]
-    [Description("Reads one conversation: its title, summary, tasks and transcript.")]
+    [Description("Reads one conversation: its title, summary, tasks and transcript. A long transcript comes in parts of about 60,000 characters: when truncated is true, call again with part=2, 3 and so on until parts is reached.")]
     public async Task<CallToolResult> GetConversationAsync(
         [Description("The conversation's id (UUID).")] string id,
         [Description("Whether to include the transcript; the default is true.")] bool transcript = true,
+        [Description("Which part of a long transcript to return, counting from 1; the default is 1.")] int part = 1,
         CancellationToken ct = default)
     {
         var conversationId = ParseId(id, nameof(id));
@@ -69,15 +73,22 @@ public sealed class McpTools(McpQueries queries)
         if (!transcript)
         {
             return Ok(new McpConversation(
-                conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, null, false));
+                conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, null, false, 1, 1));
         }
 
-        var lines = TranscriptText.Render((await queries.SegmentsAsync(conversationId, MaxTranscriptChars * 2, ct))
+        // The text budget is MaxTranscriptParts parts' worth; the line markup makes the last part come out short.
+        var lines = TranscriptText.Render((await queries.SegmentsAsync(conversationId, MaxTranscriptChars * MaxTranscriptParts, ct))
             .Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)));
         var windows = TranscriptWindows.Split(lines, MaxTranscriptChars);
+        var parts = Math.Max(windows.Count, 1);
+        if (part < 1 || part > parts)
+        {
+            throw new McpProtocolException($"part must be from 1 to {parts}.", McpErrorCode.InvalidParams);
+        }
+
         return Ok(new McpConversation(
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks,
-            windows.Count == 0 ? "" : windows[0], windows.Count > 1));
+            windows.Count == 0 ? "" : windows[part - 1], part < parts, part, parts));
     }
 
     [McpServerTool(Name = "list_tasks", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(McpTaskList))]
