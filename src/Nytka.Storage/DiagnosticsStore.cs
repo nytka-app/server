@@ -39,6 +39,21 @@ public sealed class DiagnosticsStore(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
+    /// <summary>Health samples (not the app's log lines) taken from <paramref name="from"/> up to <paramref name="to"/>, oldest first.</summary>
+    public async Task<IReadOnlyList<DiagnosticRow>> ListSamplesAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<DiagnosticRow>(new CommandDefinition(
+            """
+            select at as At, payload::text as Payload
+            from diagnostics
+            where at >= @from and at < @to and payload->>'connection' is not null
+            order by at, id
+            """,
+            new { from, to }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     /// <summary>Deletes samples taken before <paramref name="before"/>.</summary>
     public async Task<int> DeleteAtBeforeAsync(DateTimeOffset before, CancellationToken ct)
     {

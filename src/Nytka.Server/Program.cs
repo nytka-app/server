@@ -92,6 +92,7 @@ api.MapConversations();
 api.MapAudio();
 api.MapStatus();
 api.MapDiagnostics();
+api.MapCoverage();
 api.MapTokens();
 api.MapSettings();
 api.MapTasks();
