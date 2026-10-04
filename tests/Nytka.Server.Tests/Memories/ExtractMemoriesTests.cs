@@ -168,7 +168,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     [Fact]
     public async Task The_prompt_holds_the_title_the_day_the_transcript_the_known_memories_and_the_user_name()
     {
-        using var named = new NytkaApiFactory(Db, s => s["Nytka:Memories:UserName"] = "Yehor", s => s.AddSingleton<ILlmClient>(Llm));
+        using var named = new NytkaApiFactory(Db, Configure(s => s["Nytka:Memories:UserName"] = "Yehor"), s => s.AddSingleton<ILlmClient>(Llm));
         await Seed(1, "I live in Kyiv.");
 
         await Publish(named);
@@ -188,7 +188,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     [Fact]
     public async Task The_time_zone_setting_shifts_the_times_and_is_named_in_the_prompt()
     {
-        using var kyiv = new NytkaApiFactory(Db, s => s["Nytka:User:TimeZone"] = "Europe/Kyiv", s => s.AddSingleton<ILlmClient>(Llm));
+        using var kyiv = new NytkaApiFactory(Db, Configure(s => s["Nytka:User:TimeZone"] = "Europe/Kyiv"), s => s.AddSingleton<ILlmClient>(Llm));
 
         await Publish(kyiv);
         await kyiv.RunJobsAsync();
@@ -239,7 +239,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     [Fact]
     public async Task The_output_language_follows_the_llm_setting()
     {
-        using var ukrainian = new NytkaApiFactory(Db, s => s["Nytka:Llm:OutputLanguage"] = "uk", s => s.AddSingleton<ILlmClient>(Llm));
+        using var ukrainian = new NytkaApiFactory(Db, Configure(s => s["Nytka:Llm:OutputLanguage"] = "uk"), s => s.AddSingleton<ILlmClient>(Llm));
 
         await Publish(ukrainian);
         await ukrainian.RunJobsAsync();
@@ -268,7 +268,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     [Fact]
     public async Task A_long_transcript_is_cut_into_windows_and_the_candidates_are_pooled()
     {
-        using var small = new NytkaApiFactory(Db, s => s["Nytka:Llm:MaxInputChars"] = "40", s => s.AddSingleton<ILlmClient>(Llm));
+        using var small = new NytkaApiFactory(Db, Configure(s => s["Nytka:Llm:MaxInputChars"] = "40"), s => s.AddSingleton<ILlmClient>(Llm));
         Llm.Respond = r => ScriptedLlm.Answer((r.User.Contains("Olena") ? "Sister in Lviv." : "Runs daily.", null));
 
         await Publish(small);
@@ -355,7 +355,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     [Fact]
     public async Task Memories_disabled_queues_nothing()
     {
-        using var off = new NytkaApiFactory(Db, s => s["Nytka:Memories:Enabled"] = "false", s => s.AddSingleton<ILlmClient>(Llm));
+        using var off = new NytkaApiFactory(Db, Configure(s => s["Nytka:Memories:Enabled"] = "false"), s => s.AddSingleton<ILlmClient>(Llm));
 
         await Publish(off);
 

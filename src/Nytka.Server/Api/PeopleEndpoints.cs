@@ -24,18 +24,56 @@ public static class PeopleEndpoints
         people.MapPatch("/{id:guid}", UpdateAsync);
         people.MapDelete("/{id:guid}", DeleteAsync);
         people.MapPost("/{id:guid}/merge", MergeAsync);
+        people.MapGet("/suggestions", SuggestionsAsync).AllowRead();
+        people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
+        people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
         api.MapGet("/voices", VoicesAsync).AllowRead();
         return api;
     }
 
     public const int MaxVoices = 50;
+    public const int MaxSuggestions = 200;
 
     public sealed record VoiceList(IReadOnlyList<UnnamedVoice> Items);
 
     /// <summary>Voices heard but not named, busiest first: the app offers them for naming.</summary>
     private static async Task<IResult> VoicesAsync(PeopleStore people, CancellationToken ct) =>
         Results.Ok(new VoiceList(await people.UnnamedVoicesAsync(MaxVoices, ct)));
+
+    public sealed record SuggestionList(IReadOnlyList<NameSuggestionRow> Items);
+
+    /// <summary>Names the model suggested for unnamed voices, newest first, at most 200. <c>status</c> is <c>pending</c> (default), <c>accepted</c> or <c>rejected</c>.</summary>
+    private static async Task<IResult> SuggestionsAsync(string? status, NameSuggestionStore suggestions, CancellationToken ct) =>
+        status is null or "pending" or "accepted" or "rejected"
+            ? Results.Ok(new SuggestionList(await suggestions.ListAsync(status ?? "pending", MaxSuggestions, ct)))
+            : Invalid("status", "Must be pending, accepted or rejected.");
+
+    /// <summary>
+    /// Applies a pending suggestion: a voice is named as <c>POST /people</c> does, a label names its segments. 200 with the
+    /// person; 404 for an unknown suggestion; 409 when it is no longer pending or names a voice group.
+    /// </summary>
+    private static async Task<IResult> AcceptSuggestionAsync(
+        Guid id, NameSuggestionStore suggestions, PeopleStore people, TimeProvider time, CancellationToken ct)
+    {
+        var (result, personId) = await suggestions.AcceptAsync(id, time.GetUtcNow(), ct);
+        return result switch
+        {
+            SuggestionDecision.NotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such suggestion."),
+            SuggestionDecision.NotPending => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The suggestion is no longer pending."),
+            SuggestionDecision.Unsupported => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Voice groups are not available yet."),
+            _ => Results.Ok(await people.GetAsync(personId!.Value, ct)),
+        };
+    }
+
+    /// <summary>Rejects a pending suggestion; its name is never suggested again for that voice. 204; 404 or 409 as accept.</summary>
+    private static async Task<IResult> RejectSuggestionAsync(Guid id, NameSuggestionStore suggestions, TimeProvider time, CancellationToken ct) =>
+        await suggestions.RejectAsync(id, time.GetUtcNow(), ct) switch
+        {
+            SuggestionDecision.NotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such suggestion."),
+            SuggestionDecision.NotPending => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The suggestion is no longer pending."),
+            _ => Results.NoContent(),
+        };
 
     /// <summary>Body <c>{ intoId }</c>. Moves every voice of the person to <c>intoId</c> and deletes the person.</summary>
     private static async Task<IResult> MergeAsync(Guid id, HttpRequest http, PeopleStore people, CancellationToken ct)

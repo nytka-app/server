@@ -173,7 +173,7 @@ public sealed class ExtractMemoriesHandler(
     /// <summary>One line, at most <see cref="MaxTextLength"/> characters (Postgres counts code points, as runes do).</summary>
     public static string Cut(string text)
     {
-        var line = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        var line = OneLine(text);
         var index = 0;
         var count = 0;
         foreach (var rune in line.EnumerateRunes())
@@ -190,8 +190,11 @@ public sealed class ExtractMemoriesHandler(
         return line;
     }
 
+    /// <summary>The text on one line, its whitespace runs collapsed to single spaces.</summary>
+    internal static string OneLine(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     /// <summary>A short reason for <c>memory_runs.message</c>: a status, never a response body or transcript text.</summary>
-    private static string Describe(Exception error) => error switch
+    internal static string Describe(Exception error) => error switch
     {
         LlmException { StatusCode: { } code } => $"HTTP {code}",
         LlmException llm => llm.Message,

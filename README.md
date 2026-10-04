@@ -175,6 +175,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Llm__BackfillDays` | no | `7` | env only | How far back conversations without a summary are summarized |
 | `Nytka__Memories__Enabled` | no | `true` | editable | `false` stops memory extraction |
 | `Nytka__Memories__UserName` | no | empty | editable | Who "you" is for the model, up to 64 characters; empty means the person wearing the pendant |
+| `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](#people) for unnamed voices; it needs the language model |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
@@ -197,7 +198,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*`, `Nytka__Digest__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
+  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Digest__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
   the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
   `Nytka__Search__Dictionary` stops indexing.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
@@ -301,6 +302,31 @@ join them on `segmentId`, and pick the threshold that keeps false "yours" lines 
 you speak. Someone in your household with a voice close to yours may need a higher threshold. The
 full procedure is in [docs/specs/your-voice.md](docs/specs/your-voice.md#how-we-measure-it); your
 recordings and labels stay on your side.
+
+## People
+
+Names for the other voices in your conversations, from what was said. After each stored summary, the
+server asks the model whether any unnamed voice gave its name: it introduced itself ("I'm Anna",
+"мене звати Олена"), or someone addressed it by name in the next line or two. A name that is only
+mentioned does not count, and neither does the wearer's own (`Nytka__Memories__UserName`). Each answer
+becomes a **suggestion** with the line that shows the name and a confidence of 0.5 to 1; a model
+answer below 0.5 is dropped. A suggestion changes no label: you accept or reject it.
+
+- A voice is what the label rule can tell apart: the provider's `speaker_id`, or, for a segment with
+  only a `speaker` label, that label within one batch. A segment with neither cannot be named.
+- A conversation under 60 words, a repeated summary with no new speech, and a voice that already has
+  a name or is yours are not asked about. At most one suggestion per voice per run, the most
+  confident.
+- **Accept** names the voice as `POST /api/v1/people` does, so every segment of that `speaker_id`
+  shows the name, in every conversation; a suggestion for a batch's label names that batch's segments
+  only, as `PATCH /api/v1/segments/{id}` with `personId` does. A name equal to a person's (any case)
+  uses that person. Other pending names for the same voice go.
+- **Reject** keeps the name on record, so it is never suggested again for that voice.
+
+A failed run is retried like [memories](#memories): three attempts, then an hour later, three rounds
+at most. The text of the conversation goes to your language model endpoint, as for a summary, together
+with the names of the people you already have; logs and errors hold neither. Turn it off with
+`Nytka__People__SuggestNames=false`; the suggestions already made stay.
 
 ## The language model
 
@@ -862,6 +888,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
+| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker` or `label` (`groupId` is for voice groups, not made yet); see [People](#people) |
+| POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice or the batch's segments; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
+| POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
@@ -889,6 +918,7 @@ transcripts and your webhook secrets.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
+- Name suggestions (the name, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.
 - Once you enroll [your voice](#your-voice): your voiceprint (192 numbers, plus the enrolled mean it
   resets to) until you delete it, and a fingerprint of each checked segment for as long as its speech
