@@ -21,10 +21,10 @@ public sealed class SearchTools(SearchStore search)
     };
 
     [McpServerTool(Name = "search", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(McpHitList))]
-    [Description("Searches transcripts, titles, summaries and memories, in Ukrainian and English. Every word must match, as a prefix. One hit per conversation or memory, best first; snippets mark matches with <mark>.")]
+    [Description("Searches transcripts, titles, summaries, memories, and people by name or fact, in Ukrainian and English. Every word must match, as a prefix. One hit per conversation, memory or person, best first; snippets mark matches with <mark>.")]
     public async Task<CallToolResult> SearchAsync(
         [Description("The words to find.")] string query,
-        [Description("conversation, memory, or both (the default).")] string[]? kinds = null,
+        [Description("conversation, memory, person, or any of them (all three by default).")] string[]? kinds = null,
         [Description("How many hits to return, 1 to 30; the default is 10.")] int limit = 10,
         CancellationToken ct = default)
     {

@@ -22,6 +22,7 @@ public static class PeopleEndpoints
     {
         var people = api.MapGroup("/people");
         people.MapGet("", ListAsync).AllowRead();
+        people.MapGet("/{id:guid}", ViewAsync).AllowRead();
         people.MapPost("", CreateAsync);
         people.MapPatch("/{id:guid}", UpdateAsync);
         people.MapDelete("/{id:guid}", DeleteAsync);
@@ -154,6 +155,10 @@ public static class PeopleEndpoints
             ? Results.Ok(await people.GetAsync(intoId, ct))
             : NotFound();
     }
+
+    /// <summary>The person page: last seen, the newest conversations and facts, open tasks owed to them, the note. 404 for an unknown person.</summary>
+    private static async Task<IResult> ViewAsync(Guid id, PeopleStore people, CancellationToken ct) =>
+        await people.ViewAsync(id, ct) is { } view ? Results.Ok(view) : NotFound();
 
     public sealed record PersonList(IReadOnlyList<PersonRow> Items);
 
