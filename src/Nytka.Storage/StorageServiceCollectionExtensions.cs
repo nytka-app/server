@@ -31,6 +31,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<ImportStore>();
         services.AddSingleton<BookmarkStore>();
         services.AddSingleton<DigestStore>();
+        services.AddSingleton<ExportStore>();
 
         return services;
     }

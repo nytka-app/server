@@ -159,9 +159,9 @@ the two do not match. The spec files keep their `v0.x` names.
 - **Output worth reading (shipped on the server).** Segments carry speaker labels and mark the
   wearer's own lines. Tasks and memories come only from what the wearer committed to or lasting
   facts about them, with no dates nobody said.
-- **Leaving Omi (partly shipped).** Import from Omi's "Export All Data" file, a full export from
-  Nytka in a documented format, and a daily digest delivered through a webhook. The import and the
-  digest are shipped; the full export is not built.
+- **Leaving Omi (shipped on the server).** Import from Omi's "Export All Data" file, a full export from
+  Nytka in a documented format, and a daily digest delivered through a webhook. The import, the
+  digest and the full export (`docs/specs/export.md`) are shipped on the server.
 - **Moments and questions (partly shipped).** Bookmarks from a single tap on the pendant, LED and
   microphone settings, an Ask tab that answers from your history with numbered sources, audio
   playback, and a notice when new pendant firmware exists. On the server, bookmarks, playback and
