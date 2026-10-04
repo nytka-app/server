@@ -13,6 +13,8 @@ public sealed class NytkaOptions
 
     public AudioOptions Audio { get; set; } = new();
 
+    public VoiceOptions Voice { get; set; } = new();
+
     public sealed class SttOptions
     {
         public string Url { get; set; } = "";
@@ -32,5 +34,13 @@ public sealed class NytkaOptions
     public sealed class AudioOptions
     {
         public int RetentionDays { get; set; } = 14;
+    }
+
+    public sealed class VoiceOptions
+    {
+        /// <summary>The speaker model; a relative path is read from beside the binaries. Not a setting: the app cannot change it.</summary>
+        public string ModelPath { get; set; } = "Models/nemo_en_titanet_small.onnx";
+
+        public string ResolvedModelPath => Path.Combine(AppContext.BaseDirectory, ModelPath);
     }
 }

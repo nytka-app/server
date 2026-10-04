@@ -14,6 +14,26 @@ public sealed record VoiceProfile(string Model, float[] Centroid, int CentroidCo
 /// </summary>
 public sealed record SegmentVoice(float? Similarity, bool? IsUser, float[]? Fingerprint);
 
+/// <summary>What the API may say about the voiceprint: counts and times, never the vector.</summary>
+public sealed record VoiceStatus(DateTime EnrolledAt, DateTime UpdatedAt, int EnrolledCount, int CentroidCount);
+
+/// <summary>A segment's labels side by side, for evaluating matching; no text.</summary>
+public sealed record VoiceSegment(
+    long SegmentId, Guid ConversationId, DateTime StartedAt, DateTime EndedAt, float? Similarity, bool? VoiceIsUser,
+    bool? ProviderIsUser, bool? ManualIsUser);
+
+/// <summary>What became of a <c>mode=add</c> enrollment.</summary>
+public enum VoiceAdd
+{
+    Added,
+
+    /// <summary>No voiceprint existed: the windows became one.</summary>
+    Created,
+
+    /// <summary>The voiceprint was made by another model; nothing changed.</summary>
+    OtherModel,
+}
+
 /// <summary>A batch's voice work, written in its completion's transaction: fingerprints by <paramref name="Model"/>, and the vectors that teach the voiceprint.</summary>
 public sealed record BatchVoice(string Model, IReadOnlyList<float[]> Learn);
 
@@ -26,6 +46,10 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
     private sealed record ProfileRow(string Model, byte[] Centroid, int CentroidCount, float? AppliedThreshold);
 
     private sealed record FingerprintRow(long SegmentId, byte[] Fingerprint);
+
+    private sealed record EnrolledRow(string Model, byte[] Enrolled, int EnrolledCount, byte[] Centroid, int CentroidCount);
+
+    private sealed record MarkRow(bool? Manual, double Seconds, string? Model, byte[]? Fingerprint);
 
     public async Task<VoiceProfile?> GetProfileAsync(CancellationToken ct)
     {
@@ -54,6 +78,130 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
                 enrolled_at = excluded.enrolled_at, updated_at = excluded.updated_at
             """,
             new { model, vector, count, now }, cancellationToken: ct));
+    }
+
+    public async Task<VoiceStatus?> GetStatusAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<VoiceStatus>(new CommandDefinition(
+            """
+            select enrolled_at as EnrolledAt, updated_at as UpdatedAt, enrolled_count as EnrolledCount, centroid_count as CentroidCount
+            from voice_profile where id = 1
+            """,
+            cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Blends <paramref name="vectors"/> into both the enrolled mean and the voiceprint, weighted by count, so a reset keeps
+    /// them. Without a voiceprint they become one; a voiceprint of another model is left alone.
+    /// </summary>
+    public async Task<VoiceAdd> AddToProfileAsync(string model, IReadOnlyList<float[]> vectors, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var row = await connection.QuerySingleOrDefaultAsync<EnrolledRow>(new CommandDefinition(
+            """
+            select model as Model, enrolled as Enrolled, enrolled_count as EnrolledCount, centroid as Centroid, centroid_count as CentroidCount
+            from voice_profile where id = 1
+            for update
+            """,
+            transaction: transaction, cancellationToken: ct));
+        if (row is null)
+        {
+            await transaction.RollbackAsync(ct);
+            await ReplaceProfileAsync(model, Mean(vectors), vectors.Count, now, ct);
+            return VoiceAdd.Created;
+        }
+
+        if (row.Model != model)
+        {
+            return VoiceAdd.OtherModel;
+        }
+
+        // applied_threshold null: the scheduler rescores even if the queued job was deduplicated away.
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update voice_profile set enrolled = @enrolled, enrolled_count = enrolled_count + @count, centroid = @centroid,
+                centroid_count = centroid_count + @count, applied_threshold = null, enrolled_at = @now, updated_at = @now
+            where id = 1
+            """,
+            new
+            {
+                enrolled = Encode(Blend(Decode(row.Enrolled), row.EnrolledCount, vectors)),
+                centroid = Encode(Blend(Decode(row.Centroid), row.CentroidCount, vectors)),
+                count = vectors.Count,
+                now,
+            },
+            transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return VoiceAdd.Added;
+    }
+
+    /// <summary>Returns the voiceprint to the enrolled mean, forgetting what it learned. False without a voiceprint.</summary>
+    public async Task<bool> ResetAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update voice_profile set centroid = enrolled, centroid_count = enrolled_count, applied_threshold = null, updated_at = @now
+            where id = 1
+            """,
+            new { now }, cancellationToken: ct)) > 0;
+    }
+
+    /// <summary>
+    /// Sets the wearer's own mark on a segment: true, false, or null to clear it. A new <c>true</c> on a segment of
+    /// <paramref name="learnSeconds"/> or longer whose fingerprint is still held teaches the voiceprint in the same
+    /// transaction, when <paramref name="learn"/>. False when the segment does not exist.
+    /// </summary>
+    public async Task<bool> MarkAsync(long segmentId, bool? isUser, bool learn, double learnSeconds, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var before = await connection.QuerySingleOrDefaultAsync<MarkRow>(new CommandDefinition(
+            """
+            select s.is_user_manual as Manual, extract(epoch from s.ended_at - s.started_at)::float8 as Seconds,
+                   f.model as Model, f.fingerprint as Fingerprint
+            from segments s left join segment_fingerprints f on f.segment_id = s.id
+            where s.id = @segmentId
+            for update of s
+            """,
+            new { segmentId }, transaction, cancellationToken: ct));
+        if (before is null)
+        {
+            return false;
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update segments set is_user_manual = @isUser where id = @segmentId",
+            new { segmentId, isUser }, transaction, cancellationToken: ct));
+        if (learn && isUser == true && before.Manual != true && before.Seconds >= learnSeconds
+            && before is { Model: { } model, Fingerprint: { } fingerprint })
+        {
+            await LearnAsync(connection, transaction, model, [Decode(fingerprint)], ct);
+        }
+
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    /// <summary>Segments that started after <paramref name="since"/> and before <paramref name="until"/>, oldest first.</summary>
+    public async Task<IReadOnlyList<VoiceSegment>> ListSegmentsAsync(
+        DateTimeOffset? since, DateTimeOffset? until, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<VoiceSegment>(new CommandDefinition(
+            """
+            select id as SegmentId, conversation_id as ConversationId, started_at as StartedAt, ended_at as EndedAt,
+                   voice_similarity as Similarity, voice_is_user as VoiceIsUser, is_user as ProviderIsUser, is_user_manual as ManualIsUser
+            from segments
+            where (cast(@since as timestamptz) is null or started_at > cast(@since as timestamptz))
+              and (cast(@until as timestamptz) is null or started_at < cast(@until as timestamptz))
+            order by started_at, id
+            limit @limit
+            """,
+            new { since, until, limit }, cancellationToken: ct));
+        return rows.ToList();
     }
 
     /// <summary>Whether a voiceprint exists whose verdicts follow another threshold than <paramref name="threshold"/>.</summary>
@@ -206,6 +354,32 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
         }
 
         return vector;
+    }
+
+    /// <summary>The unit-length mean of <paramref name="vectors"/>.</summary>
+    public static float[] Mean(IReadOnlyList<float[]> vectors) => Blend([], 0, vectors);
+
+    /// <summary>The unit-length mean of <paramref name="mean"/> weighted by <paramref name="count"/> and <paramref name="vectors"/>.</summary>
+    private static float[] Blend(float[] mean, int count, IReadOnlyList<float[]> vectors)
+    {
+        var sum = new double[vectors[0].Length];
+        if (mean.Length == sum.Length)
+        {
+            for (var i = 0; i < sum.Length; i++)
+            {
+                sum[i] = (double)mean[i] * count;
+            }
+        }
+
+        foreach (var vector in vectors)
+        {
+            for (var i = 0; i < sum.Length; i++)
+            {
+                sum[i] += vector[i];
+            }
+        }
+
+        return Normalize(sum);
     }
 
     private static float[] Normalize(double[] sum)

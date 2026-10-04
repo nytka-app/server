@@ -180,9 +180,10 @@ you copy without thinking would lock its setting.
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
 | `Nytka__Voice__Enabled` | no | `true` | editable | Once a voice is enrolled, fingerprint new segments and label the ones that match it as the wearer's; `false` checks nothing new and keeps stored verdicts |
 | `Nytka__Voice__UserThreshold` | no | `0.38` | editable | Similarity, 0.1 to 0.95, at or above which a segment is the wearer's; a change re-labels the stored segments |
-| `Nytka__Voice__LearnThreshold` | no | `0.5` | editable | Similarity, 0.1 to 0.95, at or above which a segment of 2 s or longer updates the voiceprint; below `Nytka__Voice__UserThreshold` it counts as that |
+| `Nytka__Voice__LearnThreshold` | no | `0.5` | editable | Similarity, 0.1 to 0.95, at or above which a segment of 2 s or longer updates the voiceprint; never below `Nytka__Voice__UserThreshold`: the app's change is refused with `400`, and a lower value from the environment counts as that threshold |
 | `Nytka__Voice__Learn` | no | `true` | editable | `false` stops matched segments from updating the voiceprint |
 | `Nytka__Voice__MinSegmentSeconds` | no | `1.0` | editable | Shortest segment, 1.0 to 5.0 seconds, that is fingerprinted; a shorter one gets no label from Nytka |
+| `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
 
@@ -251,8 +252,50 @@ with `response_format=verbose_json`, and reads `text` and `segments`. The endpoi
 its decimal string, up to 64 characters), the app shows it in color above the segment, and the
 transcript the language model reads carries it. Without `speaker` the label is null. Nytka sends each
 batch on its own, so an anonymous label such as `SPEAKER_00` can mean different people in different
-batches. Labels hold across batches only when the provider names speakers, for instance through voice
-enrollment; Nytka does not match them itself.
+batches. Labels of other people hold across batches only when the provider names speakers, for
+instance through its own voice enrollment. Which lines are yours Nytka decides itself once you enroll
+[your voice](#your-voice); until then, and for segments it does not check, it keeps the provider's
+`is_user`.
+
+## Your voice
+
+Nytka learns your voice once and then marks the segments you said as yours, with any transcription
+provider. A line marked yours shows as `Wearer` in the app, in the transcript the language model
+reads, and in tasks, memories, Ask and MCP; other lines keep the provider's speaker or the name you
+gave that voice. It needs the speaker model, TitaNet-small, which the Docker image carries
+(`GET /api/v1/info` lists `voice` under `features` when it is there).
+
+**Enroll.** In the app, read the prompts into the pendant for 30 to 60 seconds, in every language you
+speak. The app sends the pendant's Opus frames to `POST /api/v1/voice/enrollment` instead of the
+normal upload, so the reading never becomes a conversation. The server finds the speech, cuts it into
+windows of 3 to 10 seconds, fingerprints each and keeps their mean as your voiceprint. It refuses
+(`422`) a reading with less than 20 seconds of speech, or one whose windows disagree (a second voice or
+heavy noise), and says which. `mode=add` blends a new reading into the voiceprint, for example for a
+new language; the default `mode=replace` starts over. The audio is never stored.
+
+**Matching.** Each new segment from 1 second (`Nytka__Voice__MinSegmentSeconds`) to 30 seconds gets a
+similarity to your voiceprint, and is yours at `Nytka__Voice__UserThreshold` (0.38) or above. A shorter
+segment gets no label rather than a guess, and a longer one keeps the provider's. If fingerprinting
+fails, the transcript is stored anyway. Segments of 2 seconds or longer that match well
+(`Nytka__Voice__LearnThreshold`) move the voiceprint towards your voice as the pendant hears it;
+`POST /api/v1/voice/reset` goes back to what you enrolled. A threshold change or a new voiceprint
+re-labels the stored segments.
+
+**Which label wins.** Your own mark on a segment ("This is me" or "This is not me",
+`PATCH /api/v1/segments/{id}`), then Nytka's verdict when Nytka checked the segment, then the
+provider's `is_user`. A conversation's segments say which one decided in `isUserSource`. Marking a
+segment of 2 seconds or longer as yours also teaches the voiceprint.
+
+**Forget.** `DELETE /api/v1/voice` deletes the voiceprint, every segment fingerprint and every
+similarity and verdict in one go; the provider's labels come back. Your marks stay: they are
+statements, not biometrics.
+
+**Choosing the threshold.** `GET /api/v1/voice/segments` lists every segment's similarity and the three
+labels, without text. Label a few hundred segments of your own conversations blind, as yours or not,
+join them on `segmentId`, and pick the threshold that keeps false "yours" lines rare in each language
+you speak. Someone in your household with a voice close to yours may need a higher threshold. The
+full procedure is in [docs/specs/your-voice.md](docs/specs/your-voice.md#how-we-measure-it); your
+recordings and labels stay on your side.
 
 ## The language model
 
@@ -770,14 +813,14 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, and `voice` when the speaker model is there |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
 | GET | `/api/v1/coverage?from=&to=&bucket=&limit=` | admin | The "Nothing is lost" report: `{ from, to, timeZone, bucket, totals, buckets, gaps, gapsTotal, now, warnings }`; see [Running the no-loss wear test](#running-the-no-loss-wear-test); `bucket` is `day` (default) or `hour`, `to` defaults to now, `from` to six days before today; `limit` defaults to 500, caps at 5000; `400` for a range over 62 days (14 for hours) |
 | GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source }`, `bookmarks` being a count, `source` `nytka` or `omi`; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
-| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker }`) and `bookmarks` (`{ id, at, note }`) |
+| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource }`, `isUserSource` being `manual`, `voice`, `provider` or null; see [Your voice](#your-voice)) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
@@ -807,6 +850,12 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `description`, `active`; DELETE answers `204` and drops its deliveries |
 | POST | `/api/v1/webhooks/{id}/test` | admin | Queues a `ping`: `202 { deliveryId }` |
 | GET | `/api/v1/webhooks/{id}/deliveries?limit=` | admin | `{ items }`, newest first: `{ id, eventType, status, attempts, lastStatusCode, lastError, createdAt, deliveredAt }`; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/voice` | admin | `{ enrolled, enrolledAt, updatedAt, enrolledSamples, learnedSegments, modelAvailable }`; never the voiceprint |
+| POST | `/api/v1/voice/enrollment?mode=` | admin | Body: one or more chunks of Opus frames back to back (`application/vnd.nytka.frames.v1`) or a 16 kHz mono 16-bit WAV (`audio/wav`), at most 120 s; `mode` is `replace` (default) or `add`. `200 { speechSeconds, samples, minAgreement }`; `422` with `reason` `too-little-speech`, `too-few-samples` or `samples-disagree` and the same three numbers; `413` over 120 s; `415` another content type; `400` unreadable audio; `409` `add` to a voiceprint of another model; `503` without the speaker model |
+| POST | `/api/v1/voice/reset` | admin | Back to the enrolled voiceprint, forgetting what it learned; `200` as GET, `404` with no voice enrolled |
+| DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts; your marks stay. `204`, also with nothing enrolled |
+| GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
+| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser }`: `true` ("this is me"), `false` or `null` (clears the mark); `200` with the segment as a conversation shows it |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
@@ -834,6 +883,12 @@ transcripts and your webhook secrets.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.
+- Once you enroll [your voice](#your-voice): your voiceprint (192 numbers, plus the enrolled mean it
+  resets to) until you delete it, and a fingerprint of each checked segment for as long as its speech
+  audio stays (`RetentionDays`; with `0` not at all). The similarity and the verdict stay on the
+  segment; they cannot be turned back into a voice. No API answer, webhook, MCP answer, export or log
+  carries a voiceprint or a fingerprint; `pg_dump` does. Without an enrolled voice nothing is
+  fingerprinted, and the enrollment's audio is never stored.
 
 The server logs no audio, no transcript text, no token, and no response body from the transcription
 endpoint, the language model or a webhook receiver.

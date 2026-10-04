@@ -67,4 +67,10 @@ public sealed record SettingDefinition(string Key, SettingType Type, string? Def
 public interface ISettingsGroup
 {
     IReadOnlyList<SettingDefinition> Definitions { get; }
+
+    /// <summary>
+    /// What is wrong with keys of the group that depend on each other, by key; <paramref name="value"/> resolves a key as
+    /// the change would leave it. Empty when nothing is.
+    /// </summary>
+    IReadOnlyDictionary<string, string> Conflicts(Func<string, string?> value) => new Dictionary<string, string>();
 }

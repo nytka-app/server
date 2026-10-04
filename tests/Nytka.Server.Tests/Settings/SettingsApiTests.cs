@@ -76,10 +76,40 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
     [InlineData("NaN", false)]
     public async Task The_voice_threshold_is_a_number_in_range(string value, bool accepted)
     {
-        var response = await Patch(new Dictionary<string, string> { ["voice.userThreshold"] = value });
+        var response = await Patch(new Dictionary<string, string> { ["voice.userThreshold"] = value, ["voice.learnThreshold"] = "0.95" });
 
         Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("number", Item(await List(), "voice.userThreshold").GetProperty("type").GetString());
+    }
+
+    [Theory]
+    [InlineData("voice.learnThreshold", "0.3")]
+    [InlineData("voice.userThreshold", "0.6")]
+    public async Task The_learn_threshold_never_goes_below_the_user_threshold(string key, string value)
+    {
+        var response = await Patch(new Dictionary<string, string> { [key] = value });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal([key], (await Json(response)).GetProperty("errors").EnumerateObject().Select(p => p.Name));
+        Assert.Equal("default", Item(await List(), key).GetProperty("source").GetString());
+    }
+
+    [Fact]
+    public async Task Both_thresholds_may_move_together()
+    {
+        var response = await Patch(new Dictionary<string, string> { ["voice.userThreshold"] = "0.6", ["voice.learnThreshold"] = "0.6" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_threshold_conflict_the_environment_set_blocks_no_other_change()
+    {
+        using var server = ServerWithEnvironment(("Nytka:Voice:UserThreshold", "0.6"));
+
+        var response = await Patch(server.CreateAuthorizedClient(), new Dictionary<string, string> { ["voice.learn"] = "false" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

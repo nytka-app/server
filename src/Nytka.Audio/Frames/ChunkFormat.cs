@@ -108,6 +108,56 @@ public static class ChunkFormat
         return new Chunk(session, OpusFs320, firstSeq, baseTime, frames);
     }
 
+    /// <summary>
+    /// Reads one or more chunks written back to back, each checked as <see cref="Read"/> checks it. Voice
+    /// enrollment takes up to 120 s, more than one chunk holds.
+    /// </summary>
+    public static IReadOnlyList<Chunk> ReadAll(ReadOnlySpan<byte> data)
+    {
+        var chunks = new List<Chunk>();
+        do
+        {
+            var length = Length(data);
+            chunks.Add(Read(data[..length]));
+            data = data[length..];
+        }
+        while (data.Length > 0);
+
+        return chunks;
+    }
+
+    /// <summary>The bytes of the chunk at the start of <paramref name="data"/>, found by walking its frame records.</summary>
+    private static int Length(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < HeaderSize)
+        {
+            throw new ChunkFormatException("The chunk is truncated: it is shorter than its header.");
+        }
+
+        var count = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(34, 4));
+        if (count > MaxFrames)
+        {
+            throw new ChunkFormatException($"The chunk holds {count} frames; the limit is {MaxFrames}.");
+        }
+
+        var position = HeaderSize;
+        for (var i = 0; i < count; i++)
+        {
+            if (data.Length - position < RecordHeaderSize)
+            {
+                throw new ChunkFormatException($"The chunk is truncated at frame {i}.");
+            }
+
+            position += RecordHeaderSize + BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(position + 4, 2));
+            if (position > data.Length)
+            {
+                throw new ChunkFormatException($"The chunk is truncated at frame {i}.");
+            }
+        }
+
+        return position;
+    }
+
     public static byte[] Write(Chunk chunk)
     {
         ArgumentNullException.ThrowIfNull(chunk);

@@ -11,10 +11,25 @@ namespace Nytka.Server.Voice;
 public sealed class SpeakerModel : IDisposable
 {
     private readonly Lazy<(ISpeakerEmbedder Embedder, string Id)?> _loaded;
+    private readonly Func<bool> _present;
 
-    public SpeakerModel(ISpeakerEmbedder embedder, string id) => _loaded = new(() => (embedder, id));
+    public SpeakerModel(ISpeakerEmbedder embedder, string id)
+    {
+        _loaded = new(() => (embedder, id));
+        _present = () => true;
+    }
 
-    private SpeakerModel(Func<(ISpeakerEmbedder, string)?> load) => _loaded = new(load);
+    private SpeakerModel(Func<(ISpeakerEmbedder, string)?> load, Func<bool> present)
+    {
+        _loaded = new(load);
+        _present = present;
+    }
+
+    /// <summary>
+    /// Whether matching can run, without loading the model: its file is there and, once loaded, it loaded. <c>/api/v1/info</c>
+    /// lists <c>voice</c> by this.
+    /// </summary>
+    public bool Available => _loaded.IsValueCreated ? _loaded.Value is not null : _present();
 
     public ISpeakerEmbedder? Embedder => _loaded.Value?.Embedder;
 
@@ -39,7 +54,7 @@ public sealed class SpeakerModel : IDisposable
             logger.LogError("Voice: the speaker model failed to load ({ExceptionType}); segments keep the provider's labels.", error.GetType().Name);
             return null;
         }
-    });
+    }, () => File.Exists(path));
 
     public void Dispose()
     {
