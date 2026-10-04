@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/nytka-app/server/compare/v0.12.0...v0.13.0) (2026-10-04)
+
+
+### Features
+
+* **people:** tasks owed to a person ([#69](https://github.com/nytka-app/server/issues/69)) ([d05c6cc](https://github.com/nytka-app/server/commit/d05c6ccb964b16b052cb7ce4d65e2f47dd084633))
+* person on a segment, person note and the label rule (People P-1) ([#68](https://github.com/nytka-app/server/issues/68)) ([74e6a07](https://github.com/nytka-app/server/commit/74e6a07d19fb26a8436a54837c268d6d74db85c0))
+
 ## [0.12.0](https://github.com/nytka-app/server/compare/v0.11.0...v0.12.0) (2026-10-04)
 
 
