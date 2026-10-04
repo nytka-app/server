@@ -1,7 +1,12 @@
 name: ci
 
 on:
+  # Release PRs touch only these two files. github-actions[bot] opens them, so the approval policy for
+  # outside contributors holds their runs until they expire as failures; main runs CI after the merge.
   pull_request:
+    paths-ignore:
+      - CHANGELOG.md
+      - .release-please-manifest.json
   push:
     branches: [main]
 
