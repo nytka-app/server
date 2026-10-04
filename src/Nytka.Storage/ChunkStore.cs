@@ -22,6 +22,9 @@ public sealed record PendingChunk(long FirstSeq, int FrameCount, DateTime Receiv
 /// <summary>A session that holds chunk audio, and whether any of it was late when it arrived.</summary>
 public sealed record PendingSession(Guid Id, bool Late);
 
+/// <summary>What a chunk row keeps once its audio is processed: where its frames sit in the session and in time.</summary>
+public sealed record ChunkSpan(Guid Session, long FirstSeq, int FrameCount, DateTime BaseTime, DateTime LastTime);
+
 public sealed record PendingSummary(long PendingChunks, DateTime? OldestPendingAt);
 
 public sealed class ChunkStore(NpgsqlDataSource dataSource)
@@ -191,6 +194,26 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
             from audio_chunks where body is not null
             """,
             cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Every chunk row of the sessions that have audio between <paramref name="from"/> and <paramref name="to"/>
+    /// or are named in <paramref name="sessions"/>, so a hole between two chunks shows even when one lies outside.
+    /// </summary>
+    public async Task<IReadOnlyList<ChunkSpan>> ListSpansAsync(
+        DateTimeOffset from, DateTimeOffset to, IReadOnlyCollection<Guid> sessions, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<ChunkSpan>(new CommandDefinition(
+            """
+            select session_id as Session, first_seq as FirstSeq, frame_count as FrameCount, base_time as BaseTime, last_time as LastTime
+            from audio_chunks
+            where session_id = any(@sessions)
+               or session_id in (select session_id from audio_chunks where last_time >= @from and base_time < @to)
+            order by session_id, first_seq
+            """,
+            new { from, to, sessions = sessions.ToArray() }, cancellationToken: ct));
+        return rows.ToList();
     }
 
     /// <summary>Deletes rows of processed chunks (no body) received before <paramref name="before"/>.</summary>

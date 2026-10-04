@@ -708,6 +708,52 @@ stretches before it uploads anything: that audio never reaches this server. The 
 (3.0.20 or later) and the Pendant storage card are described in
 [Nytka for Android](https://github.com/nytka-app/android#offline-sync).
 
+## Running the no-loss wear test
+
+The milestone "Nothing is lost" asks for a week of wear with the official app uninstalled and no
+lost audio. `GET /api/v1/coverage` answers how much of the audio the phone counted reached this
+server, and lists the stretches that did not. The design and its limits are in
+[docs/specs/coverage.md](docs/specs/coverage.md).
+
+**Before the week.** Install the Nytka app on the phone you wear it with, update the server to a
+release with this endpoint. In the app, tap the version under Device → About seven times to turn
+on developer mode, then switch on Device → Developer mode → **Send diagnostics to my server**; the
+app's token must be an `admin` token. Without the samples the report has no time axis and says so.
+Keep the phone's battery optimisation off for the app, so Android does not stop capture.
+
+**During the week.** Wear the pendant as usual; mute with the button or the schedule as usual
+(muted time is not a loss). Chunk rows are kept 7 days, so save the report every evening:
+
+```bash
+curl -fsS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" \
+  "$NYTKA_URL/api/v1/coverage?from=$(date -u +%Y-%m-%dT00:00:00Z -d '7 days ago')" \
+  > coverage-$(date +%F).json
+```
+
+On macOS use `date -u -v-7d +%Y-%m-%dT00:00:00Z`. Leave `from` out for the last seven local days
+(the time zone is the `user.timeZone` setting).
+
+**Reading it.** Look at `totals` first: `coverage` is audio that arrived divided by arrived plus
+lost, and `lostS` is the lost seconds. Then read `gaps`:
+
+- `link-loss`, `ring-lost`, `missing-chunk` and `not-arrived` are losses. Match their times to what
+  you did: a loss in a crowded place says Bluetooth, one right after a reconnect says sync.
+- `away` and `unobserved` are not losses. For `away`, `audioS` is the audio that arrived for that
+  stretch, so a stretch with talk and `audioS` near 0 is worth a look. `unobserved` means the app
+  sent no samples: hours of it make the week unmeasured, not clean. Check `warnings` and
+  `now.lastSampleAt` after a day with the phone off or out of signal, since samples wait on the
+  phone.
+- `pending` is audio still on its way; `now.pendingOnPendantS` is what the pendant still holds.
+- `muted` is time you chose; `droppedByMuteS` is stored audio the mute filter dropped.
+
+Read the final report only after the phone has uploaded everything: `now.queuedChunksOnPhone` is
+0 and `pendingOnPendantS` is 0 or close to it.
+
+**Passing.** The proposed rule is in the spec: no `missing-chunk`, `not-arrived` or `ring-lost`
+gap, `link-loss` under 0.1% of `receivedS`, and `unobservedS` under 1% of the week. The report
+cannot see frames the pendant drops before numbering them when its link stalls, so also check a few
+conversations you remember against the transcripts.
+
 ## API
 
 Every request under `/api` carries `Authorization: Bearer <token>`; the Scope column says what it
@@ -724,6 +770,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
+| GET | `/api/v1/coverage?from=&to=&bucket=&limit=` | admin | The "Nothing is lost" report: `{ from, to, timeZone, bucket, totals, buckets, gaps, gapsTotal, now, warnings }`; see [Running the no-loss wear test](#running-the-no-loss-wear-test); `bucket` is `day` (default) or `hour`, `to` defaults to now, `from` to six days before today; `limit` defaults to 500, caps at 5000; `400` for a range over 62 days (14 for hours) |
 | GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source }`, `bookmarks` being a count, `source` `nytka` or `omi`; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker }`) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
