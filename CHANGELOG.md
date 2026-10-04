@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0](https://github.com/nytka-app/server/compare/v0.10.0...v0.11.0) (2026-10-04)
+
+
+### Features
+
+* coverage report for the no-loss wear test ([#60](https://github.com/nytka-app/server/issues/60)) ([b1671d3](https://github.com/nytka-app/server/commit/b1671d388f2f65ff30942fa12f7b5896d7f0607e))
+* full export of Nytka data as NDJSON ([#59](https://github.com/nytka-app/server/issues/59)) ([42a7992](https://github.com/nytka-app/server/commit/42a79924dd0bae18a806414707aee677efe0f983))
+* speaker fingerprints with TitaNet-small (voice S-M) ([#62](https://github.com/nytka-app/server/issues/62)) ([3cc3a9b](https://github.com/nytka-app/server/commit/3cc3a9be77de1e544ecd3091a686cf96d323d0fa))
+
 ## [0.10.0](https://github.com/nytka-app/server/compare/v0.9.0...v0.10.0) (2026-10-04)
 
 
