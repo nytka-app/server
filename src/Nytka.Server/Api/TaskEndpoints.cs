@@ -37,7 +37,7 @@ public static class TaskEndpoints
         return Results.Ok(new TaskPage(items, items.Count == take ? items[^1].Id : null));
     }
 
-    /// <summary>Body <c>{ text?, done? }</c>. Read by hand, so a field of the wrong type is a 400 in every environment.</summary>
+    /// <summary>Body <c>{ text?, done?, personId? }</c>; a null <c>personId</c> clears the person. Read by hand, so a field of the wrong type is a 400 in every environment.</summary>
     private static async Task<IResult> PatchAsync(
         Guid id, JsonElement body, NpgsqlDataSource dataSource, TaskStore tasks, IEventPublisher events, TimeProvider time,
         CancellationToken ct)
@@ -45,9 +45,10 @@ public static class TaskEndpoints
         var errors = new Dictionary<string, string[]>();
         string? text = null;
         bool? done = null;
+        PersonChange? person = null;
         if (body.ValueKind != JsonValueKind.Object)
         {
-            errors["body"] = ["Send an object with text or done."];
+            errors["body"] = ["Send an object with text, done or personId."];
         }
         else
         {
@@ -71,6 +72,22 @@ public static class TaskEndpoints
                     errors["done"] = ["Must be true or false."];
                 }
             }
+
+            if (body.TryGetProperty("personId", out var personValue))
+            {
+                if (personValue.ValueKind == JsonValueKind.Null)
+                {
+                    person = new PersonChange(null);
+                }
+                else if (personValue.ValueKind == JsonValueKind.String && personValue.TryGetGuid(out var personId))
+                {
+                    person = new PersonChange(personId);
+                }
+                else
+                {
+                    errors["personId"] = ["Must be a person id or null."];
+                }
+            }
         }
 
         if (errors.Count > 0)
@@ -80,7 +97,17 @@ public static class TaskEndpoints
 
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
-        if (await tasks.UpdateAsync(connection, transaction, id, text, done, time.GetUtcNow(), ct) is not { } update)
+        TaskUpdate? update;
+        try
+        {
+            update = await tasks.UpdateAsync(connection, transaction, id, text, done, person, time.GetUtcNow(), ct);
+        }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.ForeignKeyViolation)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such person.");
+        }
+
+        if (update is null)
         {
             return NotFound();
         }

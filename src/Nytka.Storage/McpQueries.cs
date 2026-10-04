@@ -6,13 +6,13 @@ namespace Nytka.Storage;
 public sealed record McpConversationRow(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview);
 
-public sealed record McpTaskRow(Guid Id, string Text, bool Done);
+public sealed record McpTaskRow(Guid Id, string Text, bool Done, Guid? PersonId, string? PersonName);
 
 public sealed record McpSegmentRow(DateTime StartedAt, string? Speaker, string Text);
 
 public sealed record McpTaskItem(
     Guid Id, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, string Text, bool Done,
-    DateTime? DoneAt, DateTime CreatedAt);
+    DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName);
 
 /// <summary>
 /// The SQL behind the MCP tools: read-only, written against the final schema (migrations 0003 and 0004), so
@@ -64,7 +64,12 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpTaskRow>(new CommandDefinition(
-            "select id as Id, text as Text, done as Done from tasks where conversation_id = @id and deleted_at is null order by id",
+            """
+            select t.id as Id, t.text as Text, t.done as Done, t.person_id as PersonId, p.name as PersonName
+            from tasks t left join people p on p.id = t.person_id
+            where t.conversation_id = @id and t.deleted_at is null
+            order by t.id
+            """,
             new { id }, cancellationToken: ct));
         return rows.ToList();
     }
@@ -100,9 +105,10 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
             """
             select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                    c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
-                   t.created_at as CreatedAt
+                   t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName
             from tasks t
             join conversations c on c.id = t.conversation_id
+            left join people p on p.id = t.person_id
             where t.deleted_at is null
               and t.done = @done
               and (cast(@conversationId as uuid) is null or t.conversation_id = @conversationId)

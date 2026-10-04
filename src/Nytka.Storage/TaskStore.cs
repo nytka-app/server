@@ -6,10 +6,16 @@ namespace Nytka.Storage;
 /// <summary>A task with the conversation it came from, as the API shows it.</summary>
 public sealed record TaskRow(
     Guid Id, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, string Text,
-    bool Done, DateTime? DoneAt, DateTime CreatedAt);
+    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName);
 
-/// <summary>A task the model returned: its text as stored and the fingerprint the text had when it was created.</summary>
-public sealed record AiTask(string Text, string Fingerprint);
+/// <summary>
+/// A task the model returned: its text as stored, the fingerprint the text had when it was created and the person it is
+/// owed to, if the model named a known one.
+/// </summary>
+public sealed record AiTask(string Text, string Fingerprint, Guid? PersonId = null);
+
+/// <summary>A user's change of a task's person: <see langword="null"/> clears it.</summary>
+public sealed record PersonChange(Guid? PersonId);
 
 /// <summary>What <see cref="TaskStore.UpdateAsync"/> did.</summary>
 public sealed record TaskUpdate(TaskRow Task, bool Completed);
@@ -17,7 +23,7 @@ public sealed record TaskUpdate(TaskRow Task, bool Completed);
 /// <summary>Tasks taken from a summary (<c>tasks</c>).</summary>
 public sealed class TaskStore(NpgsqlDataSource dataSource)
 {
-    private sealed record Current(string Text, bool Done);
+    private sealed record Current(string Text, bool Done, Guid? PersonId);
 
     private sealed record Existing(Guid Id, string Fingerprint, bool Done, bool Edited, DateTime? DeletedAt);
 
@@ -25,9 +31,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         """
         select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
-               t.created_at as CreatedAt
+               t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName
         from tasks t
         join conversations c on c.id = t.conversation_id
+        left join people p on p.id = t.person_id
         """;
 
     /// <summary>Newest first, by id. Deleted tasks never show. <paramref name="before"/> is a task id.</summary>
@@ -62,15 +69,16 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// Applies a user's edit inside the caller's transaction and returns the task, or null when it
     /// does not exist or is deleted. <paramref name="text"/> and <paramref name="done"/> are null
-    /// when the request left them out. An edit of the text marks the task <c>edited</c>, and so does
-    /// reopening it: a task the user touched is never removed by a later summary.
+    /// when the request left them out, and so is <paramref name="person"/>. An edit of the text marks the
+    /// task <c>edited</c>, and so does reopening it or changing its person: a task the user touched is
+    /// never removed by a later summary. A person that does not exist throws a foreign key violation.
     /// </summary>
     public async Task<TaskUpdate?> UpdateAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? text, bool? done,
-        DateTimeOffset now, CancellationToken ct)
+        PersonChange? person, DateTimeOffset now, CancellationToken ct)
     {
         var current = await connection.QuerySingleOrDefaultAsync<Current>(new CommandDefinition(
-            "select text as Text, done as Done from tasks where id = @id and deleted_at is null for update",
+            "select text as Text, done as Done, person_id as PersonId from tasks where id = @id and deleted_at is null for update",
             new { id }, transaction, cancellationToken: ct));
         if (current is not { } before)
         {
@@ -80,7 +88,8 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         var textChanged = text is not null && text != before.Text;
         var completed = done == true && !before.Done;
         var reopened = done == false && before.Done;
-        if (textChanged || completed || reopened)
+        var personChanged = person is not null && person.PersonId != before.PersonId;
+        if (textChanged || completed || reopened || personChanged)
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 """
@@ -88,14 +97,15 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 set text = @text,
                     done = @done,
                     done_at = case when @completed then @now when @reopened then null else done_at end,
-                    edited = edited or @textChanged or @reopened,
+                    person_id = case when @personChanged then @personId else person_id end,
+                    edited = edited or @textChanged or @reopened or @personChanged,
                     updated_at = @now
                 where id = @id
                 """,
                 new
                 {
                     id, text = textChanged ? text : before.Text, done = done ?? before.Done,
-                    completed, reopened, textChanged, now,
+                    completed, reopened, textChanged, personChanged, personId = person?.PersonId, now,
                 },
                 transaction, cancellationToken: ct));
         }
@@ -162,10 +172,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             var id = Guid.CreateVersion7(now.AddMilliseconds(inserted.Count));
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into tasks (id, conversation_id, text, fingerprint, created_at, updated_at)
-                values (@id, @conversationId, @Text, @Fingerprint, @now, @now)
+                insert into tasks (id, conversation_id, text, fingerprint, person_id, created_at, updated_at)
+                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @now, @now)
                 """,
-                new { id, conversationId, task.Text, task.Fingerprint, now }, transaction, cancellationToken: ct));
+                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, now }, transaction, cancellationToken: ct));
             inserted.Add(id);
         }
 

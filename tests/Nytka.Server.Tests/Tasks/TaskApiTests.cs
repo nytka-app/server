@@ -53,7 +53,7 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(JsonValueKind.String, task.GetProperty("createdAt").ValueKind);
         Assert.Equal(JsonValueKind.Null, page.GetProperty("nextBefore").ValueKind);
         Assert.Equal(
-            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "text", "done", "doneAt", "createdAt"],
+            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "text", "done", "doneAt", "createdAt", "personId", "personName"],
             task.EnumerateObject().Select(p => p.Name));
     }
 
@@ -297,5 +297,90 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/v1/tasks")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.DeleteAsync($"/api/v1/tasks/{Guid.NewGuid()}")).StatusCode);
+    }
+
+    private async Task<Guid> SeedPerson(string name)
+    {
+        var id = Guid.NewGuid();
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@id, @name, now())", new { id, name });
+        return id;
+    }
+
+    [Fact]
+    public async Task A_task_shows_the_person_it_is_owed_to_in_the_list_and_the_detail()
+    {
+        var conversation = await Seed(Talk);
+        var person = await SeedPerson("Olena");
+        var task = await SeedTask(conversation, "send the photos");
+        await Db.ExecuteAsync("update tasks set person_id = @person", new { person });
+
+        var listed = (await Get("tasks")).GetProperty("items")[0];
+        var detailed = (await Get($"conversations/{conversation}")).GetProperty("tasks")[0];
+
+        foreach (var item in new[] { listed, detailed })
+        {
+            Assert.Equal(task.ToString(), item.GetProperty("id").GetString());
+            Assert.Equal(person.ToString(), item.GetProperty("personId").GetString());
+            Assert.Equal("Olena", item.GetProperty("personName").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task Patch_sets_changes_and_clears_the_person_and_marks_the_task_edited()
+    {
+        var conversation = await Seed(Talk);
+        var olena = await SeedPerson("Olena");
+        var ben = await SeedPerson("Ben");
+        var id = await SeedTask(conversation, "send the photos");
+
+        var set = await (await Client.PatchAsJsonAsync($"/api/v1/tasks/{id}", new { personId = olena })).Content.ReadFromJsonAsync<JsonElement>();
+        var other = await (await Client.PatchAsJsonAsync($"/api/v1/tasks/{id}", new { personId = ben })).Content.ReadFromJsonAsync<JsonElement>();
+        var untouched = await (await Client.PatchAsJsonAsync($"/api/v1/tasks/{id}", new { done = false })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(await Db.ScalarAsync<bool>("select edited from tasks where id = @id", new { id }));
+        var cleared = await (await Client.PatchAsJsonAsync($"/api/v1/tasks/{id}", new { personId = (Guid?)null })).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("Olena", set.GetProperty("personName").GetString());
+        Assert.Equal("Ben", other.GetProperty("personName").GetString());
+        Assert.Equal(ben.ToString(), untouched.GetProperty("personId").GetString());
+        Assert.Equal(JsonValueKind.Null, cleared.GetProperty("personId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, cleared.GetProperty("personName").ValueKind);
+    }
+
+    [Fact]
+    public async Task Patch_with_an_unknown_person_is_404_and_changes_nothing()
+    {
+        var conversation = await Seed(Talk);
+        var id = await SeedTask(conversation, "send the photos");
+
+        var response = await Client.PatchAsJsonAsync($"/api/v1/tasks/{id}", new { personId = Guid.NewGuid(), done = true });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("No such person.", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("title").GetString());
+        Assert.False(await Db.ScalarAsync<bool>("select done from tasks where id = @id", new { id }));
+    }
+
+    [Theory]
+    [InlineData("\"personId\":7")]
+    [InlineData("\"personId\":\"not-a-guid\"")]
+    public async Task Patch_with_a_malformed_person_is_400(string body)
+    {
+        var conversation = await Seed(Talk);
+        var id = await SeedTask(conversation, "send the photos");
+
+        var response = await Client.PatchAsync($"/api/v1/tasks/{id}", new StringContent("{" + body + "}", System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_read_token_cannot_change_the_person()
+    {
+        var conversation = await Seed(Talk);
+        var id = await SeedTask(conversation, "send the photos");
+        using var reader = Server.CreateClientWithScope("read");
+
+        var response = await reader.PatchAsJsonAsync($"/api/v1/tasks/{id}", new { personId = (Guid?)null });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 }

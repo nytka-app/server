@@ -4,7 +4,10 @@ using System.Text.Json;
 namespace Nytka.Server.Ai;
 
 /// <summary>What the model returns for a conversation (or for one window of it), before the lengths are enforced.</summary>
-public sealed record ConversationAnswer(string Title, string Summary, IReadOnlyList<string> Tasks);
+public sealed record ConversationAnswer(string Title, string Summary, IReadOnlyList<AnswerTask> Tasks);
+
+/// <summary>A task as the model words it; <paramref name="Person"/> is a name from the people the user message lists, or null.</summary>
+public sealed record AnswerTask(string Text, string? Person);
 
 /// <summary>The messages and the schema of the <c>enrich-conversation</c> call. Server code, not a setting.</summary>
 public static class ConversationPrompt
@@ -15,7 +18,9 @@ public static class ConversationPrompt
         """
         { "type": "object", "additionalProperties": false, "required": ["title", "summary", "tasks"],
           "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
-                          "tasks": { "type": "array", "items": { "type": "string" } } } }
+                          "tasks": { "type": "array", "items": {
+                            "type": "object", "additionalProperties": false, "required": ["text", "person"],
+                            "properties": { "text": { "type": "string" }, "person": { "type": ["string", "null"] } } } } } }
         """;
 
     public const int MaxTitle = 80;
@@ -39,7 +44,7 @@ public static class ConversationPrompt
             ? ""
             : $"""
 
-              A task is something the wearer committed to do, or was asked to do and did not turn down. Lines labelled "Wearer" are the wearer's own: a task needs the wearer saying they will do it, or another speaker asking the wearer. A task is a concrete action: a feeling, a wish, an insight or a topic to keep exploring is not one. In a therapy, coaching or lesson setting, list only homework or actions explicitly agreed. The "Wearer" label can be wrong, so the content must fit the wearer: a line labelled "Wearer" that is plainly another person's instruction or explanation is not the wearer's commitment. Leave out what other people said they would do, ideas and plans nobody took on, general talk and anything already done. When no line is labelled "Wearer", list only what is clearly addressed to the wearer, otherwise nothing. Return at most {MaxTasks} tasks, none when there are none.
+              A task is something the wearer committed to do, or was asked to do and did not turn down. Lines labelled "Wearer" are the wearer's own: a task needs the wearer saying they will do it, or another speaker asking the wearer. A task is a concrete action: a feeling, a wish, an insight or a topic to keep exploring is not one. In a therapy, coaching or lesson setting, list only homework or actions explicitly agreed. The "Wearer" label can be wrong, so the content must fit the wearer: a line labelled "Wearer" that is plainly another person's instruction or explanation is not the wearer's commitment. Leave out what other people said they would do, ideas and plans nobody took on, general talk and anything already done. When no line is labelled "Wearer", list only what is clearly addressed to the wearer, otherwise nothing. Set a task's person to the name of the person it is owed to or who asked for it, copied exactly from the "People" list in the user message, and to null when no listed person fits or there is no list. Return at most {MaxTasks} tasks, none when there are none.
               """;
         return
             $"""
@@ -63,10 +68,19 @@ public static class ConversationPrompt
     public static string LocalDate(DateTimeOffset startedAt, TimeZoneInfo? zone = null) =>
         TimeZoneInfo.ConvertTime(startedAt, zone ?? TimeZoneInfo.Utc).ToString("yyyy-MM-dd dddd", CultureInfo.InvariantCulture);
 
-    /// <summary>The user message for the whole transcript, or for part <paramref name="part"/> of <paramref name="parts"/>.</summary>
-    public static string User(DateTimeOffset startedAt, string transcript, int part = 1, int parts = 1, TimeZoneInfo? zone = null)
+    /// <summary>The people line: the conversation's confirmed speakers other than the wearer, or nothing when there are none.</summary>
+    public static string PeopleLine(IReadOnlyList<string>? people) =>
+        people is { Count: > 0 } ? "\nPeople: " + string.Join(", ", people) : "";
+
+    /// <summary>
+    /// The user message for the whole transcript, or for part <paramref name="part"/> of <paramref name="parts"/>.
+    /// <paramref name="people"/> are the names a task's person may take.
+    /// </summary>
+    public static string User(
+        DateTimeOffset startedAt, string transcript, int part = 1, int parts = 1, TimeZoneInfo? zone = null,
+        IReadOnlyList<string>? people = null)
     {
-        var header = DateLine(startedAt, zone);
+        var header = DateLine(startedAt, zone) + PeopleLine(people);
         if (parts > 1)
         {
             header += $"\nThis is part {part} of {parts} of the conversation.";
@@ -75,11 +89,12 @@ public static class ConversationPrompt
         return $"{header}\n\nTranscript:\n{transcript}";
     }
 
-    public static string UserForMerge(DateTimeOffset startedAt, IReadOnlyList<ConversationAnswer> answers, TimeZoneInfo? zone = null)
+    public static string UserForMerge(
+        DateTimeOffset startedAt, IReadOnlyList<ConversationAnswer> answers, TimeZoneInfo? zone = null, IReadOnlyList<string>? people = null)
     {
         var lines = answers.Select((a, i) =>
             $"Part {i + 1} of {answers.Count}: " + JsonSerializer.Serialize(a, JsonSerializerOptions.Web));
-        return $"{DateLine(startedAt, zone)}\n\n" + string.Join('\n', lines);
+        return $"{DateLine(startedAt, zone)}{PeopleLine(people)}\n\n" + string.Join('\n', lines);
     }
 
     /// <summary>Cuts a text to <paramref name="max"/> characters, never through a surrogate pair, after trimming it.</summary>
