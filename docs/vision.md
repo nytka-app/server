@@ -7,9 +7,10 @@ pick, so Omi's cloud sees none of it.
 
 Nytka (нитка) is Ukrainian for thread: the thread of your day, on your own server.
 
-> **Status: v0.4 shipped.** The server in this repository implements the specs from
-> [v0.1](specs/v0.1.md) to [v0.4](specs/v0.4.md); the Android app lives in `nytka-app/android`.
-> The roadmap names milestones, not release numbers: each repository has its own version.
+> **Status: the first four milestones are shipped.** The server in this repository implements
+> capture, the AI layer, offline sync, and memory and search ([specs v0.1 to v0.4](specs/v0.4.md)),
+> and parts of the milestones after them; the Android app lives in `nytka-app/android`. The roadmap
+> names milestones, not release numbers: each repository has its own version.
 
 ## Why Nytka exists
 
@@ -133,35 +134,43 @@ conversation.
 
 ## Roadmap
 
-- **v0.1, capture (shipped).** Pairing, reconnection and battery. Background capture with mute.
+Milestones have names. Release numbers come from release-please and move with every feature, so
+the two do not match. The spec files keep their `v0.x` names.
+
+- **Capture (shipped in 0.1).** Pairing, reconnection and battery. Background capture with mute.
   Upload with an offline queue. Transcription and conversation splitting on the server. The
   conversation list and transcripts. Server URL and token settings, the consent step and
-  developer-mode diagnostics. Version 0.1 is done when someone wears the pendant for a full day with
+  developer-mode diagnostics. Capture is done when someone wears the pendant for a full day with
   the official app uninstalled and the phone nearby, and every conversation shows up. Details:
   [specs/v0.1.md](specs/v0.1.md).
-- **v0.2, the AI layer (shipped).** Titles, summaries and tasks for each conversation, and a Tasks
+- **The AI layer (shipped).** Titles, summaries and tasks for each conversation, and a Tasks
   tab. Speaker labels when the transcription provider returns them. A read-only MCP endpoint. Server
   settings editable from the app. Named tokens with `admin` and `read` scopes.
-- **v0.3, offline sync (shipped).** The app pulls the audio the pendant stored while the phone was
+- **Offline sync (shipped).** The app pulls the audio the pendant stored while the phone was
   away, so leaving your phone behind stops costing you conversations.
-- **v0.4, memory and search (shipped).** Memories (lasting facts about you) with their own tab,
+- **Memory and search (shipped).** Memories (lasting facts about you) with their own tab,
   full-text search and outgoing webhooks.
-- **v0.5, nothing is lost.** A week of wear with the official app uninstalled loses no audio: the
-  Bluetooth link and offline sync are fixed against measured failures, batches close at pauses, a
-  weekly mute schedule keeps chosen hours unrecorded, and the language of summaries is a setting
-  (English by default).
-- **v0.6, output worth reading.** Segments carry speaker labels and mark the wearer's own lines.
-  Tasks and memories come only from what the wearer committed to or lasting facts about them, with
-  no dates nobody said.
-- **v0.7, leaving Omi.** Import from Omi's "Export All Data" file, a full export from Nytka in a
-  documented format, and a daily digest delivered through a webhook.
-- **v0.8, moments and questions.** Bookmarks from a single tap on the pendant, LED and microphone
-  settings, an Ask tab that answers from your history with numbered sources, audio playback, and a
-  notice when new pendant firmware exists.
-- **v0.9, your voice.** Voice enrollment on the server, so segments are labelled as yours with any
-  transcription provider.
-- **v1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
-  documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week.
+- **Nothing is lost (partly shipped).** A week of wear with the official app uninstalled loses no
+  audio: the Bluetooth link and offline sync are fixed against measured failures, batches close at
+  pauses, a weekly mute schedule keeps chosen hours unrecorded, and the language of summaries is a
+  setting (English by default). Shipped on the server: batches close at pauses, the mute schedule
+  drops audio, and the summary language is a setting. The Bluetooth and sync fixes and the week-long
+  wear test are not yet verified.
+- **Output worth reading (shipped on the server).** Segments carry speaker labels and mark the
+  wearer's own lines. Tasks and memories come only from what the wearer committed to or lasting
+  facts about them, with no dates nobody said.
+- **Leaving Omi (partly shipped).** Import from Omi's "Export All Data" file, a full export from
+  Nytka in a documented format, and a daily digest delivered through a webhook. The import and the
+  digest are shipped; the full export is not built.
+- **Moments and questions (partly shipped).** Bookmarks from a single tap on the pendant, LED and
+  microphone settings, an Ask tab that answers from your history with numbered sources, audio
+  playback, and a notice when new pendant firmware exists. On the server, bookmarks, playback and
+  Ask are shipped. The LED and microphone settings and the firmware notice are not built.
+- **Your voice (not started).** Voice enrollment on the server, so segments are labelled as yours
+  with any transcription provider.
+- **1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
+  documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week. This is
+  a real release number, the target of the 1.0 release.
 - **After 1.0.** Firmware updates from the app, live transcripts, people and calendar extraction, a
   local model or stripping personal data before text reaches a cloud model, opt-in location tags, a
   home-screen widget, vector search, an optional supporter key that unlocks nothing, and web, desktop
@@ -211,8 +220,8 @@ nothing phones home.
 - **License.** Apache-2.0. Code adapted from the official Omi app (MIT) keeps its notice in
   `NOTICE`. The license grants no trademark rights, so a fork can reuse the code but not the Nytka
   name or icon.
-- **Versions.** Each repository has its own semantic version, and a roadmap milestone such as v0.4
-  names a set of features, not a release number. Release-please turns conventional commits into
+- **Versions.** Each repository has its own semantic version, and a roadmap milestone such as
+  Memory and search names a set of features, not a release number. Release-please turns conventional commits into
   releases. CI builds a signed APK for the app, and an amd64 and arm64 image,
   `ghcr.io/nytka-app/server`, for the server.
 - **Docs.** This file holds the whole picture. `docs/specs/` holds one spec per version. The server

@@ -8,10 +8,11 @@ summary and tasks, and keeps lasting facts about you as memories. It searches ev
 and English. Webhooks tell your other tools when something new exists, and AI agents read it all
 over MCP. Omi's cloud sees none of it.
 
-Status: v0.4 of the [roadmap](docs/vision.md#roadmap) is shipped: capture and transcription
-([v0.1](docs/specs/v0.1.md)), the AI layer ([v0.2](docs/specs/v0.2.md)), offline sync
-([v0.3](docs/specs/v0.3.md)) and memory and search ([v0.4](docs/specs/v0.4.md)). Each spec says what
-its version does and does not do.
+Status: the first four milestones of the [roadmap](docs/vision.md#roadmap) are shipped: capture and
+transcription ([spec v0.1](docs/specs/v0.1.md)), the AI layer ([v0.2](docs/specs/v0.2.md)), offline
+sync ([v0.3](docs/specs/v0.3.md)) and memory and search ([v0.4](docs/specs/v0.4.md)). Parts of the
+later milestones are shipped too. Each spec says what it does and does not do. Milestones have
+names and release numbers come from release-please, so the two differ.
 
 ## First run (about 5 minutes)
 
@@ -255,8 +256,8 @@ person wearing the pendant.
   already holds is a `409`. Deleting a conversation deletes the memories taken from it.
 - `Nytka__Memories__Enabled=false`, or no model, means no extraction. The memories you have stay.
 - A failed extraction is tried three times, then again an hour later, three rounds at most.
-  Conversations summarized before you upgraded to v0.4 have no memories; regenerate a summary to feed
-  one in.
+  Conversations summarized before memory extraction shipped (release 0.4.0) have no memories;
+  regenerate a summary to feed one in.
 
 ## Import from Omi
 
