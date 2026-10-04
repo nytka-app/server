@@ -54,7 +54,7 @@ as the download.
 
 A segment, inside `conversation.segments`, oldest first: `startedAt`, `endedAt` (capture times),
 `text`, `speaker` (the provider's label, null if none), `speakerId` (the provider's voice id, null for
-imported segments), `isUser` (true for the wearer, null when the provider does not say), `person` (the
+imported segments), `isUser` (true for the wearer by the rule in [your-voice.md](your-voice.md#which-label-wins), null when nobody says), `person` (the
 name given to that voice, else null). A bookmark carries no conversation: as in the API, the one it
 belongs to is found by time (30 seconds around the span).
 

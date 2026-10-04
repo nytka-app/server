@@ -9,10 +9,17 @@ public static class SpeakerLabel
     public const string Wearer = "Wearer";
 
     /// <summary>
+    /// SQL for whether a segment aliased <c>s</c> is the wearer's, the one rule every reader follows
+    /// (docs/specs/your-voice.md, Which label wins): the wearer's own mark, else Nytka's verdict when Nytka checked the
+    /// segment (a checked segment without a verdict is unknown, never the provider's guess), else the provider's.
+    /// </summary>
+    public const string IsUser = "coalesce(s.is_user_manual, case when s.voice_checked then s.voice_is_user else s.is_user end)";
+
+    /// <summary>
     /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>: the wearer, else the person the voice
     /// was named after, else the provider's own label.
     /// </summary>
-    public const string Column = $"case when s.is_user then '{Wearer}' else coalesce(p.name, s.speaker) end";
+    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(p.name, s.speaker) end";
 
     public const string Joins =
         "left join person_voices pv on pv.speaker_id = s.speaker_id left join people p on p.id = pv.person_id";
@@ -41,10 +48,10 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
         var voices = (await connection.QueryAsync<Voice>(new CommandDefinition(
             "select person_id as PersonId, speaker_id as SpeakerId from person_voices order by speaker_id", cancellationToken: ct))).ToList();
         var counts = (await connection.QueryAsync<Count>(new CommandDefinition(
-            """
+            $"""
             select pv.person_id as PersonId, count(*)::int as Segments
             from segments s join person_voices pv on pv.speaker_id = s.speaker_id
-            where s.is_user is not true
+            where {SpeakerLabel.IsUser} is not true
             group by pv.person_id
             """, cancellationToken: ct))).ToDictionary(c => c.PersonId, c => c.Segments);
         return people
@@ -139,13 +146,13 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<UnnamedVoice>(new CommandDefinition(
-            """
+            $"""
             select s.speaker_id as SpeakerId,
                    (array_agg(s.speaker order by s.started_at desc, s.id desc))[1] as Label,
                    count(*)::int as Segments,
                    max(s.started_at) as LastSeenAt
             from segments s
-            where s.speaker_id is not null and s.is_user is not true
+            where s.speaker_id is not null and {SpeakerLabel.IsUser} is not true
               and not exists (select 1 from person_voices pv where pv.speaker_id = s.speaker_id)
             group by s.speaker_id
             order by count(*) desc, max(s.started_at) desc, s.speaker_id

@@ -65,6 +65,11 @@ services:
       Nytka__Digest__Enabled: "${Nytka__Digest__Enabled:-}"
       Nytka__Digest__Hour: "${Nytka__Digest__Hour:-}"
       Nytka__Search__Dictionary: "${Nytka__Search__Dictionary:-}"
+      Nytka__Voice__Enabled: "${Nytka__Voice__Enabled:-}"
+      Nytka__Voice__UserThreshold: "${Nytka__Voice__UserThreshold:-}"
+      Nytka__Voice__LearnThreshold: "${Nytka__Voice__LearnThreshold:-}"
+      Nytka__Voice__Learn: "${Nytka__Voice__Learn:-}"
+      Nytka__Voice__MinSegmentSeconds: "${Nytka__Voice__MinSegmentSeconds:-}"
     ports:
       # Loopback by default: put a reverse proxy in front, or set NYTKA_BIND to a tailnet address.
       - "${NYTKA_BIND:-127.0.0.1}:${NYTKA_PORT:-8080}:8080"

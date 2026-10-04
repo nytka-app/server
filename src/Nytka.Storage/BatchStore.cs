@@ -11,8 +11,10 @@ public sealed record NewBatch(
 
 public sealed record PendingBatch(long Id, Guid ConversationId, DateTime StartedAt, DateTime EndedAt, byte[] Wav, string OffsetMap);
 
+/// <summary><paramref name="IsUser"/> is the provider's; <paramref name="Voice"/> is Nytka's look at the segment, null when it did not check it.</summary>
 public sealed record NewSegment(
-    DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker = null, string? SpeakerId = null, bool? IsUser = null);
+    DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker = null, string? SpeakerId = null, bool? IsUser = null,
+    SegmentVoice? Voice = null);
 
 /// <summary>Where transcription stands. <paramref name="LastError"/> is set only while it is current: no batch has finished since.</summary>
 public sealed record BatchOutcomes(string? LastError, DateTime? LastErrorAt, DateTime? LastSuccessAt);
@@ -59,11 +61,13 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>
-    /// Marks the batch done with its segments and raw response and drops the WAV. Does nothing when
-    /// the batch is no longer pending (deleted with its conversation, or already finished).
+    /// Marks the batch done with its segments, their voice verdicts and fingerprints, and its raw response, teaches the
+    /// voiceprint (<paramref name="voice"/>) and drops the WAV, in one transaction. Does nothing when the batch is no
+    /// longer pending (deleted with its conversation, or already finished). Deleting the speech audio deletes the
+    /// fingerprints with it.
     /// </summary>
     public async Task CompleteAsync(
-        long id, string response, IReadOnlyList<NewSegment> segments, bool deleteSpeechAudio, CancellationToken ct)
+        long id, string response, IReadOnlyList<NewSegment> segments, BatchVoice? voice, bool deleteSpeechAudio, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -81,18 +85,41 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             return;
         }
 
-        await connection.ExecuteAsync(new CommandDefinition(
-            """
-            insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker, speaker_id, is_user)
-            values (@ConversationId, @BatchId, @StartedAt, @EndedAt, @Text, @Speaker, @SpeakerId, @IsUser)
-            """,
-            segments.Select(s => new { ConversationId = conversationId.Value, BatchId = id, s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, s.IsUser }),
-            transaction, cancellationToken: ct));
+        foreach (var s in segments)
+        {
+            var segmentId = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
+                """
+                insert into segments (conversation_id, batch_id, started_at, ended_at, text, speaker, speaker_id, is_user,
+                                      voice_checked, voice_similarity, voice_is_user)
+                values (@ConversationId, @BatchId, @StartedAt, @EndedAt, @Text, @Speaker, @SpeakerId, @IsUser,
+                        @VoiceChecked, @VoiceSimilarity, @VoiceIsUser)
+                returning id
+                """,
+                new
+                {
+                    ConversationId = conversationId.Value, BatchId = id, s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, s.IsUser,
+                    VoiceChecked = s.Voice is not null, VoiceSimilarity = s.Voice?.Similarity, VoiceIsUser = s.Voice?.IsUser,
+                },
+                transaction, cancellationToken: ct));
+            if (voice is not null && s.Voice?.Fingerprint is { } fingerprint)
+            {
+                await VoiceStore.InsertFingerprintAsync(connection, transaction, segmentId, id, voice.Model, fingerprint, ct);
+            }
+        }
+
+        if (voice is not null)
+        {
+            await VoiceStore.LearnAsync(connection, transaction, voice.Model, voice.Learn, ct);
+        }
 
         if (deleteSpeechAudio)
         {
             await connection.ExecuteAsync(new CommandDefinition(
-                "delete from speech_audio where batch_id = @id", new { id }, transaction, cancellationToken: ct));
+                """
+                delete from speech_audio where batch_id = @id;
+                delete from segment_fingerprints where batch_id = @id;
+                """,
+                new { id }, transaction, cancellationToken: ct));
         }
 
         await transaction.CommitAsync(ct);
@@ -159,14 +186,23 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             new { conversationId }, cancellationToken: ct))).AsList();
     }
 
+    /// <summary>
+    /// Deletes speech audio of finished batches that ended before <paramref name="before"/>, and the fingerprints of every
+    /// batch that loses audio: a fingerprint never outlives its audio. Similarities and verdicts stay on the segments.
+    /// </summary>
     public async Task<int> DeleteSpeechAudioEndedBeforeAsync(DateTimeOffset before, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        return await connection.ExecuteAsync(new CommandDefinition(
+        return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             """
-            delete from speech_audio
-            where ended_at < @before
-              and batch_id in (select id from transcription_batches where status = 'done')
+            with audio as (
+                delete from speech_audio
+                where ended_at < @before
+                  and batch_id in (select id from transcription_batches where status = 'done')
+                returning batch_id),
+            fingerprints as (
+                delete from segment_fingerprints where batch_id in (select batch_id from audio))
+            select count(*)::int from audio
             """,
             new { before }, cancellationToken: ct));
     }

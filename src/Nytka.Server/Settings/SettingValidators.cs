@@ -40,6 +40,16 @@ public static partial class SettingValidators
             ? null
             : $"Must be a whole number from {min} to {max}.";
 
+    /// <summary>A decimal number such as <c>0.38</c>, with a dot, from <paramref name="min"/> to <paramref name="max"/>.</summary>
+    public static Func<string, string?> Number(double min, double max) => value =>
+        TryParseNumber(value, out var number) && number >= min && number <= max
+            ? null
+            : $"Must be a number from {min.ToString(CultureInfo.InvariantCulture)} to {max.ToString(CultureInfo.InvariantCulture)}, with a dot.";
+
+    public static bool TryParseNumber(string value, out double number) =>
+        double.TryParse(value, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out number)
+        && double.IsFinite(number);
+
     public static string? Bool(string value) =>
         value is "true" or "false" ? null : "Must be true or false.";
 

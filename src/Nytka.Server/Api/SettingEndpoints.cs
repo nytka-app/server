@@ -1,5 +1,8 @@
 using System.Text.Json;
+using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
+using Nytka.Server.Voice;
+using Nytka.Storage;
 
 namespace Nytka.Server.Api;
 
@@ -27,7 +30,8 @@ public static class SettingEndpoints
 
     private static IResult List(SettingsService settings) => Results.Ok(Describe(settings));
 
-    private static async Task<IResult> PatchAsync(HttpRequest http, SettingsService settings, CancellationToken ct)
+    private static async Task<IResult> PatchAsync(
+        HttpRequest http, SettingsService settings, JobQueue queue, TimeProvider time, CancellationToken ct)
     {
         var request = await TokenEndpoints.ReadBodyAsync<PatchRequest>(http, ct);
         if (request?.Values is not { } raw)
@@ -59,7 +63,13 @@ public static class SettingEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        return await settings.UpdateAsync(values, ct) switch
+        var update = await settings.UpdateAsync(values, ct);
+        if (update is SettingsUpdate.Applied && values.ContainsKey(VoiceSettings.UserThresholdKey))
+        {
+            await queue.EnqueueAsync(JobKinds.RescoreVoice, new { }, JobKinds.RescoreVoice, time.GetUtcNow(), ct);
+        }
+
+        return update switch
         {
             SettingsUpdate.Invalid invalid => Results.ValidationProblem(invalid.Errors),
             SettingsUpdate.Locked locked => Results.Problem(

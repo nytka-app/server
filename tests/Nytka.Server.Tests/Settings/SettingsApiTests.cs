@@ -59,12 +59,27 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
                 "stt.url", "stt.apiKey", "stt.model", "stt.language", "conversations.gap", "user.timeZone", "mute.windows", "audio.retentionDays",
                 "llm.baseUrl", "llm.apiKey", "llm.model", "llm.outputLanguage",
                 "memories.enabled", "memories.userName", "search.dictionary", "digest.enabled", "digest.hour",
+                "voice.enabled", "voice.userThreshold", "voice.learnThreshold", "voice.learn", "voice.minSegmentSeconds",
             ],
             items.EnumerateArray().Select(i => i.GetProperty("key").GetString()));
         Assert.All(
             items.EnumerateArray(),
             item => Assert.Equal(
                 ["key", "type", "value", "isSet", "source", "locked", "default"], item.EnumerateObject().Select(p => p.Name)));
+    }
+
+    [Theory]
+    [InlineData("0.38", true)]
+    [InlineData("0.95", true)]
+    [InlineData("0.05", false)]
+    [InlineData("0,4", false)]
+    [InlineData("NaN", false)]
+    public async Task The_voice_threshold_is_a_number_in_range(string value, bool accepted)
+    {
+        var response = await Patch(new Dictionary<string, string> { ["voice.userThreshold"] = value });
+
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("number", Item(await List(), "voice.userThreshold").GetProperty("type").GetString());
     }
 
     [Fact]

@@ -15,6 +15,7 @@ using Nytka.Server.Pipeline;
 using Nytka.Server.Search;
 using Nytka.Server.Settings;
 using Nytka.Server.Transcription;
+using Nytka.Server.Voice;
 using Nytka.Server.Webhooks;
 using Nytka.Storage;
 using Serilog;
@@ -68,6 +69,7 @@ builder.Services.AddNytkaMemories();
 builder.Services.AddNytkaSearch();
 builder.Services.AddNytkaDigests();
 builder.Services.AddNytkaWebhooks();
+builder.Services.AddNytkaVoice();
 
 var app = builder.Build();
 
