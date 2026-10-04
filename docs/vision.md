@@ -162,12 +162,13 @@ the two do not match. The spec files keep their `v0.x` names.
 - **Leaving Omi (shipped on the server).** Import from Omi's "Export All Data" file, a full export from
   Nytka in a documented format, and a daily digest delivered through a webhook. The import, the
   digest and the full export (`docs/specs/export.md`) are shipped on the server.
-- **Moments and questions (partly shipped).** Bookmarks from a single tap on the pendant, LED and
+- **Moments and questions (shipped).** Bookmarks from a single tap on the pendant, LED and
   microphone settings, an Ask tab that answers from your history with numbered sources, audio
-  playback, and a notice when new pendant firmware exists. On the server, bookmarks, playback and
-  Ask are shipped. The LED and microphone settings and the firmware notice are not built.
-- **Your voice (not started).** Voice enrollment on the server, so segments are labelled as yours
-  with any transcription provider.
+  playback, and a notice when new pendant firmware exists. The server side (bookmarks, playback,
+  Ask) and the app side (LED and microphone settings, firmware notice) are both shipped.
+- **Your voice (shipped).** Voice enrollment on the server, so segments are labelled as yours
+  with any transcription provider. The app enrolls your voice from the pendant and lets you mark a
+  line as yours or not yours. Details: [specs/your-voice.md](specs/your-voice.md).
 - **1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
   documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week. This is
   a real release number, the target of the 1.0 release.
