@@ -3,6 +3,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
+using Nytka.Server.Voice;
 using Nytka.Storage;
 
 namespace Nytka.Server.Jobs;
@@ -10,12 +11,12 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle), the conversations that need a run of the model and the day's digest. Dedupe keys make every call
+/// to go idle), the conversations that need a run of the model, the day's digest and a voice rescore. Dedupe keys make every call
 /// safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
-    IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, TimeProvider time)
+    IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -38,6 +39,19 @@ public sealed class Scheduler(
 
         await QueueEnrichmentsAsync(now, ct);
         await QueueDigestAsync(now, ct);
+        await QueueRescoreAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Rescores when the voiceprint's verdicts follow another threshold than <c>voice.userThreshold</c>: at start after
+    /// the environment changed it, or after a change that came while a rescore was already running.
+    /// </summary>
+    private async Task QueueRescoreAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (await voices.NeedsRescoreAsync(VoiceSettings.UserThreshold(settings), ct))
+        {
+            await queue.EnqueueAsync(JobKinds.RescoreVoice, new { }, JobKinds.RescoreVoice, now, ct);
+        }
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ public enum SettingType
     Int,
     Language,
     Bool,
+    Number,
 }
 
 /// <summary>Which layer supplied a setting's value. The API names them <c>default</c>, <c>db</c> and <c>env</c>.</summary>

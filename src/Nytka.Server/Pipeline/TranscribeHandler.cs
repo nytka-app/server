@@ -3,11 +3,12 @@ using Microsoft.Extensions.Options;
 using Nytka.Audio.Batching;
 using Nytka.Server.Jobs;
 using Nytka.Server.Transcription;
+using Nytka.Server.Voice;
 using Nytka.Storage;
 
 namespace Nytka.Server.Pipeline;
 
-public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient client, IOptions<NytkaOptions> options) : IJobHandler
+public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient client, VoiceMatcher voice, IOptions<NytkaOptions> options) : IJobHandler
 {
     public string Kind => JobKinds.Transcribe;
 
@@ -20,8 +21,17 @@ public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient cl
         }
 
         var result = await client.TranscribeAsync(batch.Wav, ct);
-        var segments = ToSegments(result, OffsetMap.FromJson(batch.OffsetMap), batch.StartedAt, batch.EndedAt);
-        await batches.CompleteAsync(batchId, result.RawJson, segments, options.Value.Audio.RetentionDays == 0, ct);
+        var map = OffsetMap.FromJson(batch.OffsetMap);
+        var segments = ToSegments(result, map, batch.StartedAt, batch.EndedAt);
+
+        // Fingerprints cut the WAV by the provider's own times, before the offset map makes them capture times.
+        var match = await voice.MatchAsync(batch.Wav, WavSpans(result, map), ct);
+        if (match is not null)
+        {
+            segments = segments.Select((s, i) => s with { Voice = match.Segments[i] }).ToList();
+        }
+
+        await batches.CompleteAsync(batchId, result.RawJson, segments, match?.Batch, options.Value.Audio.RetentionDays == 0, ct);
         return JobOutcome.Done;
     }
 
@@ -51,6 +61,18 @@ public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient cl
         }
 
         return segments;
+    }
+
+    /// <summary>The segments of <see cref="ToSegments"/> in the same order, as seconds into the WAV.</summary>
+    public static IReadOnlyList<WavSpan> WavSpans(TranscriptionResult result, OffsetMap map)
+    {
+        var spans = result.Segments.Where(s => s.Text.Length > 0).Select(s => new WavSpan(s.Start, s.End)).ToList();
+        if (spans.Count == 0 && result.Text.Length > 0)
+        {
+            spans.Add(new WavSpan(0, map.TotalMs / 1000.0));
+        }
+
+        return spans;
     }
 
     private static long BatchId(JobRecord job) => JsonSerializer.Deserialize<BatchPayload>(job.Payload)!.BatchId;

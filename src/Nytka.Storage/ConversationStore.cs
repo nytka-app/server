@@ -14,7 +14,7 @@ public sealed record ConversationHeader(
 
 /// <summary>
 /// <paramref name="Speaker"/> is the provider's label, <paramref name="SpeakerId"/> its stable id for the voice,
-/// <paramref name="IsUser"/> whether it is the wearer's, and the person is the name the user gave the voice.
+/// <paramref name="IsUser"/> whether it is the wearer's by <see cref="SpeakerLabel.IsUser"/>, and the person is the name the user gave the voice.
 /// </summary>
 public sealed record SegmentRow(
     long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, Guid? PersonId,
@@ -214,9 +214,9 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<SegmentRow>(new CommandDefinition(
-            """
+            $"""
             select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
-                   s.speaker_id as SpeakerId, s.is_user as IsUser, p.id as PersonId, p.name as PersonName
+                   s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, p.id as PersonId, p.name as PersonName
             from segments s
             left join person_voices pv on pv.speaker_id = s.speaker_id
             left join people p on p.id = pv.person_id

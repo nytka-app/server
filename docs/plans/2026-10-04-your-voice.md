@@ -23,7 +23,8 @@ work and names the files and tests. Nothing here starts before the owner accepts
    Frame count, sample rate, band count and window come from the model's metadata; anything else
    (`framework` other than `nemo`) refuses to load.
 4. `Nytka.Audio/Voice/SpeakerEmbedder.cs`: one `InferenceSession` (2 intra-op threads, a setting of
-   the option), input `audio_signal` `[1, 80, T]` zero-padded to a multiple of 16 and `length`
+   the option), input `audio_signal` `[1, 80, T]` with the real frame count `T` (sherpa-onnx grows its
+   buffer to a multiple of 16 but never feeds the padding; feeding it drops cosine to 0.998) and `length`
    `[T]`, output `embs`, normalized to unit length. Thread-safe (features per call, the session's
    `Run` is), so the enrollment request and the Audio lane can share it. `Embed(ReadOnlySpan<float>)`
    and `Cosine`.

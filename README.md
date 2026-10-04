@@ -178,6 +178,11 @@ you copy without thinking would lock its setting.
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
+| `Nytka__Voice__Enabled` | no | `true` | editable | Once a voice is enrolled, fingerprint new segments and label the ones that match it as the wearer's; `false` checks nothing new and keeps stored verdicts |
+| `Nytka__Voice__UserThreshold` | no | `0.38` | editable | Similarity, 0.1 to 0.95, at or above which a segment is the wearer's; a change re-labels the stored segments |
+| `Nytka__Voice__LearnThreshold` | no | `0.5` | editable | Similarity, 0.1 to 0.95, at or above which a segment of 2 s or longer updates the voiceprint; below `Nytka__Voice__UserThreshold` it counts as that |
+| `Nytka__Voice__Learn` | no | `true` | editable | `false` stops matched segments from updating the voiceprint |
+| `Nytka__Voice__MinSegmentSeconds` | no | `1.0` | editable | Shortest segment, 1.0 to 5.0 seconds, that is fingerprinted; a shorter one gets no label from Nytka |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
 
@@ -191,7 +196,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*`, `Nytka__Digest__*` and `Nytka__Search__Dictionary` are checked when first used, so type them as
+  `Nytka__Memories__*`, `Nytka__Digest__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
   the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
   `Nytka__Search__Dictionary` stops indexing.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
