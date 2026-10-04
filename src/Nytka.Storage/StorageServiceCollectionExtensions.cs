@@ -37,6 +37,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<NameSuggestionStore>();
         services.AddSingleton<VoiceGroupStore>();
         services.AddSingleton<ReviewStore>();
+        services.AddSingleton<CalendarStore>();
 
         return services;
     }

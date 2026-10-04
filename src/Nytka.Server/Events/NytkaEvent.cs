@@ -24,6 +24,9 @@ public sealed record NytkaEvent(string Type, Guid SubjectId)
     /// <summary>A fact about a person was added; the subject is the fact.</summary>
     public const string PersonFactCreated = "person.fact.created";
 
+    /// <summary>A brief for a calendar meeting was stored; the subject is the brief.</summary>
+    public const string BriefReady = "brief.ready";
+
     /// <summary>A daily digest was stored; the subject is the digest.</summary>
     public const string DigestReady = "digest.ready";
 }
