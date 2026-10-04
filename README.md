@@ -14,56 +14,128 @@ sync ([v0.3](docs/specs/v0.3.md)) and memory and search ([v0.4](docs/specs/v0.4.
 later milestones are shipped too. Each spec says what it does and does not do. Milestones have
 names and release numbers come from release-please, so the two differ.
 
-## First run (about 5 minutes)
+## Install in 15 minutes
 
-You need Docker Compose and an OpenAI-compatible transcription endpoint; an API key from OpenAI or
-Groq is the quickest. The five minutes assume you already have an HTTPS proxy or a VPN to put the
-server behind (step 4); setting one up is not counted.
+For a person with an Omi pendant and a computer or small server that stays on. The times add up to
+about 15 minutes when the prerequisites are in place; the [last list](#what-does-not-fit-in-15-minutes)
+says what is not counted.
 
-1. Download the Compose file and the settings template:
+**Before you start**
+
+- A Linux, macOS or Windows machine with [Docker Compose](https://docs.docker.com/compose/install/)
+  that runs while you wear the pendant. A VPS or a home server is best; a laptop that sleeps loses
+  nothing, because the app keeps the audio and uploads it later, but conversations then appear late.
+- A transcription account. The cheapest working choice is [Groq](https://console.groq.com): a free
+  tier covers 28,800 seconds of audio a day for `whisper-large-v3-turbo` (check the current limits
+  there). The server drops silence before it sends anything, so a day of wearing stays far below
+  that. OpenAI's `whisper-1` also works and is paid by the minute. Create an API key and keep it.
+- A way for the phone to reach the server over HTTPS. The easiest is [Tailscale](https://tailscale.com):
+  the server machine and the phone both join your tailnet, and the next section gives the server an
+  `https://` address with a real certificate. A domain with a reverse proxy works too.
+- The pendant charged, on consumer firmware 3.0.x, and an Android 12+ phone.
+
+**1. Download the Compose file and the settings template (1 minute)**
+
+```bash
+mkdir nytka && cd nytka
+curl -fsSLO https://raw.githubusercontent.com/nytka-app/server/main/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/nytka-app/server/main/.env.example
+```
+
+**2. Fill in `.env` (3 minutes)**
+
+Generate the two secrets and write them in, with the Groq endpoint, key and model:
+
+```bash
+sed -i.bak \
+  -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" \
+  -e "s|^Nytka__AdminToken=.*|Nytka__AdminToken=$(openssl rand -hex 24)|" \
+  -e "s|^Nytka__Stt__Url=.*|Nytka__Stt__Url=https://api.groq.com/openai/v1/audio/transcriptions|" \
+  -e "s|^# Nytka__Stt__ApiKey=.*|Nytka__Stt__ApiKey=PASTE_YOUR_GROQ_KEY|" \
+  -e "s|^# Nytka__Stt__Model=.*|Nytka__Stt__Model=whisper-large-v3-turbo|" .env
+```
+
+Replace `PASTE_YOUR_GROQ_KEY` in `.env` with your key (open the file in an editor; do not paste the key
+into a shared terminal log). With OpenAI use `https://api.openai.com/v1/audio/transcriptions` and
+`whisper-1`. Other endpoints, including a self-hosted whisper.cpp, are in
+[Transcription endpoints](#transcription-endpoints). Leave everything else commented out: a
+variable that is set locks its setting in the app ([Configuration](#configuration)).
+
+**3. Start it and check (2 minutes)**
+
+```bash
+docker compose up -d --wait
+curl http://127.0.0.1:8080/healthz
+```
+
+The first start pulls two images. `healthz` answers `{"status":"healthy"}`. If the server does not
+come up, `docker compose logs server` says why, for example a token shorter than 32 characters.
+
+**4. Give the phone an HTTPS address (3 minutes with Tailscale)**
+
+The server listens on `127.0.0.1:8080` only. With Tailscale installed and signed in on the server
+machine:
+
+```bash
+tailscale serve --bg --https=443 localhost:8080
+tailscale serve status
+```
+
+`status` prints the address, `https://<machine>.<tailnet>.ts.net`. Install Tailscale on the phone,
+sign in to the same tailnet and keep it on. (If the command says HTTPS certificates are off, enable
+HTTPS in the Tailscale admin console under DNS, then run it again.) With a domain instead, point a
+reverse proxy that terminates HTTPS, such as Caddy, at `127.0.0.1:8080`. On a VPN without HTTPS,
+set `NYTKA_BIND` in `.env` to the VPN address, run `docker compose up -d` and use
+`http://<that address>:8080` with the app's private-network switch, which sends audio unencrypted.
+
+**5. Install the app and pair the pendant (4 minutes)**
+
+Stop the official Omi app (two apps cannot hold the pendant). Install `nytka-<version>.apk` from the
+[app's releases](https://github.com/nytka-app/android/releases/latest), then follow
+[Nytka for Android](https://github.com/nytka-app/android#first-run-about-5-minutes): enter the
+address from step 4 and the token, tap **Test connection**, allow Nearby devices and notifications,
+accept the consent note and tap **Pair pendant**. The token is on your server machine:
+
+```bash
+grep '^Nytka__AdminToken=' .env
+```
+
+Copy it to the phone without pasting it into a chat or a note that syncs elsewhere (a password
+manager's share, or typing it, both work).
+
+**6. Check that it works (2 minutes)**
+
+1. In the app the chip at the top reads **Recording** and the status card shows "Server: Last upload".
+   If the chip stays on **Waiting**, check that the pendant is on and next to the phone.
+2. Say a few sentences, wait about two minutes, then pull the **Conversations** list down. The
+   speech appears as a conversation after the silence gap (two minutes by default).
+3. If it does not, ask the server what it thinks (replace the address and token):
 
    ```bash
-   mkdir nytka && cd nytka
-   curl -fsSLO https://raw.githubusercontent.com/nytka-app/server/main/docker-compose.yml
-   curl -fsSL -o .env https://raw.githubusercontent.com/nytka-app/server/main/.env.example
+   curl -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" https://<address>/api/v1/status
    ```
 
-2. Fill in `.env`. Compose stops and names the first required value that is still empty.
-   - `POSTGRES_PASSWORD` and `Nytka__AdminToken`: a random string each, from `openssl rand -hex 24`.
-     The token is what the app asks for; it needs 32 characters or more.
-   - `Nytka__Stt__Url`: the transcription endpoint. OpenAI and Groq also need `Nytka__Stt__ApiKey`
-     and `Nytka__Stt__Model`: remove the `#` in front of those two lines.
-     [Transcription endpoints](#transcription-endpoints) lists the values.
+   `lastError` names the problem, for example `The transcription endpoint answered 401.`: the key, URL
+   or model in `.env` is wrong. Fix it and run `docker compose up -d`.
 
-   Everything else is optional. The server's own settings are commented out on purpose; see
-   [Configuration](#configuration).
+**Then, when you have a minute:** titles, summaries, tasks and memories need a language model, which
+is optional: [The language model](#the-language-model) (Groq's `https://api.groq.com/openai/v1` with
+the same key works; pick a chat model from its list). Back up the `postgres-data` volume, and read
+[Upgrading](#upgrading).
 
-3. Start the server and check that it answers:
+### What does not fit in 15 minutes
 
-   ```bash
-   docker compose up -d --wait
-   curl http://127.0.0.1:8080/healthz
-   ```
-
-   It answers `{"status":"healthy"}`. If it does not come up, `docker compose logs server` says why,
-   for example a token shorter than 32 characters.
-
-4. Make it reachable from the phone. The server listens on `127.0.0.1:8080` only: put a reverse
-   proxy with HTTPS in front, or set `NYTKA_BIND` in `.env` to an address on your VPN (Tailscale,
-   WireGuard) and run `docker compose up -d` again.
-
-5. Give the app the server's address and the token; `grep '^Nytka__AdminToken=' .env` shows it again.
-   Behind a proxy the address is `https://…`. On a VPN it is `http://<that address>:8080`, and the
-   app's private-network switch, which allows plain HTTP, has to be on. The phone side continues in
-   [Nytka for Android](https://github.com/nytka-app/android#first-run-about-5-minutes).
-
-Conversations show up in the app a few minutes after speech; pull the list down to refresh if a new
-one hasn't appeared. If they stay empty, `GET /api/v1/status` with the token (see [API](#api))
-reports `lastError`, for example `The transcription endpoint answered 401.`: check the endpoint's
-URL, key and model.
-
-Titles, summaries, tasks and memories need a language model, which is optional and comes next:
-[The language model](#the-language-model).
+- Installing Docker, joining Tailscale on two devices for the first time (about 5 minutes each) and
+  pointing a domain at a server with a proxy and a certificate (10 minutes or more).
+- Creating the Groq or OpenAI account and key, and any wait for approval.
+- Updating the pendant's firmware: it needs the official Omi app, and Nytka tells you when the
+  codec is wrong. Offline sync needs firmware 3.0.20 or later.
+- The Ukrainian search dictionary: an extra download with a licence prompt
+  ([Ukrainian search](#ukrainian-search-optional)).
+- A local transcription model: it needs a machine with enough CPU or GPU and setup time that
+  depends on the model.
+- Evaluating the result: summaries only show once a conversation has closed and a model is set,
+  and a week of wear is what shows whether it fits you.
 
 ## Configuration
 
