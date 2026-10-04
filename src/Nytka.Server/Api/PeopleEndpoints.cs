@@ -109,8 +109,8 @@ public static class PeopleEndpoints
             : Invalid("status", "Must be pending, accepted or rejected.");
 
     /// <summary>
-    /// Applies a pending suggestion: a voice is named as <c>POST /people</c> does, a label names its segments. 200 with the
-    /// person; 404 for an unknown suggestion; 409 when it is no longer pending or names a voice group.
+    /// Applies a pending suggestion: a voice is named as <c>POST /people</c> does, a label names its segments, a voice group is
+    /// named as its card is. 200 with the person; 404 for an unknown suggestion; 409 when it is no longer pending.
     /// </summary>
     private static async Task<IResult> AcceptSuggestionAsync(
         Guid id, NameSuggestionStore suggestions, PeopleStore people, TimeProvider time, CancellationToken ct)
@@ -120,7 +120,6 @@ public static class PeopleEndpoints
         {
             SuggestionDecision.NotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such suggestion."),
             SuggestionDecision.NotPending => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The suggestion is no longer pending."),
-            SuggestionDecision.Unsupported => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "Voice groups are not available yet."),
             _ => Results.Ok(await people.GetAsync(personId!.Value, ct)),
         };
     }
@@ -266,7 +265,7 @@ public static class PeopleEndpoints
     private static async Task<IResult> UnlinkAsync(Guid id, string speakerId, PeopleStore people, CancellationToken ct) =>
         await people.UnlinkVoiceAsync(id, speakerId, ct) ? Results.NoContent() : NotFound();
 
-    private static string? Name(JsonElement body)
+    internal static string? Name(JsonElement body)
     {
         if (!body.TryGetProperty("name", out var value) || value.ValueKind != JsonValueKind.String)
         {
@@ -277,7 +276,7 @@ public static class PeopleEndpoints
         return name.Length is > 0 and <= MaxNameLength ? name : null;
     }
 
-    private static async Task<JsonElement?> ReadObjectAsync(HttpRequest request, CancellationToken ct)
+    internal static async Task<JsonElement?> ReadObjectAsync(HttpRequest request, CancellationToken ct)
     {
         try
         {
@@ -290,7 +289,7 @@ public static class PeopleEndpoints
         }
     }
 
-    private static IResult Invalid(string field, string message) =>
+    internal static IResult Invalid(string field, string message) =>
         Results.ValidationProblem(new Dictionary<string, string[]> { [field] = [message] });
 
     private static IResult FactNotFound() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such fact.");

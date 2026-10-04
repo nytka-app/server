@@ -186,6 +186,19 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             new { conversationId }, cancellationToken: ct))).AsList();
     }
 
+    /// <summary>The speech audio bodies of a conversation that overlap capture times <paramref name="from"/> to <paramref name="until"/>, in capture order.</summary>
+    public async Task<IReadOnlyList<byte[]>> SpeechAudioBodiesAsync(Guid conversationId, DateTimeOffset from, DateTimeOffset until, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<byte[]>(new CommandDefinition(
+            """
+            select body from speech_audio
+            where conversation_id = @conversationId and started_at < @until and ended_at > @from
+            order by started_at, id
+            """,
+            new { conversationId, from, until }, cancellationToken: ct))).AsList();
+    }
+
     /// <summary>
     /// Deletes speech audio of finished batches that ended before <paramref name="before"/>, and the fingerprints of every
     /// batch that loses audio: a fingerprint never outlives its audio, nor does a voice group left without one. Similarities and

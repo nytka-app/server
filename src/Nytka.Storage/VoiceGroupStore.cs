@@ -17,12 +17,46 @@ public enum VoiceConfirm { Ok, NotFound, NoPerson }
 public sealed record VoiceEvalRow(
     long SegmentId, Guid ConversationId, DateTime StartedAt, int DurationMs, Guid? GroupId, Guid? PersonId, Guid? MatchPersonId, float? Similarity);
 
+/// <summary>A group ("Who is this?") or a pending match ("Is this Olena?") a card may be made from; <paramref name="Id"/> is the group or the match.</summary>
+public sealed record CardOwner(string Kind, Guid Id, Guid? PersonId, string? PersonName, float? Similarity);
+
+/// <summary>
+/// A segment of a card owner that a clip may hold: not the wearer's, no person yet, speech audio still stored.
+/// <paramref name="Ordinal"/> is its place among all segments of its conversation, so two segments of an owner with
+/// consecutive ordinals have no other speaker's segment between them.
+/// </summary>
+public sealed record CardSegment(
+    string Kind, Guid OwnerId, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, long SegmentId, int Ordinal,
+    DateTime StartedAt, DateTime EndedAt, string Text);
+
 /// <summary>
 /// Voice groups, person voiceprints and voice matches (docs/specs/people.md, Layer 2). A vector never leaves Postgres
 /// through this store except to be compared: results carry ids, counts and similarities.
 /// </summary>
 public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
 {
+    public const string GroupKind = "group";
+    public const string MatchKind = "match";
+
+    /// <summary>
+    /// The owners cards may be made from, after the filters <c>@kind</c>, <c>@id</c> (each may be null) and <c>@visibleAt</c>
+    /// (null counts skipped ones too): every group, and every pending match whose person still exists.
+    /// </summary>
+    private const string CardOwners =
+        """
+        owners as (
+            select 'group'::text as kind, g.id as id, cast(null as uuid) as person_id, cast(null as text) as person_name,
+                   cast(null as real) as similarity
+            from voice_groups g
+            where (cast(@kind as text) is null or @kind = 'group') and (cast(@id as uuid) is null or g.id = @id)
+              and (cast(@visibleAt as timestamptz) is null or g.skipped_until is null or g.skipped_until <= @visibleAt)
+            union all
+            select 'match'::text, m.id, m.person_id, p.name, m.similarity
+            from voice_matches m join people p on p.id = m.person_id
+            where m.status = 'pending' and (cast(@kind as text) is null or @kind = 'match') and (cast(@id as uuid) is null or m.id = @id)
+              and (cast(@visibleAt as timestamptz) is null or m.skipped_until is null or m.skipped_until <= @visibleAt))
+        """;
+
     /// <summary>
     /// SQL, after <see cref="SpeakerLabel.Joins"/>, for a segment aliased <c>s</c> that grouping may take: not the wearer's and
     /// with no person.
@@ -174,6 +208,38 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
+        var result = await ConfirmGroupAsync(connection, transaction, groupId, personId, now, ct);
+        if (result == VoiceConfirm.Ok)
+        {
+            await transaction.CommitAsync(ct);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// As <see cref="ConfirmGroupAsync(Guid, Guid, DateTimeOffset, CancellationToken)"/> for a person found or created by
+    /// <paramref name="name"/> (any case), in one transaction: a group that is gone leaves no new person behind.
+    /// </summary>
+    public async Task<(VoiceConfirm Result, Guid? PersonId)> NameGroupAsync(Guid groupId, string name, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var personId = await PeopleStore.FindOrCreateAsync(connection, transaction, name, now, ct);
+        var result = await ConfirmGroupAsync(connection, transaction, groupId, personId, now, ct);
+        if (result != VoiceConfirm.Ok)
+        {
+            return (result, null);
+        }
+
+        await transaction.CommitAsync(ct);
+        return (result, personId);
+    }
+
+    /// <summary>As <see cref="ConfirmGroupAsync(Guid, Guid, DateTimeOffset, CancellationToken)"/>, in the caller's transaction, which the caller commits.</summary>
+    public static async Task<VoiceConfirm> ConfirmGroupAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid groupId, Guid personId, DateTimeOffset now, CancellationToken ct)
+    {
         var group = await connection.QuerySingleOrDefaultAsync<VectorRow>(new CommandDefinition(
             "select centroid as Centroid, count as Count, model as Model from voice_groups where id = @groupId for update",
             new { groupId }, transaction, cancellationToken: ct));
@@ -190,7 +256,6 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 "delete from voice_groups where id = @groupId", new { groupId }, transaction, cancellationToken: ct));
-            await transaction.CommitAsync(ct);
         }
 
         return result;
@@ -302,6 +367,90 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
                 "update person_voiceprints set centroid = @centroid, count = count + @count, updated_at = now() where person_id = @intoId",
                 new { intoId, centroid = VoiceStore.Encode(centroid), count = from.Count }, transaction, cancellationToken: ct));
         }
+    }
+
+    /// <summary>
+    /// What cards are made from: the owners not skipped at <paramref name="now"/> and their segments (still unnamed, with speech
+    /// audio stored), in segment order. Only the ones with at least one segment are of use.
+    /// </summary>
+    public Task<(IReadOnlyList<CardOwner> Owners, IReadOnlyList<CardSegment> Segments)> CardInputAsync(DateTimeOffset now, CancellationToken ct) =>
+        ReadCardInputAsync(null, null, now, ct);
+
+    /// <summary>As <see cref="CardInputAsync(DateTimeOffset, CancellationToken)"/> for one owner, skipped or not.</summary>
+    public Task<(IReadOnlyList<CardOwner> Owners, IReadOnlyList<CardSegment> Segments)> CardInputAsync(string kind, Guid id, CancellationToken ct) =>
+        ReadCardInputAsync(kind, id, null, ct);
+
+    private async Task<(IReadOnlyList<CardOwner>, IReadOnlyList<CardSegment>)> ReadCardInputAsync(
+        string? kind, Guid? id, DateTimeOffset? visibleAt, CancellationToken ct)
+    {
+        var args = new { kind, id, visibleAt };
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var owners = await connection.QueryAsync<CardOwner>(new CommandDefinition(
+            $"""
+            with {CardOwners}
+            select kind as Kind, id as Id, person_id as PersonId, person_name as PersonName, similarity as Similarity from owners
+            """,
+            args, cancellationToken: ct));
+        var segments = await connection.QueryAsync<CardSegment>(new CommandDefinition(
+            $"""
+            with {CardOwners},
+            members as (
+                select o.kind, o.id as owner, f.segment_id as segment_id
+                from owners o join segment_fingerprints f on o.kind = 'group' and f.group_id = o.id
+                union all
+                select o.kind, o.id, sid
+                from owners o join voice_matches m on o.kind = 'match' and m.id = o.id
+                cross join lateral unnest(m.segment_ids) as sid),
+            ranked as (
+                select s.id, row_number() over (partition by s.conversation_id order by s.started_at, s.id) as ord
+                from segments s
+                where s.conversation_id in (select s2.conversation_id from segments s2 join members mm on mm.segment_id = s2.id))
+            select m.kind as Kind, m.owner as OwnerId, s.conversation_id as ConversationId,
+                   coalesce(c.title, c.ai_title) as ConversationTitle, c.started_at as ConversationStartedAt, s.id as SegmentId,
+                   r.ord::int as Ordinal, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text
+            from members m
+            join segments s on s.id = m.segment_id {SpeakerLabel.Joins}
+            join ranked r on r.id = s.id
+            join conversations c on c.id = s.conversation_id
+            where {Eligible}
+              and exists (select 1 from speech_audio a where a.batch_id = s.batch_id and a.started_at < s.ended_at and a.ended_at > s.started_at)
+            order by s.conversation_id, r.ord
+            """,
+            args, cancellationToken: ct));
+        return (owners.ToList(), segments.ToList());
+    }
+
+    /// <summary>The person a pending match asks about, or null when the match is not pending.</summary>
+    public async Task<Guid?> MatchPersonAsync(Guid matchId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+            "select person_id from voice_matches where id = @matchId and status = 'pending'", new { matchId }, cancellationToken: ct));
+    }
+
+    /// <summary>Hides a group, or a pending match, until <paramref name="until"/>. False when there is none.</summary>
+    public async Task<bool> SkipAsync(string kind, Guid id, DateTimeOffset until, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            kind == GroupKind
+                ? "update voice_groups set skipped_until = @until where id = @id"
+                : "update voice_matches set skipped_until = @until where id = @id and status = 'pending'",
+            new { id, until }, cancellationToken: ct)) == 1;
+    }
+
+    /// <summary>
+    /// "Not a person" for a group, "not them" for a pending match. A group is deleted (its fingerprints stay marked grouped, so
+    /// they are never grouped again); a match is kept as rejected, so it never comes back. False when there is none.
+    /// </summary>
+    public async Task<bool> RejectCardAsync(string kind, Guid id, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            kind == GroupKind
+                ? "delete from voice_groups where id = @id"
+                : "update voice_matches set status = 'rejected', decided_at = @now where id = @id and status = 'pending'",
+            new { id, now }, cancellationToken: ct)) == 1;
     }
 
     /// <summary>Every group, every person voiceprint and every pending match, in one transaction. Segment links stay: they are statements.</summary>

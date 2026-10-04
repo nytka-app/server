@@ -323,7 +323,8 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
 - **Accept** names the voice as `POST /api/v1/people` does, so every segment of that `speaker_id`
   shows the name, in every conversation; a suggestion for a batch's label names that batch's segments
   only, as `PATCH /api/v1/segments/{id}` with `personId` does. A name equal to a person's (any case)
-  uses that person. Other pending names for the same voice go.
+  uses that person. Other pending names for the same voice go. A suggestion for a [voice group](#voice-grouping)
+  names the group as a card does, and goes with the group.
 - **Reject** keeps the name on record, so it is never suggested again for that voice.
 
 A failed run is retried like [memories](#memories): three attempts, then an hour later, three rounds
@@ -345,7 +346,23 @@ order. One that reaches `Nytka__People__VoiceThreshold` against the voiceprint o
 before joins that person's pending voice match for its conversation. Otherwise it joins the group whose
 centroid it reaches the threshold with, which moves as a running mean, or starts a group. No model is
 called and no label changes: only you naming a group, or accepting a match, links segments to a person
-(the routes that do come with the cards). A group's fingerprints are the ones still held.
+(the cards below). A group's fingerprints are the ones still held.
+
+**Cards.** `GET /api/v1/people/cards` offers what is waiting for your answer: a group with no person ("Who
+is this?") and a pending match ("Is this Olena?"). A card has one clean stretch of that voice: consecutive
+segments in one conversation with no other segment between them, together at least 5 s, with their speech
+audio still stored. Its clip is the stretch's first 10 s at most, cut from the stored frames by capture
+time (`GET /api/v1/people/cards/{kind}/{id}/clip`, `audio/ogg`), and its `lines` are the segments that
+start inside it. A set holds at most 4 cards and at most 2 from one conversation, the newest conversation
+first, one card per group or match (its newest stretch); it is empty while voice matching is off. Answer
+with `POST /api/v1/people/cards/{kind}/{id}`: `{ personId }` or `{ name }` names a group (a person of that
+name, any case, else a new one) as [Confirming](#voice-grouping) says, and confirms a match (the person
+must be the one it asks about); `{ skip: true }` hides the card for 7 days; `{ reject: true }` says "not a
+person" (the group is deleted and its fingerprints are never grouped again) or "not them" (the match is
+kept as rejected and never offered again). A group suggestion from [People](#people) accepts the same way.
+A card whose audio has been deleted is not offered and its clip is `404`; a pending match then waits for
+an answer without a clip, and confirming it links its segments but adds no sample. The routes need an
+admin token and carry no vector.
 
 **Confirming.** Naming a group or accepting a match links its segments to the person, blends the
 fingerprints still held into that person's voiceprint (weighted by count, as for yours) and deletes the
@@ -979,10 +996,13 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task] }`; `404` for an unknown person |
-| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker` or `label` (`groupId` is for voice groups, not made yet); see [People](#people) |
-| POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice or the batch's segments; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
+| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker`, `label` or `group` (`groupId` is the voice group); see [People](#people) |
+| POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named); `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
 | GET | `/api/v1/people/voice-eval?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for [voice grouping](#voice-grouping): `{ segmentId, conversationId, durationMs, groupId, personId, matchPersonId, similarity }`, no text and no vector; `limit` defaults to 500, caps at 5000 |
+| GET | `/api/v1/people/cards` | admin | `{ items }`, at most 4 and at most 2 per conversation, newest first, empty while voice matching is off: `{ kind, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }`; `kind` is `group` ("Who is this?", no person or similarity) or `match` ("Is this Olena?"); see [Voice grouping](#voice-grouping) |
+| GET | `/api/v1/people/cards/{kind}/{id}/clip` | admin | The card's clip, `audio/ogg`, at most 10 s; `404` for an unknown card or when its audio is gone |
+| POST | `/api/v1/people/cards/{kind}/{id}` | admin | Body `{ personId }`, `{ name }`, `{ skip: true }` or `{ reject: true }`, exactly one; naming or confirming answers `200` with the person, skipping (7 days) or rejecting `204`; `404` for an unknown card or person; `400` for a match named with someone else |
 | DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |
 | GET | `/api/v1/people/{id}/facts?before=&limit=` | read | `{ items, nextBefore }`, newest first; a fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }`, `source` is `ai` or `user`, `basis` is `said`, `about`, `mentioned` or null; `limit` defaults to 50, caps at 200; `404` for an unknown person |
 | POST | `/api/v1/people/{id}/facts` | admin | Body `{ text }`, 1 to 300 characters; `201` with the fact (`source: user`); `409` when a live fact of the person holds it; `404` for an unknown person |
