@@ -386,6 +386,29 @@ people apart in Ukrainian and Russian is unmeasured until you run it, so the swi
 No voiceprint, group centroid or fingerprint appears in an API answer, export, webhook, MCP answer or
 log; `pg_dump` holds them.
 
+## Review
+
+One list for everything waiting on your answer, so the app needs one screen. `GET /api/v1/review`
+merges three queues, newest first:
+
+- **`name`:** a pending [name suggestion](#people), shown with the line that carries the name.
+- **`voice`:** a pending [voice match](#voice-grouping) ("Is this Olena?"), shown with its first three
+  lines and its similarity, with no clip. None while voice matching is off.
+- **`label`:** a segment of the last 14 days that Nytka scored within 0.05 of `Nytka__Voice__UserThreshold`
+  and you have not marked, at most 20; the proposal is Nytka's verdict (`isUser`) and the similarity.
+
+An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
+confidence, similarity, isUser } }`; fields that do not belong to the kind are `null`. `id` is a
+segment id for a label and a guid for the others. `limit` is 1 to 200, default 50.
+
+`POST /api/v1/review/{kind}/{id}/accept` and `/reject` answer an item. A `name` or `voice` item is
+answered as its own routes do (`200` with the person on accept, `204` on reject; `409` when a
+suggestion is no longer pending), so nothing changes a label until you accept. For a `label`, accept
+stores Nytka's verdict as your mark (`PATCH /api/v1/segments/{id}` with `isUser`) and reject stores the
+opposite, both `204`; either way the segment leaves the list, and a mark of yours may teach your
+voiceprint as that route does. `404` for an unknown kind or item. The list needs a read token, the
+answers an admin one; no answer carries a vector.
+
 ## The language model
 
 A language model gives each closed conversation a title, a summary and tasks, and it feeds
@@ -1003,6 +1026,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people/cards` | admin | `{ items }`, at most 4 and at most 2 per conversation, newest first, empty while voice matching is off: `{ kind, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }`; `kind` is `group` ("Who is this?", no person or similarity) or `match` ("Is this Olena?"); see [Voice grouping](#voice-grouping) |
 | GET | `/api/v1/people/cards/{kind}/{id}/clip` | admin | The card's clip, `audio/ogg`, at most 10 s; `404` for an unknown card or when its audio is gone |
 | POST | `/api/v1/people/cards/{kind}/{id}` | admin | Body `{ personId }`, `{ name }`, `{ skip: true }` or `{ reject: true }`, exactly one; naming or confirming answers `200` with the person, skipping (7 days) or rejecting `204`; `404` for an unknown card or person; `400` for a match named with someone else |
+| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser } }`; `kind` is `name`, `voice` (none while voice matching is off) or `label`; see [Review](#review) |
+| POST | `/api/v1/review/{kind}/{id}/accept` | admin | `name` and `voice`: `200` with the person; `label`: stores Nytka's verdict as your mark, `204`; `404` for an unknown kind or item; `409` for a name that is no longer pending |
+| POST | `/api/v1/review/{kind}/{id}/reject` | admin | `204`; a `label` stores the opposite of Nytka's verdict as your mark; `404` and `409` as accept |
 | DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |
 | GET | `/api/v1/people/{id}/facts?before=&limit=` | read | `{ items, nextBefore }`, newest first; a fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }`, `source` is `ai` or `user`, `basis` is `said`, `about`, `mentioned` or null; `limit` defaults to 50, caps at 200; `404` for an unknown person |
 | POST | `/api/v1/people/{id}/facts` | admin | Body `{ text }`, 1 to 300 characters; `201` with the fact (`source: user`); `409` when a live fact of the person holds it; `404` for an unknown person |

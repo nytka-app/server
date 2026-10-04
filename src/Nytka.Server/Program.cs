@@ -111,6 +111,7 @@ api.MapDigests();
 api.MapExport();
 api.MapVoice();
 api.MapVoiceGroups();
+api.MapReview();
 app.MapNytkaMcp();
 
 app.Run();
