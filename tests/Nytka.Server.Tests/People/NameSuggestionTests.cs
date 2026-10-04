@@ -334,8 +334,9 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         var group = Guid.NewGuid();
         await Db.ExecuteAsync(
             """
+            insert into voice_groups (id, model, centroid, count, created_at, updated_at) values (@group, 'm', '\x00', 1, now(), now());
             insert into name_suggestions (id, conversation_id, target, group_id, name, evidence_segment_id, confidence, created_at)
-            values (@group, @id, 'group', gen_random_uuid(), 'Anna', @voice, 0.9, now())
+            values (@group, @id, 'group', @group, 'Anna', @voice, 0.9, now())
             """,
             new { group, id, voice });
         var response = await Client.PostAsync($"/api/v1/people/suggestions/{group}/accept", null);

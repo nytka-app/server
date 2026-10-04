@@ -34,6 +34,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<ExportStore>();
         services.AddSingleton<VoiceStore>();
         services.AddSingleton<NameSuggestionStore>();
+        services.AddSingleton<VoiceGroupStore>();
 
         return services;
     }

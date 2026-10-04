@@ -317,7 +317,7 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Forgets the voice: the voiceprint, every fingerprint, and every similarity and verdict, in one transaction. The
-    /// wearer's own marks stay; the provider's labels apply again.
+    /// wearer's own marks stay; the provider's labels apply again. Every voice group goes too (docs/specs/people.md).
     /// </summary>
     public async Task ForgetAsync(CancellationToken ct)
     {
@@ -327,6 +327,7 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
             """
             delete from voice_profile;
             delete from segment_fingerprints;
+            delete from voice_groups;
             update segments set voice_checked = false, voice_similarity = null, voice_is_user = null where voice_checked;
             """,
             transaction: transaction, cancellationToken: ct));
@@ -360,7 +361,7 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
     public static float[] Mean(IReadOnlyList<float[]> vectors) => Blend([], 0, vectors);
 
     /// <summary>The unit-length mean of <paramref name="mean"/> weighted by <paramref name="count"/> and <paramref name="vectors"/>.</summary>
-    private static float[] Blend(float[] mean, int count, IReadOnlyList<float[]> vectors)
+    internal static float[] Blend(float[] mean, int count, IReadOnlyList<float[]> vectors)
     {
         var sum = new double[vectors[0].Length];
         if (mean.Length == sum.Length)
@@ -381,6 +382,10 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
 
         return Normalize(sum);
     }
+
+    /// <summary>The unit-length mean of two vectors weighted by their counts.</summary>
+    internal static float[] Blend(float[] mean, int count, float[] other, int otherCount) =>
+        Normalize(mean.Select((v, i) => ((double)v * count) + ((double)other[i] * otherCount)).ToArray());
 
     private static float[] Normalize(double[] sum)
     {

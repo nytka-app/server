@@ -188,7 +188,8 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Deletes speech audio of finished batches that ended before <paramref name="before"/>, and the fingerprints of every
-    /// batch that loses audio: a fingerprint never outlives its audio. Similarities and verdicts stay on the segments.
+    /// batch that loses audio: a fingerprint never outlives its audio, nor does a voice group left without one. Similarities and
+    /// verdicts stay on the segments.
     /// </summary>
     public async Task<int> DeleteSpeechAudioEndedBeforeAsync(DateTimeOffset before, CancellationToken ct)
     {
@@ -201,7 +202,14 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
                   and batch_id in (select id from transcription_batches where status = 'done')
                 returning batch_id),
             fingerprints as (
-                delete from segment_fingerprints where batch_id in (select batch_id from audio))
+                delete from segment_fingerprints where batch_id in (select batch_id from audio)
+                returning segment_id, group_id),
+            groups as (
+                delete from voice_groups g
+                where g.id in (select group_id from fingerprints where group_id is not null)
+                  and not exists (
+                      select 1 from segment_fingerprints f
+                      where f.group_id = g.id and f.segment_id not in (select segment_id from fingerprints)))
             select count(*)::int from audio
             """,
             new { before }, cancellationToken: ct));
