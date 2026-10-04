@@ -24,3 +24,6 @@ CLAUDE.local.md
 
 # The Ukrainian dictionary is fetched by scripts/fetch-uk-dictionary.sh, never committed.
 /tsearch_data/
+
+# TitaNet-small is fetched by scripts/fetch-speaker-model.sh (and the Docker build), never committed.
+/src/Nytka.Audio/Models/nemo_en_titanet_small.onnx

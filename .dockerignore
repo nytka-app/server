@@ -4,3 +4,5 @@
 .env
 docs/
 tests/
+# The build fetches and checks its own copy (scripts/fetch-speaker-model.sh).
+src/Nytka.Audio/Models/nemo_en_titanet_small.onnx

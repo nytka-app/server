@@ -21,6 +21,8 @@ dotnet test                              # needs a Docker daemon for Nytka.Serve
 dotnet test tests/Nytka.Audio.Tests      # no Docker
 scripts/fetch-uk-dictionary.sh --accept-licence   # fills tsearch_data/; the dictionary tests skip without it
 NYTKA_REQUIRE_DICTIONARY=1 dotnet test   # as CI runs it: a missing dictionary fails instead of skipping
+scripts/fetch-speaker-model.sh           # TitaNet-small into src/Nytka.Audio/Models/ (before the build); voice tests skip without it
+NYTKA_REQUIRE_SPEAKER_MODEL=1 dotnet test   # as CI runs it: a missing speaker model fails instead of skipping
 dotnet run --project src/Nytka.Server    # needs ConnectionStrings__Postgres, Nytka__AdminToken, Nytka__Stt__Url
 dotnet run --project src/Nytka.Replay -- --server http://127.0.0.1:8080 --wav speech.wav
 docker compose up -d --build

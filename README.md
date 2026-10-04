@@ -876,7 +876,9 @@ dotnet test
 
 The search tests that need the Ukrainian dictionary skip themselves until you run
 `scripts/fetch-uk-dictionary.sh --accept-licence`; CI runs it first and sets
-`NYTKA_REQUIRE_DICTIONARY=1`, so a missing file fails the build.
+`NYTKA_REQUIRE_DICTIONARY=1`, so a missing file fails the build. The same goes for the voice tests and
+`scripts/fetch-speaker-model.sh`, which puts TitaNet-small in `src/Nytka.Audio/Models/` (run it before
+`dotnet build`, which copies the model beside the binaries), and `NYTKA_REQUIRE_SPEAKER_MODEL=1`.
 
 ## License
 
