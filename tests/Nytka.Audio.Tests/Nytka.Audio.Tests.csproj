@@ -16,6 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Reference values from kaldi-native-fbank and sherpa-onnx; tests/fixtures/README.md says how they were made. -->
+    <None Include="..\fixtures\titanet-chirp.json" Link="Voice\titanet-chirp.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Nytka.Audio\Nytka.Audio.csproj" />
   </ItemGroup>
 
