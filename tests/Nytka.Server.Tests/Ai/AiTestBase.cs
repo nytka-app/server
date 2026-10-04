@@ -40,6 +40,9 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
         return Task.CompletedTask;
     }
 
+    /// <summary>Fact extraction would likewise count as one more request; only the tests of facts turn it on.</summary>
+    protected virtual bool PeopleFacts => false;
+
     /// <summary>Replaces the host, for a test that needs settings the default one lacks.</summary>
     protected void StartServer(Action<IDictionary<string, string?>>? configure = null)
     {
@@ -51,6 +54,11 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
             if (!NameSuggestions)
             {
                 settings["Nytka:People:SuggestNames"] = "false";
+            }
+
+            if (!PeopleFacts)
+            {
+                settings["Nytka:People:Facts"] = "false";
             }
 
             configure?.Invoke(settings);

@@ -12,6 +12,8 @@ namespace Nytka.Server.Tests.People;
 [Collection(PostgresCollection.Name)]
 public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
 {
+    protected override bool PeopleFacts => true;
+
     private HttpClient Client => Server.CreateAuthorizedClient();
 
     private Task<long> Jobs() => Db.ScalarAsync<long>("select count(*) from jobs");
