@@ -103,6 +103,7 @@ api.MapPeople();
 api.MapImport();
 api.MapBookmarks();
 api.MapDigests();
+api.MapExport();
 app.MapNytkaMcp();
 
 app.Run();

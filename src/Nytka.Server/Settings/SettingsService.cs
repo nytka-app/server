@@ -34,6 +34,8 @@ public sealed class SettingsService(
     /// <summary>Keys whose value only the environment supplies, though they are not secret: the server refuses to start without them.</summary>
     private static readonly HashSet<string> EnvironmentOnly = new(["stt.url"], StringComparer.Ordinal);
 
+    public static bool IsEnvironmentOnly(string key) => EnvironmentOnly.Contains(key);
+
     private readonly Lazy<IReadOnlyList<SettingDefinition>> _definitions = new(() => Catalog(groups));
 
     private readonly SemaphoreSlim _writes = new(1, 1);

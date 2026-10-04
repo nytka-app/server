@@ -362,6 +362,31 @@ The answer counts what happened:
   is not an Omi export or a time has no offset, `413` above 100 MB. Needs an admin token. Nothing from
   the file reaches a log or an error.
 
+## Export
+
+`GET /api/v1/export` (admin token) streams everything Nytka holds for you as NDJSON, one JSON object
+per line, so a long history never sits in memory on either side:
+
+```bash
+curl -sS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" "$NYTKA_URL/api/v1/export" -o nytka-export.ndjson
+```
+
+Every line has a `type` first. The order is `header` (`format: "nytka-export"`, `version`, `generatedAt`,
+`serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `voices`, `createdAt`),
+`conversation` (`id`, `source`, `externalId`, `startedAt`, `endedAt`, `status`, `title`, `titleEdited`,
+`summary`, and `segments`: `{ startedAt, endedAt, text, speaker, speakerId, isUser, person }`), `task`
+(`id`, `conversationId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`), `memory` (`id`, `text`,
+`source`, `conversationId`, `createdAt`, `updatedAt`), `bookmark` (`id`, `at`, `note`, `source`,
+`createdAt`), `digest` (`id`, `localDate`, `headline`, `overview`, `highlights`, `decisions`,
+`openQuestions`, `createdAt`) and `end` (`counts` per type). A file without its `end` line was cut
+short. Times are UTC, ids are stable between exports.
+
+- Deleted tasks and memories are not in it. API keys, tokens, webhooks and their secrets, and every
+  URL setting are left out; the `setting` lines are the non-secret settings in effect.
+- No audio: fetch `GET /api/v1/conversations/{id}/audio` for the conversations you want.
+- Nytka cannot import its own export yet. Every field is specified in
+  [docs/specs/export.md](docs/specs/export.md).
+
 ## Bookmarks
 
 A bookmark marks a moment: a single tap on the pendant, or a tap in the app, sends `POST
@@ -723,6 +748,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/digests?before=&limit=` | read | `{ items, nextBefore }`, newest date first; a digest is `{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }`; `before` is a date (`yyyy-MM-dd`) and keeps earlier ones, `nextBefore` is the last date of the page, set only when an earlier digest exists; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
+| GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](#export) |
 | GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
