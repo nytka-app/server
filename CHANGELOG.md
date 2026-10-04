@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/nytka-app/server/compare/v0.9.0...v0.10.0) (2026-10-04)
+
+
+### Features
+
+* cleaner tasks and memories from the prompts, and get_conversation paging ([#53](https://github.com/nytka-app/server/issues/53)) ([5364cbe](https://github.com/nytka-app/server/commit/5364cbe44f639f6dd0831b0bd7e7d5804a0d7645))
+
 ## [0.9.0](https://github.com/nytka-app/server/compare/v0.8.1...v0.9.0) (2026-09-30)
 
 
