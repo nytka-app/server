@@ -65,6 +65,18 @@ public class ConversationPromptTests
     }
 
     [Fact]
+    public void Media_and_read_aloud_text_give_no_tasks_and_a_task_is_a_concrete_action()
+    {
+        var system = ConversationPrompt.System("auto");
+
+        Assert.Contains("playing nearby", system, StringComparison.Ordinal);
+        Assert.Contains("is not the wearer's life", system, StringComparison.Ordinal);
+        Assert.Contains("A task is a concrete action", system, StringComparison.Ordinal);
+        Assert.Contains("explicitly agreed", system, StringComparison.Ordinal);
+        Assert.Contains("can be wrong", system, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_brief_conversation_gets_a_one_sentence_summary_and_no_tasks()
     {
         var system = ConversationPrompt.System("auto", brief: true);

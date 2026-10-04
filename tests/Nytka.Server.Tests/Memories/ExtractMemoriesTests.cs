@@ -208,6 +208,16 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     }
 
     [Fact]
+    public void The_prompt_rules_out_media_read_aloud_text_and_facts_inferred_from_tone()
+    {
+        var system = ExtractMemoriesHandler.SystemMessage("auto");
+
+        Assert.Contains("playing nearby", system);
+        Assert.Contains("take no facts from it", system);
+        Assert.Contains("inferred from your tone, manner of speech or vocabulary", system);
+    }
+
+    [Fact]
     public async Task A_conversation_too_short_for_memories_is_marked_done_without_a_call()
     {
         await Seed(1, "I live in Kyiv.", conversation: Other);
