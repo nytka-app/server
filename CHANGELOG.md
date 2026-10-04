@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/nytka-app/server/compare/v0.11.0...v0.12.0) (2026-10-04)
+
+
+### Features
+
+* label segments by the wearer's voice in transcribe (voice S-V) ([#63](https://github.com/nytka-app/server/issues/63)) ([bc821f8](https://github.com/nytka-app/server/commit/bc821f8e007d72d295043c964bb8834dfaee6fa0))
+* voice routes, segment marks and isUserSource (voice S-A) ([#65](https://github.com/nytka-app/server/issues/65)) ([41cd727](https://github.com/nytka-app/server/commit/41cd727cd10fbbaa9ca466e9d79d156c8f91338c))
+
 ## [0.11.0](https://github.com/nytka-app/server/compare/v0.10.0...v0.11.0) (2026-10-04)
 
 
