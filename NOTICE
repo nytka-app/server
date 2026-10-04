@@ -5,6 +5,15 @@ This product includes the Silero VAD model (src/Nytka.Audio/Models/silero_vad.on
 https://github.com/snakers4/silero-vad, under the MIT License:
 Copyright (c) 2020-present Silero Team.
 
+This product includes TitaNet-small (src/Nytka.Audio/Models/nemo_en_titanet_small.onnx, fetched by
+scripts/fetch-speaker-model.sh and the Docker build), a speaker embedding model by NVIDIA,
+https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small. Its licence is that of the
+NeMo Toolkit, Apache-2.0 (https://github.com/NVIDIA/NeMo); NVIDIA publishes the larger TitaNet-L under
+CC-BY-4.0 (https://huggingface.co/nvidia/speakerverification_en_titanet_large).
+Copyright (c) NVIDIA Corporation.
+The ONNX export is by sherpa-onnx, https://github.com/k2-fsa/sherpa-onnx (release
+speaker-recongition-models), under the Apache License 2.0: Copyright (c) Xiaomi Corporation.
+
 Ukrainian search is opt-in and off by default. Nytka does not include or redistribute the Ukrainian Hunspell
 dictionary: scripts/fetch-uk-dictionary.sh --accept-licence downloads it from
 https://github.com/brown-uk/dict_uk (release v6.8.6, Andriy Rysin, Vasyl Starko and others) onto the machine

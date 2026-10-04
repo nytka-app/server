@@ -14,6 +14,11 @@ COPY src/Nytka.Server/*.csproj  src/Nytka.Server/
 # The RID has to be fixed at restore time too, or publish re-resolves and downloads again.
 RUN dotnet restore src/Nytka.Server/Nytka.Server.csproj -a "${TARGETARCH}"
 
+# TitaNet-small for voice matching, checked by SHA-256. Before the sources, so a code change does not
+# download it again; publish copies it to /app/Models.
+COPY scripts/fetch-speaker-model.sh scripts/
+RUN scripts/fetch-speaker-model.sh
+
 COPY src/ src/
 # Migrations are embedded into Nytka.Storage from here.
 COPY db/ db/

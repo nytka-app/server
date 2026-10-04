@@ -8,6 +8,8 @@
   <ItemGroup>
     <!-- Copied next to every assembly that references Nytka.Audio, tests and the server included. -->
     <None Update="Models\silero_vad.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Fetched, not committed (scripts/fetch-speaker-model.sh); without it the build copies nothing. -->
+    <None Update="Models\nemo_en_titanet_small.onnx" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
