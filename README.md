@@ -619,9 +619,10 @@ server, and lists the stretches that did not. The design and its limits are in
 [docs/specs/coverage.md](docs/specs/coverage.md).
 
 **Before the week.** Install the Nytka app on the phone you wear it with, update the server to a
-release with this endpoint, and in the app turn on developer mode and "Send diagnostics to my
-server". Without it the report has no time axis and says so. Keep the phone's battery
-optimisation off for the app, so Android does not stop capture.
+release with this endpoint. In the app, tap the version under Device → About seven times to turn
+on developer mode, then switch on Device → Developer mode → **Send diagnostics to my server**; the
+app's token must be an `admin` token. Without the samples the report has no time axis and says so.
+Keep the phone's battery optimisation off for the app, so Android does not stop capture.
 
 **During the week.** Wear the pendant as usual; mute with the button or the schedule as usual
 (muted time is not a loss). Chunk rows are kept 7 days, so save the report every evening:
