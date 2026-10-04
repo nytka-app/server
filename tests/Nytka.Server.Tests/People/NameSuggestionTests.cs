@@ -318,7 +318,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
-    public async Task Accepting_twice_or_a_group_suggestion_is_a_conflict_and_an_unknown_one_is_not_found()
+    public async Task Accepting_or_rejecting_twice_is_a_conflict_and_an_unknown_suggestion_is_not_found()
     {
         var (id, _, voice, _, _) = await Talked();
         Llm.Respond = _ => Answer(("Voice A", "Olena", voice, 0.9));
@@ -330,19 +330,6 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(HttpStatusCode.Conflict, (await Client.PostAsync($"/api/v1/people/suggestions/{suggestion}/reject", null)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Client.PostAsync($"/api/v1/people/suggestions/{Guid.NewGuid()}/accept", null)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Client.PostAsync($"/api/v1/people/suggestions/{Guid.NewGuid()}/reject", null)).StatusCode);
-
-        var group = Guid.NewGuid();
-        await Db.ExecuteAsync(
-            """
-            insert into voice_groups (id, model, centroid, count, created_at, updated_at) values (@group, 'm', '\x00', 1, now(), now());
-            insert into name_suggestions (id, conversation_id, target, group_id, name, evidence_segment_id, confidence, created_at)
-            values (@group, @id, 'group', @group, 'Anna', @voice, 0.9, now())
-            """,
-            new { group, id, voice });
-        var response = await Client.PostAsync($"/api/v1/people/suggestions/{group}/accept", null);
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal("pending", await Db.ScalarAsync<string>("select status from name_suggestions where id = @group", new { group }));
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from people where name = 'Anna'"));
     }
 
     [Fact]

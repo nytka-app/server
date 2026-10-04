@@ -60,10 +60,14 @@ public static class AudioEndpoints
     }
 
     /// <summary>The frames of every stored piece, in order. A piece that does not parse and a frame over the Opus maximum are skipped, never reported.</summary>
-    private static async Task<List<Frame>> FramesAsync(Guid id, BatchStore batches, CancellationToken ct)
+    private static async Task<List<Frame>> FramesAsync(Guid id, BatchStore batches, CancellationToken ct) =>
+        ReadFrames(await batches.SpeechAudioBodiesAsync(id, ct));
+
+    /// <summary>The frames of stored pieces in order, skipping what <see cref="FramesAsync"/> skips.</summary>
+    public static List<Frame> ReadFrames(IEnumerable<byte[]> bodies)
     {
         var frames = new List<Frame>();
-        foreach (var body in await batches.SpeechAudioBodiesAsync(id, ct))
+        foreach (var body in bodies)
         {
             try
             {

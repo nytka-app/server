@@ -30,7 +30,7 @@ public sealed record PersonName(Guid Id, string Name);
 
 public sealed record NameRun(string Status, long? ThroughSegmentId, int Failures);
 
-public enum SuggestionDecision { Ok, NotFound, NotPending, Unsupported }
+public enum SuggestionDecision { Ok, NotFound, NotPending }
 
 /// <summary>Name suggestions (<c>name_suggestions</c>) and the record of the runs that make them (<c>people_runs</c>, kind <c>names</c>).</summary>
 public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
@@ -51,6 +51,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         public string Target { get; init; } = "";
 
         public string? SpeakerId { get; init; }
+
+        public Guid? GroupId { get; init; }
 
         public long[] SegmentIds { get; init; } = [];
 
@@ -235,9 +237,9 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Accepts a pending suggestion in one transaction: a <c>speaker</c> names the voice as <c>POST /people</c> does, a
-    /// <c>label</c> sets <c>segments.person_id</c> on its segments that have no person yet. A <c>group</c> is
-    /// <see cref="SuggestionDecision.Unsupported"/> until voice groups exist. Other pending suggestions for the same
-    /// target are dropped. The result carries the person it named.
+    /// <c>label</c> sets <c>segments.person_id</c> on its segments that have no person yet, a <c>group</c> is named as its card
+    /// is (<see cref="VoiceGroupStore.ConfirmGroupAsync(NpgsqlConnection, NpgsqlTransaction, Guid, Guid, DateTimeOffset, CancellationToken)"/>).
+    /// Other pending suggestions for the same target are dropped. The result carries the person it named.
     /// </summary>
     public async Task<(SuggestionDecision Result, Guid? PersonId)> AcceptAsync(Guid id, DateTimeOffset now, CancellationToken ct)
     {
@@ -245,8 +247,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var row = await connection.QuerySingleOrDefaultAsync<Pending>(new CommandDefinition(
             """
-            select id as Id, target as Target, speaker_id as SpeakerId, segment_ids as SegmentIds, name as Name,
-                   status as Status
+            select id as Id, target as Target, speaker_id as SpeakerId, group_id as GroupId, segment_ids as SegmentIds,
+                   name as Name, status as Status
             from name_suggestions where id = @id for update
             """,
             new { id }, transaction, cancellationToken: ct));
@@ -272,9 +274,21 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
                 "update segments set person_id = @person where id = any(@segmentIds) and person_id is null",
                 new { person, segmentIds = row.SegmentIds }, transaction, cancellationToken: ct));
         }
+        else if (row.GroupId is { } groupId)
+        {
+            person = await PeopleStore.FindOrCreateAsync(connection, transaction, row.Name, now, ct);
+            if (await VoiceGroupStore.ConfirmGroupAsync(connection, transaction, groupId, person, now, ct) != VoiceConfirm.Ok)
+            {
+                return (SuggestionDecision.NotFound, null);
+            }
+
+            // The group goes with every suggestion for it, this one included (cascade), so there is no status to set.
+            await transaction.CommitAsync(ct);
+            return (SuggestionDecision.Ok, person);
+        }
         else
         {
-            return (SuggestionDecision.Unsupported, null);
+            return (SuggestionDecision.NotFound, null);
         }
 
         await connection.ExecuteAsync(new CommandDefinition(
