@@ -44,6 +44,22 @@ public static class SpeakerLabel
 
 public sealed record PersonRow(Guid Id, string Name, string? Note, DateTime CreatedAt, string[] Voices, int Segments);
 
+/// <summary>A conversation the person spoke in.</summary>
+public sealed record PersonConversation(Guid Id, string? Title, DateTime StartedAt);
+
+/// <summary>
+/// The person page: <see cref="LastSeenAt"/> is the newest segment of the person by the label rule (the wearer's own
+/// segments never count). <see cref="VoiceprintSamples"/> is how many segments the voiceprint was made from, 0 with
+/// none; the vector itself never leaves the database.
+/// </summary>
+public sealed record PersonView(
+    Guid Id, string Name, string? Note, DateTime CreatedAt, DateTime? LastSeenAt, string[] Voices, bool HasVoiceprint,
+    int VoiceprintSamples, IReadOnlyList<PersonConversation> Conversations, IReadOnlyList<PersonFactRow> Facts,
+    IReadOnlyList<TaskRow> OpenTasks);
+
+/// <summary>A person for a list: when they were last heard and how many live facts they have.</summary>
+public sealed record PersonSummary(Guid Id, string Name, DateTime? LastSeenAt, int Facts);
+
 public enum PersonWrite { Ok, NotFound, NameTaken }
 
 public enum SegmentLink { Ok, NoSegment, NoPerson }
@@ -51,13 +67,23 @@ public enum SegmentLink { Ok, NoSegment, NoPerson }
 public sealed record UnnamedVoice(string SpeakerId, string? Label, int Segments, DateTime LastSeenAt);
 
 /// <summary>People: names given to the voices a transcription provider tells apart (<c>people</c>, <c>person_voices</c>).</summary>
-public sealed class PeopleStore(NpgsqlDataSource dataSource)
+public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore facts, TaskStore tasks)
 {
+    public const int ViewConversations = 10;
+    public const int ViewFacts = 50;
+    public const int ViewTasks = 100;
+
     private sealed record Row(Guid Id, string Name, string? Note, DateTime CreatedAt);
 
     private sealed record Voice(Guid PersonId, string SpeakerId);
 
     private sealed record Count(Guid PersonId, int Segments);
+
+    private sealed record Header(Guid Id, string Name, string? Note, DateTime CreatedAt, DateTime? LastSeenAt, int? VoiceprintSamples);
+
+    private sealed record Seen(Guid PersonId, DateTime LastSeenAt);
+
+    private sealed record FactCount(Guid PersonId, int Facts);
 
     public async Task<IReadOnlyList<PersonRow>> ListAsync(CancellationToken ct)
     {
@@ -83,6 +109,63 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource)
 
     public async Task<PersonRow?> GetAsync(Guid id, CancellationToken ct) =>
         (await ListAsync(ct)).FirstOrDefault(p => p.Id == id);
+
+    /// <summary>Everyone, most recently heard first (never heard last), then by name.</summary>
+    public async Task<IReadOnlyList<PersonSummary>> SummariesAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var people = (await connection.QueryAsync<Row>(new CommandDefinition(
+            "select id as Id, name as Name, note as Note, created_at as CreatedAt from people", cancellationToken: ct))).ToList();
+        var seen = (await connection.QueryAsync<Seen>(new CommandDefinition(
+            $"""
+            select {SpeakerLabel.PersonId} as PersonId, max(s.started_at) as LastSeenAt
+            from segments s {SpeakerLabel.Joins}
+            where {SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is not null
+            group by {SpeakerLabel.PersonId}
+            """, cancellationToken: ct))).ToDictionary(r => r.PersonId, r => r.LastSeenAt);
+        var counts = (await connection.QueryAsync<FactCount>(new CommandDefinition(
+            "select person_id as PersonId, count(*)::int as Facts from person_facts where deleted_at is null group by person_id",
+            cancellationToken: ct))).ToDictionary(r => r.PersonId, r => r.Facts);
+        return people
+            .Select(p => new PersonSummary(p.Id, p.Name, seen.TryGetValue(p.Id, out var at) ? at : null, counts.GetValueOrDefault(p.Id)))
+            .OrderByDescending(p => p.LastSeenAt.HasValue).ThenByDescending(p => p.LastSeenAt)
+            .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>The person page, or null when there is no such person.</summary>
+    public async Task<PersonView?> ViewAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var header = await connection.QuerySingleOrDefaultAsync<Header>(new CommandDefinition(
+            $"""
+            select pe.id as Id, pe.name as Name, pe.note as Note, pe.created_at as CreatedAt,
+                   (select max(s.started_at) from segments s {SpeakerLabel.Joins}
+                    where {SpeakerLabel.PersonId} = pe.id and {SpeakerLabel.IsUser} is not true) as LastSeenAt,
+                   (select vp.count from person_voiceprints vp where vp.person_id = pe.id) as VoiceprintSamples
+            from people pe where pe.id = @id
+            """, new { id }, cancellationToken: ct));
+        if (header is null)
+        {
+            return null;
+        }
+
+        var voices = (await connection.QueryAsync<string>(new CommandDefinition(
+            "select speaker_id from person_voices where person_id = @id order by speaker_id", new { id }, cancellationToken: ct))).ToArray();
+        var conversations = (await connection.QueryAsync<PersonConversation>(new CommandDefinition(
+            $"""
+            select c.id as Id, coalesce(c.title, c.ai_title) as Title, c.started_at as StartedAt
+            from conversations c
+            where exists (select 1 from segments s {SpeakerLabel.Joins}
+                          where s.conversation_id = c.id and {SpeakerLabel.PersonId} = @id and {SpeakerLabel.IsUser} is not true)
+            order by c.started_at desc, c.id desc
+            limit @limit
+            """, new { id, limit = ViewConversations }, cancellationToken: ct))).ToList();
+        var page = await facts.ListAsync(id, null, ViewFacts, ct);
+        return new PersonView(
+            header.Id, header.Name, header.Note, header.CreatedAt, header.LastSeenAt, voices, header.VoiceprintSamples is not null,
+            header.VoiceprintSamples ?? 0, conversations, page?.Items ?? [], await tasks.OpenForPersonAsync(id, ViewTasks, ct));
+    }
 
     /// <summary>
     /// Gives <paramref name="speakerId"/> the name: the person with that name (any case) when there is one, else a new person.

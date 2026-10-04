@@ -4,16 +4,16 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
-/// <summary>One search hit: a conversation (best of its title, summary and segments) or a memory.</summary>
+/// <summary>One search hit: a conversation (best of its title, summary and segments), a memory or a person (best of the name and the facts).</summary>
 /// <remarks>
 /// <see cref="Snippet"/> is plain text with <see cref="SearchStore.MarkStart"/> and <see cref="SearchStore.MarkEnd"/> around matches.
-/// <see cref="SegmentId"/> is the conversation's best-matching segment, null for a memory and when only the title or summary matched.
+/// <see cref="SegmentId"/> is the conversation's best-matching segment, null for a memory or a person and when only the title or summary matched.
 /// </remarks>
 public sealed record SearchHitRow(
     string Kind, Guid Id, float Score, string? Title, string Snippet, DateTime At, Guid? ConversationId, long? SegmentId = null);
 
 /// <summary>
-/// Full-text search over transcripts, titles, summaries and memories (config <c>nytka</c>). Postgres loads the
+/// Full-text search over transcripts, titles, summaries, memories, people and their facts (config <c>nytka</c>). Postgres loads the
 /// Ukrainian dictionary (about 65 MB) once per session, so everything that uses the configuration, the indexer and
 /// the queries, goes through one small pool of its own; ingest never touches it.
 /// </summary>
@@ -23,6 +23,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     public const string UkHunspell = "uk_hunspell";
     public const string Conversation = "conversation";
     public const string Memory = "memory";
+    public const string Person = "person";
 
     /// <summary>Two sessions are enough (the indexer and a query); each holds its own copy of the dictionary.</summary>
     public const int MaxPoolSize = 2;
@@ -60,29 +61,29 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
 
     /// <summary>
     /// Every term must match (or any one, with <c>anyTerm</c>), each as a prefix. Ranked by <c>ts_rank_cd</c> with its default weights (title 1.0,
-    /// summary and memory 0.4, transcript 0.1), best score first. Fetches <paramref name="limit"/> rows from
+    /// summary, memory and fact 0.4, transcript 0.1; a person's name is a title), best score first. Fetches <paramref name="limit"/> rows from
     /// <paramref name="offset"/>; the caller asks for one extra to learn whether a page follows. Rows the indexer has
     /// not reached yet are not found. <paramref name="from"/> and <paramref name="to"/> (exclusive) keep conversations
-    /// that started, and memories that were last changed, inside that range.
+    /// that started, and memories that were last changed, inside that range; it does not apply to people.
     /// </summary>
     public async Task<IReadOnlyList<SearchHitRow>> SearchAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct,
-        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false)
+        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false, bool people = false)
     {
         try
         {
-            return await QueryAsync(terms, conversations, memories, limit, offset, from, to, anyTerm, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ConfigFileError)
         {
             // The dictionary files went away while the server ran: fall back to simple, then ask again.
             await SetupDictionaryAsync(Simple, ct);
-            return await QueryAsync(terms, conversations, memories, limit, offset, from, to, anyTerm, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, ct);
         }
     }
 
     private async Task<IReadOnlyList<SearchHitRow>> QueryAsync(
-        IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset,
+        IReadOnlyList<string> terms, bool conversations, bool memories, bool people, int limit, int offset,
         DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, CancellationToken ct)
     {
         var parameters = new DynamicParameters();
@@ -93,6 +94,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         }));
         parameters.Add("conversations", conversations);
         parameters.Add("memories", memories);
+        parameters.Add("people", people);
         parameters.Add("limit", limit);
         parameters.Add("offset", offset);
         parameters.Add("from", from);
@@ -114,6 +116,17 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 where @conversations and s.search @@ q.query
                 order by s.conversation_id, ts_rank_cd(s.search, q.query) desc, s.id
             ),
+            person_name as (
+                select p.id, ts_rank_cd(p.search, q.query) as score
+                from people p cross join q
+                where @people and p.search @@ q.query
+            ),
+            best_fact as (
+                select distinct on (f.person_id) f.person_id as id, f.text, f.updated_at, ts_rank_cd(f.search, q.query) as score
+                from person_facts f cross join q
+                where @people and f.deleted_at is null and f.search @@ q.query
+                order by f.person_id, ts_rank_cd(f.search, q.query) desc, f.id
+            ),
             hits as (
                 select 'conversation' as kind, c.id, greatest(ts.score, bs.score) as score,
                        coalesce(c.title, c.ai_title) as title,
@@ -131,6 +144,15 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 where @memories and m.deleted_at is null and m.search @@ q.query
                   and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
                   and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
+                union all
+                select 'person', p.id, greatest(pn.score, bf.score), p.name,
+                       case when bf.id is null or coalesce(pn.score, 0) >= bf.score then p.name else bf.text end,
+                       case when bf.id is null or coalesce(pn.score, 0) >= bf.score then p.created_at else bf.updated_at end,
+                       null::uuid, null::bigint
+                from people p
+                left join person_name pn on pn.id = p.id
+                left join best_fact bf on bf.id = p.id
+                where pn.id is not null or bf.id is not null
             ),
             page as (
                 select * from hits order by score desc, at desc, id limit @limit offset @offset
@@ -160,7 +182,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
 
     /// <summary>
     /// Makes the vectors of up to <paramref name="batch"/> rows of each kind that have none (new rows, and rows whose
-    /// title, summary or text changed), lowest id first. Returns how many it made; zero means it is caught up. This
+    /// title, summary, name or text changed), lowest id first. Returns how many it made; zero means it is caught up. This
     /// is the only code that evaluates <c>nytka</c> on write, so a missing dictionary fails it and never an insert.
     /// </summary>
     public async Task<int> IndexPendingAsync(int batch, CancellationToken ct)
@@ -182,6 +204,14 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
             """
             update memories set search = setweight(to_tsvector('nytka', text), 'B')
             where id in (select id from memories where search is null order by id limit @batch for update skip locked)
+            """,
+            """
+            update people set search = setweight(to_tsvector('nytka', name), 'A')
+            where id in (select id from people where search is null order by id limit @batch for update skip locked)
+            """,
+            """
+            update person_facts set search = setweight(to_tsvector('nytka', text), 'B')
+            where id in (select id from person_facts where search is null order by id limit @batch for update skip locked)
             """,
         })
         {

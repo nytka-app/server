@@ -56,6 +56,16 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
+    /// <summary>The person's open tasks, newest first, deleted ones left out.</summary>
+    public async Task<IReadOnlyList<TaskRow>> OpenForPersonAsync(Guid personId, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
+            Select + "\nwhere t.person_id = @personId and t.done = false and t.deleted_at is null order by t.id desc limit @limit",
+            new { personId, limit }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     /// <summary>A conversation's tasks in creation order, deleted ones left out.</summary>
     public async Task<IReadOnlyList<TaskRow>> ForConversationAsync(Guid conversationId, CancellationToken ct)
     {

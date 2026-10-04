@@ -36,7 +36,7 @@ public static class SearchEndpoints
     {
         var take = Math.Clamp(limit, 1, SearchQuery.MaxLimit);
         var skip = Math.Clamp(offset, 0, SearchQuery.MaxOffset);
-        var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct);
+        var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct, people: query.People);
         var items = rows.Take(take)
             .Select(r => new Hit(r.Kind, r.Id, r.Score, r.Title, Markup(r.Snippet), r.At, r.ConversationId))
             .ToList();

@@ -222,7 +222,7 @@ needs none.
 | Scope | May call |
 |---|---|
 | `admin` | Everything. The app needs it, and refuses a `read` token. |
-| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories and search. |
+| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories, people and search. |
 
 A valid token with too little scope gets `403`. A missing, unknown or revoked one gets `401`. A new
 endpoint is closed to `read` until it is marked.
@@ -459,6 +459,17 @@ person wearing the pendant.
   Conversations summarized before memory extraction shipped (release 0.4.0) have no memories;
   regenerate a summary to feed one in.
 
+## Person page
+
+`GET /api/v1/people/{id}` is one place for what Nytka holds about a person: `name`, your `note`, when
+they were last heard (`lastSeenAt`, the newest segment the [label rule](#transcription-endpoints) gives
+them; your own lines never count, and it is null when they were never heard), their `voices`, the newest
+10 conversations they spoke in (`{ id, title, startedAt }`), their newest 50 [facts](#facts-about-people)
+and the open tasks owed to them (newest 100). `hasVoiceprint` and `voiceprintSamples` say whether a
+[voiceprint](#voice-grouping) exists and how many segments it was made from; the voiceprint itself
+never leaves the database. `404` for an unknown person. The `list_people` and `get_person` [MCP tools](#mcp)
+read the same page, without the two voiceprint fields.
+
 ## Facts about people
 
 A fact is a short, lasting thing about one person you named: where they live, their work, family,
@@ -481,7 +492,7 @@ about you stay memories.
   and no basis; adding text you deleted earlier brings it back, and text a live fact holds is a `409`.
 - `Nytka__People__Facts=false`, or no model, means no extraction. The facts you have stay.
 - A failed extraction is tried three times, then again an hour later, three rounds at most.
-- Facts are not in Ask, the daily digest or search yet, and no webhook payload carries a transcript.
+- Facts are in [search](#search) but not in Ask or the daily digest, and no webhook payload carries a transcript.
 
 ## Import from Omi
 
@@ -576,20 +587,23 @@ needs the language model.
 
 ## Search
 
-`GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries and memories
-in Ukrainian and English together.
+`GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries, memories, and
+people by name or by [fact](#facts-about-people), in Ukrainian and English together.
 
 - Every word of `q` (the first eight, made of letters and digits) must match, exactly or as a prefix,
   in the same place: one transcript segment, the title and summary together, or one memory. `зустріч`
   finds "зустрічами". English words are stemmed, so `running` finds "run", and common ones such as
   "the" are ignored.
-- A hit is one conversation or one memory, best first: a title counts more than a summary or a memory,
-  and those count more than the transcript. Deleted items never show. The `snippet` is HTML-escaped,
+- A hit is one conversation, one memory or one person, best first: a title or a person's name counts
+  more than a summary, a memory or a fact, and those count more than the transcript. A person's hit
+  has `kind: person`, their id, the name as `title`, and a `snippet` of the name or of the best
+  matching fact. Deleted items and deleted facts never show. The `snippet` is HTML-escaped,
   and the matches sit in `<mark>` tags, the only tag it holds.
-- `kinds` picks `conversation`, `memory` or both. `limit` defaults to 20 and caps at 50; `offset` runs
+- `kinds` picks any of `conversation`, `memory` and `person` (all three by default). `limit` defaults to 20 and caps at 50; `offset` runs
   from 0 to 500 (a larger one counts as 500), and `nextOffset` is null on the last page and when the
   next page would start past 500. No word, or an unknown kind, is a `400`.
-- New text is searchable a few seconds after it is written. After the upgrade that adds search, or when
+- New text, a new or renamed person and a new or edited fact are searchable a few seconds after they are
+  written. After the upgrade that adds search or people in search, or when
   you change the dictionary, the server indexes the archive in the background, so older rows appear
   over the next minutes; a row not yet indexed is simply not found.
 
@@ -800,7 +814,9 @@ through OAuth cannot connect.
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `list_digests` | `before?` (a date, `yyyy-MM-dd`), `limit?` (1 to 100, default 30) | `{ items: [{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }], nextBefore }` |
-| `search` | `query`, `kinds?` (a list of `conversation` and `memory`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
+| `search` | `query`, `kinds?` (a list of `conversation`, `memory` and `person`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
+| `list_people` | none | `{ items: [{ id, name, lastSeenAt, facts }] }`, most recently heard first, then by name; `facts` counts live facts |
+| `get_person` | `id` (UUID) or `name` (any case), one of the two | the [person page](#person-page) as `GET /api/v1/people/{id}` returns it, without `hasVoiceprint` and `voiceprintSamples`; a tool error ("No such person.") for an unknown one |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
 Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
@@ -949,7 +965,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
 | GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](#export) |
-| GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }` |
+| GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name) |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
 | PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `description`, `active`; DELETE answers `204` and drops its deliveries |
@@ -962,6 +978,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
+| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task] }`; `404` for an unknown person |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker` or `label` (`groupId` is for voice groups, not made yet); see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice or the batch's segments; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
