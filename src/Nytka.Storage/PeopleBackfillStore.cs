@@ -10,10 +10,11 @@ public sealed class PeopleBackfillStore
 {
     /// <summary>
     /// Conversations with a finished summary and speech that have no <c>done</c> row in <c>people_runs</c> for
-    /// <paramref name="runKind"/> (<c>names</c> or <c>facts</c>), newest first. Pending and failed runs count as not completed.
+    /// <paramref name="runKind"/> (<c>names</c> or <c>facts</c>), newest first. Pending and failed runs count as not completed,
+    /// and so does a done run made under a validator version below <paramref name="minValidator"/>.
     /// </summary>
     public async Task<IReadOnlyList<BackfillCandidate>> EligibleAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, string runKind, CancellationToken ct) =>
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string runKind, int minValidator, CancellationToken ct) =>
         (await connection.QueryAsync<BackfillCandidate>(new CommandDefinition(
             """
             select c.id as Id, c.started_at as StartedAt
@@ -21,10 +22,11 @@ public sealed class PeopleBackfillStore
             where c.ai_status = 'done'
               and exists (select 1 from segments s where s.conversation_id = c.id)
               and not exists (
-                  select 1 from people_runs r where r.conversation_id = c.id and r.kind = @runKind and r.status = 'done')
+                  select 1 from people_runs r where r.conversation_id = c.id and r.kind = @runKind and r.status = 'done'
+                    and r.validator >= @minValidator)
             order by c.started_at desc, c.id desc
             """,
-            new { runKind }, transaction, cancellationToken: ct))).ToList();
+            new { runKind, minValidator }, transaction, cancellationToken: ct))).ToList();
 
     /// <summary>The dedupe keys of the waiting or running jobs of a kind.</summary>
     public async Task<IReadOnlySet<string>> QueuedKeysAsync(

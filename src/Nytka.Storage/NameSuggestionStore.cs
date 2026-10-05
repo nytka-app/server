@@ -6,10 +6,11 @@ namespace Nytka.Storage;
 /// <summary>
 /// A segment as name suggestion reads it. <see cref="Label"/> is what the label rule gives it; <see cref="Unnamed"/> is
 /// true when it is not the wearer's and has no person, and then <see cref="SpeakerId"/>, <see cref="BatchId"/> and
-/// <see cref="Speaker"/> (the provider's own label) decide its target.
+/// <see cref="Speaker"/> (the provider's own label) decide its target. <see cref="IsWearer"/> is the label rule's verdict.
 /// </summary>
 public sealed record NameSegment(
-    long Id, DateTime StartedAt, long BatchId, string? Speaker, string? SpeakerId, string? Label, string Text, bool Unnamed);
+    long Id, DateTime StartedAt, long BatchId, string? Speaker, string? SpeakerId, string? Label, string Text, bool Unnamed,
+    bool IsWearer);
 
 public sealed record NameInput(string? Title, DateTime StartedAt, IReadOnlyList<NameSegment> Segments)
 {
@@ -28,7 +29,10 @@ public sealed record NameEvidence(long SegmentId, DateTime StartedAt, string Tex
 
 public sealed record PersonName(Guid Id, string Name);
 
-public sealed record NameRun(string Status, long? ThroughSegmentId, int Failures);
+public sealed record NameRun(string Status, long? ThroughSegmentId, int Failures, int Validator);
+
+/// <summary>A pending suggestion as revalidation reads it, with the text of its evidence segment.</summary>
+public sealed record PendingName(Guid Id, Guid ConversationId, string Name, string EvidenceText);
 
 public enum SuggestionDecision { Ok, NotFound, NotPending }
 
@@ -38,6 +42,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     public const string Names = "names";
 
     private sealed record Header(string? Title, DateTime StartedAt);
+
+    private sealed record RunMark(long? Through, int Validator);
 
     private sealed record Row(
         Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, Guid? PersonId, float Confidence,
@@ -77,7 +83,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             $"""
             select s.id as Id, s.started_at as StartedAt, s.batch_id as BatchId, s.speaker as Speaker, s.speaker_id as SpeakerId,
                    {SpeakerLabel.Column} as Label, s.text as Text,
-                   ({SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is null) as Unnamed
+                   ({SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is null) as Unnamed,
+                   coalesce({SpeakerLabel.IsUser}, false) as IsWearer
             from segments s {SpeakerLabel.Joins}
             where s.conversation_id = @conversationId
             order by s.started_at, s.id
@@ -106,7 +113,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<NameRun>(new CommandDefinition(
             """
-            select status as Status, through_segment_id as ThroughSegmentId, failures as Failures
+            select status as Status, through_segment_id as ThroughSegmentId, failures as Failures, validator as Validator
             from people_runs where conversation_id = @conversationId and kind = 'names'
             """,
             new { conversationId }, cancellationToken: ct));
@@ -114,24 +121,25 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Records that a run is queued, inside the transaction of the summary that asked for it, and returns whether the caller
-    /// should queue the job. False when the last run already read every segment. The failure count starts again only
-    /// when segments arrived after that run.
+    /// should queue the job. False when the last run already read every segment under the current <paramref name="validator"/>
+    /// version. The failure count starts again only when segments arrived after that run.
     /// </summary>
     public async Task<bool> MarkPendingAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, DateTimeOffset now, CancellationToken ct)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, int validator, DateTimeOffset now,
+        CancellationToken ct)
     {
         var last = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
             "select max(id) from segments where conversation_id = @conversationId",
             new { conversationId }, transaction, cancellationToken: ct));
-        var through = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
-            "select through_segment_id from people_runs where conversation_id = @conversationId and kind = 'names' for update",
+        var run = await connection.QuerySingleOrDefaultAsync<RunMark>(new CommandDefinition(
+            "select through_segment_id as Through, validator as Validator from people_runs where conversation_id = @conversationId and kind = 'names' for update",
             new { conversationId }, transaction, cancellationToken: ct));
-        if (last is null || through >= last)
+        if (last is null || run is { Through: { } through } && through >= last && run.Validator >= validator)
         {
             return false;
         }
 
-        var fresh = through is not null;
+        var fresh = run?.Through is not null;
         await connection.ExecuteAsync(new CommandDefinition(
             """
             insert into people_runs (conversation_id, kind, status, updated_at) values (@conversationId, 'names', 'pending', @now)
@@ -154,10 +162,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Stores the candidates and records the run as done in one transaction; a name already stored for the target, a rejected
-    /// one included, is skipped. Returns the number inserted, or null when the conversation is gone.
+    /// one included, is skipped. The run records the <paramref name="validator"/> version it applied. Returns the number
+    /// inserted, or null when the conversation is gone.
     /// </summary>
     public async Task<int?> ApplyAsync(
-        Guid conversationId, IReadOnlyList<NameCandidate> candidates, long? through, DateTimeOffset now, CancellationToken ct)
+        Guid conversationId, IReadOnlyList<NameCandidate> candidates, long? through, int validator, DateTimeOffset now,
+        CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -189,12 +199,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into people_runs (conversation_id, kind, status, through_segment_id, updated_at)
-            values (@conversationId, 'names', 'done', @through, @now)
+            insert into people_runs (conversation_id, kind, status, through_segment_id, validator, updated_at)
+            values (@conversationId, 'names', 'done', @through, @validator, @now)
             on conflict (conversation_id, kind) do update
-            set status = 'done', through_segment_id = @through, failures = 0, message = null, updated_at = @now
+            set status = 'done', through_segment_id = @through, validator = @validator, failures = 0, message = null, updated_at = @now
             """,
-            new { conversationId, through, now }, transaction, cancellationToken: ct));
+            new { conversationId, through, validator, now }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
         return inserted;
     }
@@ -304,6 +314,27 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
         return (SuggestionDecision.Ok, person);
+    }
+
+    /// <summary>The pending suggestions the model made (not a voice group's), with the text of their evidence segments.</summary>
+    public async Task<IReadOnlyList<PendingName>> PendingFromModelAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<PendingName>(new CommandDefinition(
+            """
+            select n.id as Id, n.conversation_id as ConversationId, n.name as Name, e.text as EvidenceText
+            from name_suggestions n join segments e on e.id = n.evidence_segment_id
+            where n.status = 'pending' and n.target in ('speaker', 'label')
+            order by n.created_at, n.id
+            """, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>Deletes the pending suggestions among <paramref name="ids"/>, so a new run may offer the name again. Returns how many went.</summary>
+    public async Task<int> DeletePendingAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            "delete from name_suggestions where status = 'pending' and id = any(@ids)", new { ids = ids.ToArray() }, cancellationToken: ct));
     }
 
     public async Task<SuggestionDecision> RejectAsync(Guid id, DateTimeOffset now, CancellationToken ct)

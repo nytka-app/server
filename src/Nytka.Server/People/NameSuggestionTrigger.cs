@@ -31,7 +31,7 @@ public sealed class NameSuggestionTrigger(
         }
 
         var now = time.GetUtcNow();
-        if (!await suggestions.MarkPendingAsync(connection, transaction, nytkaEvent.SubjectId, now, ct))
+        if (!await suggestions.MarkPendingAsync(connection, transaction, nytkaEvent.SubjectId, NameValidator.Version, now, ct))
         {
             return;
         }

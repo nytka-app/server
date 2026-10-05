@@ -328,6 +328,14 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
   uses that person. Other pending names for the same voice go. A suggestion for a [voice group](#voice-grouping)
   names the group as a card does, and goes with the group.
 - **Reject** keeps the name on record, so it is never suggested again for that voice.
+- **Checks.** The server does not trust the model: a name is one to three capitalized words of letters
+  (40 characters at most), none a pronoun, answer, interjection, evaluation or generic address
+  ("Ти", "Нет", "Прикольно", "Девочка", "girl") unless the line writes it with a capital in mid-sentence,
+  and it must occur in the line shown as evidence (any case ending: Діма, Діму, Дімі). The wearer's own
+  name (`Nytka__Memories__UserName`, or a name the wearer gave for themselves, "I'm X", "я X") is never
+  suggested, nor is a voice that is also the wearer.
+- **Limits.** English audio playing nearby is a voice like any other: a name spoken by media can be
+  suggested, and you reject it.
 
 A failed run is retried like [memories](#memories): three attempts, then an hour later, three rounds
 at most. The text of the conversation goes to your language model endpoint, as for a summary, together
@@ -344,6 +352,11 @@ conversation whose job already waits counts in `skipped`, and `remaining` counts
 so call it again until it is `0`. The jobs run in the usual AI lane, behind live summaries, one at a time. With
 `Nytka__People__SuggestNames=false` no name job is queued, and without a language model the answer is `409`. Facts the backfill
 finds publish `person.fact.created` like any other, so a webhook subscribed to it gets one per backfilled fact.
+
+To read old conversations again after the name checks changed, call `POST /api/v1/people/suggestions/revalidate` (admin; deletes
+the pending suggestions that fail the checks and answers `{ checked, removed, kept }`), then `POST /api/v1/people/backfill?force=true`
+until `remaining` is `0`: `force` also queues conversations whose name run was made under older checks. A plain backfill queues
+only conversations with no finished run. Accepted and rejected suggestions stay.
 
 ## Tags
 
@@ -1085,8 +1098,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags }`; `404` for an unknown person |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker`, `label` or `group` (`groupId` is the voice group); see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named); `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
+| POST | `/api/v1/people/suggestions/revalidate` | admin | Deletes pending name suggestions the model made that fail the [name checks](#people); `200` with `{ checked, removed, kept }` |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
-| POST | `/api/v1/people/backfill?limit=` | admin | Queues [name suggestions and facts](#backfill) for summarized conversations they have not read; `limit` 1 to 1000 (default 200), `400` outside it; `200` with `{ queued: { suggestNames, facts }, skipped, remaining }`; `409` without a language model |
+| POST | `/api/v1/people/backfill?limit=&force=` | admin | Queues [name suggestions and facts](#backfill) for summarized conversations they have not read (`force=true`: also names runs made under older checks); `limit` 1 to 1000 (default 200), `400` outside it; `200` with `{ queued: { suggestNames, facts }, skipped, remaining }`; `409` without a language model |
 | GET | `/api/v1/people/voice-eval?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for [voice grouping](#voice-grouping): `{ segmentId, conversationId, durationMs, groupId, personId, matchPersonId, similarity }`, no text and no vector; `limit` defaults to 500, caps at 5000 |
 | GET | `/api/v1/people/cards` | admin | `{ items }`, at most 4 and at most 2 per conversation, newest first, empty while voice matching is off: `{ kind, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }`; `kind` is `group` ("Who is this?", no person or similarity) or `match` ("Is this Olena?"); see [Voice grouping](#voice-grouping) |
 | GET | `/api/v1/people/cards/{kind}/{id}/clip` | admin | The card's clip, `audio/ogg`, at most 10 s; `404` for an unknown card or when its audio is gone |

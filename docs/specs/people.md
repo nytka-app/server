@@ -98,11 +98,51 @@ wearer's name. Schema:
 ```
 
 **Apply.** A suggestion is dropped when its voice is not one of the letters sent, its segment is
-not in the conversation, its name is empty, longer than 80 characters or equal (ignoring case) to
-`memories.userName`, or its confidence is below 0.5. A name equal to a person's name carries that
-person's id. At most one suggestion per target per run, the highest confidence. Rows are unique on
-(target, lower(name)), rejected ones included, so a rejected name is never offered again for that
-voice.
+not in the conversation, its confidence is below 0.5, or it fails the validation below. A name
+equal to a person's name carries that person's id. At most one suggestion per target per run, the
+highest confidence. Rows are unique on (target, lower(name)), rejected ones included, so a rejected
+name is never offered again for that voice.
+
+**Validation.** The model is not trusted; `NameValidator` checks every answer, and its `Version`
+(1) is stored in `people_runs.validator`.
+
+1. *Shape.* One to three words, each of letters (hyphen and apostrophe allowed, at least two
+   letters), each starting with a capital, at most 40 characters in all, no digit and no `?`, `!`
+   or other punctuation.
+2. *Stoplist.* None of the words may be on a case-insensitive list of Ukrainian, Russian and
+   English pronouns, particles, answers, interjections, greetings, evaluations, commands and generic
+   address terms (`Ти`, `Нет`, `Прикольно`, `По ходу`, `Девочка`, `Малыш`, `girl`). A real name that is
+   also such a word passes only when the evidence line writes it with a capital in the middle of a
+   sentence.
+3. *Evidence carries the name.* Every word of the name must occur in the evidence segment's text,
+   compared without case and with any case ending: the same first three letters (`Діма`, `Діму`,
+   `Дімі`; a word of under three letters must match the other word, or begin it and differ by at
+   most two letters). The evidence is the model's segment when it says the name; otherwise the
+   nearest of the three segments before and after it that does (the earlier on a tie). When none
+   does, the suggestion is dropped.
+4. *The wearer.* A name is dropped when a word of it has the stem of a word of `memories.userName`,
+   or of a name the wearer's own segments gave for themselves (`I am X`, `I'm X`, `my name is X`,
+   `я X`, `я — X`, `мене звати X`, `меня зовут X`; the wearer is the label rule's verdict, so
+   `is_user` and `voice_is_user` count). With no `memories.userName` the self-introduction rule
+   still applies. A voice whose `speaker_id` also has a wearer segment is never suggested for.
+
+The prompt says the same: a name is what a person is called, never a pronoun, an answer, a term of
+endearment or a generic noun, and the segment id is that of the line that says the name.
+
+**Re-running.** `people_runs.validator` records the version a run applied (0 for runs made before the
+rules). `POST /api/v1/people/backfill?force=true` also queues `suggest-names` for conversations whose
+names run is below the current version; without `force` it queues only conversations with no
+finished run. `POST /api/v1/people/suggestions/revalidate` (admin) applies the rules to the pending
+suggestions the model made (`speaker` and `label` targets; a voice group's name is a person's) and
+deletes the failing ones, returning `{ checked, removed, kept }`. `status` cannot say "rejected by
+the system" and a rejected name is never offered again, so a failing row is deleted and a new run
+may offer the name with a better evidence line. Nothing deletes by itself, and no migration touches
+existing rows. To clean an old install: revalidate, then backfill with `force=true` until `remaining`
+is `0`.
+
+**Limits.** English audio playing nearby (a video, a call) is a voice like any other, and Nytka
+cannot tell it from a person, so a name spoken by media can be suggested; reject it. A low
+confidence is not a signal for it and is not used as one.
 
 ## Layer 2: voice grouping (opt-in)
 
@@ -239,7 +279,8 @@ Migrations `0014` to `0020`, one per plan task (the plan allocates the numbers):
 - `people` gains `note text null` (at most 500) and a `search tsvector`.
 - `segments` gains `person_id uuid null references people on delete set null`.
 - `people_runs`: `conversation_id` and `kind` (`names`, `facts`) as key, `status`,
-  `through_segment_id`, `failures`, `message`, `updated_at`; cascades with the conversation.
+  `through_segment_id`, `failures`, `message`, `updated_at`, `validator` (migration `0022`: the name rules
+  version of the run); cascades with the conversation.
 - `name_suggestions`: `id`, `conversation_id` (cascade), `target` (`speaker`, `group`, `label`),
   `speaker_id`, `group_id` (cascade, constraint added with `voice_groups`), `segment_ids bigint[]`, `name`, `person_id` (cascade),
   `evidence_segment_id` (cascade), `confidence real`, `status` (`pending`, `accepted`, `rejected`),
@@ -291,6 +332,8 @@ UNKNOWN until the evaluation runs.
 | `PATCH`, `DELETE /api/v1/people/{id}/facts/{factId}` | admin | edit (200) or tombstone (204) |
 | `GET /api/v1/people/suggestions?status=pending` | read | `{ items: [{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }] }` |
 | `POST /api/v1/people/suggestions/{id}/accept`, `/reject` | admin | 200 with the person, or 204; 409 when no longer pending |
+| `POST /api/v1/people/suggestions/revalidate` | admin | deletes pending model suggestions that fail the name rules; `{ checked, removed, kept }` |
+| `POST /api/v1/people/backfill?limit&force` | admin | `force=true` also re-queues names runs made under an older rule version |
 | `GET /api/v1/people/cards` | admin | `{ items: [{ kind: group\|match, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }] }`, at most 4; empty when voice matching is off |
 | `GET /api/v1/people/cards/{kind}/{id}/clip` | admin | `audio/ogg`, at most 10 s; 404 when the audio is gone |
 | `POST /api/v1/people/cards/{kind}/{id}` `{ personId } \| { name } \| { skip: true } \| { reject: true }` | admin | name or confirm (200 with the person), skip for 7 days or reject (204) |

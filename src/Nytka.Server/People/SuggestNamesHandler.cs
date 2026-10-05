@@ -24,7 +24,6 @@ public sealed class SuggestNamesHandler(
     ILogger<SuggestNamesHandler> logger)
     : IJobHandler
 {
-    public const int MaxNameLength = 80;
     public const double MinConfidence = 0.5;
 
     public string Kind => JobKinds.SuggestNames;
@@ -50,12 +49,14 @@ public sealed class SuggestNamesHandler(
         try
         {
             var run = await suggestions.GetRunAsync(conversationId, ct);
-            var covered = input.LastSegmentId is null || run?.ThroughSegmentId >= input.LastSegmentId;
+            var covered = input.LastSegmentId is null
+                || run is { Validator: >= NameValidator.Version } && run.ThroughSegmentId >= input.LastSegmentId;
             var brief = EnrichConversationHandler.IsBrief(input.Segments.Sum(s => EnrichConversationHandler.Words(s.Text)));
             var targets = NameTargets.Find(input.Segments);
             var candidates = covered || brief || targets.Count == 0 ? [] : await AskAsync(input, targets, ct);
             await suggestions.ApplyAsync(
-                conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, time.GetUtcNow(), ct);
+                conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, NameValidator.Version, time.GetUtcNow(),
+                ct);
             return JobOutcome.Done;
         }
         catch (Exception error) when (job.Attempts >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
@@ -89,36 +90,44 @@ public sealed class SuggestNamesHandler(
             pooled.AddRange(answer.Suggestions);
         }
 
-        return Apply(pooled, targets, input.Segments.Select(s => s.Id).ToHashSet(), userName, people);
+        return Apply(pooled, targets, input.Segments, userName, people);
     }
 
     /// <summary>
-    /// The drop rules: a suggestion goes when its voice is not one sent, its segment is not in the conversation, its name is
-    /// empty, over 80 characters or the wearer's, or its confidence is under 0.5. Of the rest, one per target, the most
-    /// confident. A name equal to a person's carries that person.
+    /// The drop rules: a suggestion goes when its voice is not one sent or is the wearer's, its segment is not in the
+    /// conversation, its name fails <see cref="NameValidator.IsName"/>, is the wearer's (<paramref name="userName"/> or a
+    /// name the wearer gave for themselves), occurs in no segment near the one named (<see cref="NameValidator.Evidence"/>),
+    /// or its confidence is under 0.5. Of the rest, one per target, the most confident, with the segment that says the name
+    /// as evidence. A name equal to a person's carries that person.
     /// </summary>
     public static IReadOnlyList<NameCandidate> Apply(
-        IEnumerable<Suggestion> pooled, IReadOnlyList<NameTarget> targets, IReadOnlySet<long> segmentIds, string? userName,
+        IEnumerable<Suggestion> pooled, IReadOnlyList<NameTarget> targets, IReadOnlyList<NameSegment> segments, string? userName,
         IReadOnlyDictionary<string, PersonName> people)
     {
+        var wearer = NameValidator.WearerNames(segments);
+        if (userName is not null)
+        {
+            wearer = [.. wearer, userName];
+        }
+
         var best = new Dictionary<char, NameCandidate>();
         foreach (var suggestion in pooled)
         {
             var name = ExtractMemoriesHandler.OneLine(suggestion.Name);
             if (VoiceOf(suggestion.Voice, targets) is not { } target
-                || !segmentIds.Contains(suggestion.SegmentId)
-                || name.Length == 0
-                || name.EnumerateRunes().Count() > MaxNameLength
-                || string.Equals(name, userName, StringComparison.OrdinalIgnoreCase)
+                || target.SpeakerId is { } speaker && segments.Any(s => s.IsWearer && s.SpeakerId == speaker)
                 || !(suggestion.Confidence >= MinConfidence)
-                || best.TryGetValue(target.Letter, out var known) && known.Confidence >= suggestion.Confidence)
+                || best.TryGetValue(target.Letter, out var known) && known.Confidence >= suggestion.Confidence
+                || wearer.Any(w => NameValidator.SameName(name, w))
+                || NameValidator.Evidence(name, suggestion.SegmentId, segments) is not { } evidence
+                || !NameValidator.IsName(name, evidence.Text))
             {
                 continue;
             }
 
             var person = people.GetValueOrDefault(name.ToLowerInvariant());
             best[target.Letter] = new NameCandidate(
-                target.Kind, target.SpeakerId, target.SegmentIds, person?.Name ?? name, person?.Id, suggestion.SegmentId,
+                target.Kind, target.SpeakerId, target.SegmentIds, person?.Name ?? name, person?.Id, evidence.Id,
                 (float)Math.Min(suggestion.Confidence, 1));
         }
 

@@ -31,6 +31,7 @@ public static class PeopleEndpoints
         people.MapPost("/{id:guid}/merge", MergeAsync);
         people.MapGet("/suggestions", SuggestionsAsync).AllowRead();
         people.MapPost("/backfill", BackfillAsync);
+        people.MapPost("/suggestions/revalidate", RevalidateAsync);
         people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
         people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
@@ -53,10 +54,11 @@ public static class PeopleEndpoints
 
     /// <summary>
     /// Queues name suggestions and fact extraction for summarized conversations the People features have not read, newest first,
-    /// at most <c>limit</c> (default 200, up to 1000). 200 with <c>{ queued: { suggestNames, facts }, skipped, remaining }</c>;
+    /// at most <c>limit</c> (default 200, up to 1000). <c>force=true</c> also queues names for conversations whose names run is older
+    /// than <see cref="NameValidator.Version"/>. 200 with <c>{ queued: { suggestNames, facts }, skipped, remaining }</c>;
     /// 409 without a language model. Enrichment does not run again.
     /// </summary>
-    private static async Task<IResult> BackfillAsync(int? limit, PeopleBackfill backfill, ILlmClient llm, CancellationToken ct)
+    private static async Task<IResult> BackfillAsync(int? limit, bool? force, PeopleBackfill backfill, ILlmClient llm, CancellationToken ct)
     {
         if (limit is < 1 or > MaxBackfillLimit)
         {
@@ -64,9 +66,16 @@ public static class PeopleEndpoints
         }
 
         return llm.IsConfigured
-            ? Results.Ok(await backfill.RunAsync(limit ?? DefaultBackfillLimit, ct))
+            ? Results.Ok(await backfill.RunAsync(limit ?? DefaultBackfillLimit, force == true, ct))
             : Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "No language model is configured.");
     }
+
+    /// <summary>
+    /// Deletes the pending name suggestions that fail the current name rules (<see cref="NameValidator"/>). 200 with
+    /// <c>{ checked, removed, kept }</c>.
+    /// </summary>
+    private static async Task<IResult> RevalidateAsync(SuggestionRevalidator revalidator, CancellationToken ct) =>
+        Results.Ok(await revalidator.RunAsync(ct));
 
     private static async Task<IResult> FactsAsync(Guid id, Guid? before, int? limit, PersonFactStore facts, CancellationToken ct) =>
         await facts.ListAsync(id, before, Math.Clamp(limit ?? DefaultFactLimit, 1, MaxFactLimit), ct) is { } page

@@ -68,6 +68,26 @@ public sealed class PeopleBackfillTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task Force_queues_names_again_for_runs_made_under_an_older_validator_and_nothing_else()
+    {
+        var old = await Summarized(10);
+        var current = await Summarized(20);
+        await Db.ExecuteAsync(
+            "insert into people_runs (conversation_id, kind, status, through_segment_id, validator, updated_at) select c, 'names', 'done', (select max(id) from segments where conversation_id = c), v, now() from (values (@old, 0), (@current, 1000)) t(c, v)",
+            new { old, current });
+        await Db.ExecuteAsync(
+            "insert into people_runs (conversation_id, kind, status, updated_at) select c, 'facts', 'done', now() from unnest(array[@old, @current]) c", new { old, current });
+
+        Assert.Equal((0, 0, 0, 0), Counts(await Backfill()));
+
+        var body = await Backfill("?force=true");
+
+        Assert.Equal((1, 0, 0, 0), Counts(body));
+        Assert.Equal(["suggest-names:" + old], await JobKeys());
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from people_runs where kind = 'names' and status = 'pending'"));
+    }
+
+    [Fact]
     public async Task A_second_call_queues_nothing_again()
     {
         await Summarized(10);
