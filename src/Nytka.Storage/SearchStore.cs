@@ -65,26 +65,27 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     /// <paramref name="offset"/>; the caller asks for one extra to learn whether a page follows. Rows the indexer has
     /// not reached yet are not found. <paramref name="from"/> and <paramref name="to"/> (exclusive) keep conversations
     /// that started, and memories that were last changed, inside that range; it does not apply to people.
+    /// <paramref name="tag"/> (normalized) keeps only conversations and people that have it, and leaves memories out.
     /// </summary>
     public async Task<IReadOnlyList<SearchHitRow>> SearchAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct,
-        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false, bool people = false)
+        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false, bool people = false, string? tag = null)
     {
         try
         {
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ConfigFileError)
         {
             // The dictionary files went away while the server ran: fall back to simple, then ask again.
             await SetupDictionaryAsync(Simple, ct);
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, ct);
         }
     }
 
     private async Task<IReadOnlyList<SearchHitRow>> QueryAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, bool people, int limit, int offset,
-        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, CancellationToken ct)
+        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, string? tag, CancellationToken ct)
     {
         var parameters = new DynamicParameters();
         var query = string.Join(anyTerm ? " || " : " && ", terms.Select((term, i) =>
@@ -99,6 +100,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         parameters.Add("offset", offset);
         parameters.Add("from", from);
         parameters.Add("to", to);
+        parameters.Add("tag", tag);
 
         await using var connection = await DataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<SearchHitRow>(new CommandDefinition(
@@ -138,10 +140,13 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 where (ts.id is not null or bs.id is not null)
                   and (cast(@from as timestamptz) is null or c.started_at >= cast(@from as timestamptz))
                   and (cast(@to as timestamptz) is null or c.started_at < cast(@to as timestamptz))
+                  and (cast(@tag as text) is null or exists (
+                        select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
+                        where ct.conversation_id = c.id and t.name = @tag))
                 union all
                 select 'memory', m.id, ts_rank_cd(m.search, q.query), null, m.text, m.updated_at, m.conversation_id, null::bigint
                 from memories m cross join q
-                where @memories and m.deleted_at is null and m.search @@ q.query
+                where @memories and cast(@tag as text) is null and m.deleted_at is null and m.search @@ q.query
                   and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
                   and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
                 union all
@@ -152,7 +157,10 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 from people p
                 left join person_name pn on pn.id = p.id
                 left join best_fact bf on bf.id = p.id
-                where pn.id is not null or bf.id is not null
+                where (pn.id is not null or bf.id is not null)
+                  and (cast(@tag as text) is null or exists (
+                        select 1 from person_tags pt join tags t on t.id = pt.tag_id
+                        where pt.person_id = p.id and t.name = @tag))
             ),
             page as (
                 select * from hits order by score desc, at desc, id limit @limit offset @offset

@@ -20,9 +20,9 @@ public static class SearchEndpoints
     }
 
     private static async Task<IResult> SearchAsync(
-        string? q, string? kinds, int? limit, int? offset, SearchStore search, CancellationToken ct)
+        string? q, string? kinds, string? tag, int? limit, int? offset, SearchStore search, CancellationToken ct)
     {
-        if (SearchQuery.Parse(q, kinds is null ? null : [kinds], out var error) is not { } query)
+        if (SearchQuery.Parse(q, kinds is null ? null : [kinds], out var error, tag) is not { } query)
         {
             return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: error);
         }
@@ -36,7 +36,7 @@ public static class SearchEndpoints
     {
         var take = Math.Clamp(limit, 1, SearchQuery.MaxLimit);
         var skip = Math.Clamp(offset, 0, SearchQuery.MaxOffset);
-        var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct, people: query.People);
+        var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct, people: query.People, tag: query.Tag);
         var items = rows.Take(take)
             .Select(r => new Hit(r.Kind, r.Id, r.Score, r.Title, Markup(r.Snippet), r.At, r.ConversationId))
             .ToList();

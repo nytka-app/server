@@ -1,10 +1,11 @@
 using System.Text.RegularExpressions;
+using Nytka.Server.Api;
 using Nytka.Storage;
 
 namespace Nytka.Server.Search;
 
-/// <summary>The parsed <c>q</c> and <c>kinds</c> of a search (docs/specs/v0.4.md, Search).</summary>
-public sealed partial record SearchQuery(IReadOnlyList<string> Terms, bool Conversations, bool Memories, bool People)
+/// <summary>The parsed <c>q</c>, <c>kinds</c> and <c>tag</c> of a search (docs/specs/v0.4.md, Search; docs/specs/tags.md, Search).</summary>
+public sealed partial record SearchQuery(IReadOnlyList<string> Terms, bool Conversations, bool Memories, bool People, string? Tag = null)
 {
     public const int MaxTerms = 8;
     public const int DefaultLimit = 20;
@@ -18,13 +19,23 @@ public sealed partial record SearchQuery(IReadOnlyList<string> Terms, bool Conve
     public static IReadOnlyList<string> ExtractTerms(string? q) =>
         TermPattern().Matches(q ?? "").Select(m => m.Value).Take(MaxTerms).ToList();
 
-    /// <summary>Null when there is no term or a kind is unknown; <paramref name="error"/> then says which.</summary>
-    public static SearchQuery? Parse(string? q, IEnumerable<string>? kinds, out string? error)
+    /// <summary>
+    /// Null when there is no term, a kind is unknown or <paramref name="tag"/> is no valid tag name; <paramref name="error"/>
+    /// then says which (never the tag itself). <see cref="Tag"/> is the normalized name.
+    /// </summary>
+    public static SearchQuery? Parse(string? q, IEnumerable<string>? kinds, out string? error, string? tag = null)
     {
         var terms = ExtractTerms(q);
         if (terms.Count == 0)
         {
             error = "q needs at least one letter or digit.";
+            return null;
+        }
+
+        var normalized = TagName.Normalize(tag);
+        if (tag is not null && normalized is null)
+        {
+            error = TagEndpoints.InvalidTagSentence;
             return null;
         }
 
@@ -47,6 +58,6 @@ public sealed partial record SearchQuery(IReadOnlyList<string> Terms, bool Conve
         }
 
         error = null;
-        return new SearchQuery(terms, conversations, memories, people);
+        return new SearchQuery(terms, conversations, memories, people, normalized);
     }
 }

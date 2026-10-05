@@ -29,14 +29,14 @@ public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
             new HttpClientTransportOptions { Endpoint = new Uri(http.BaseAddress!, "/mcp") }, http, ownsHttpClient: false));
 
     [Fact]
-    public async Task The_server_offers_exactly_ten_read_only_tools()
+    public async Task The_server_offers_exactly_eleven_read_only_tools()
     {
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
 
         var tools = await client.ListToolsAsync();
 
         Assert.Equal(
-            ["ask", "get_conversation", "get_person", "list_bookmarks", "list_conversations", "list_digests", "list_memories", "list_people", "list_tasks", "search"],
+            ["ask", "get_conversation", "get_person", "list_bookmarks", "list_conversations", "list_digests", "list_memories", "list_people", "list_tags", "list_tasks", "search"],
             tools.Select(t => t.Name).Order().ToArray());
         Assert.All(tools, t => Assert.True(t.ProtocolTool.Annotations?.ReadOnlyHint));
     }
