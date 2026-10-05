@@ -28,6 +28,7 @@ public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
     {
         { "GET", "/api/v1/status" },
         { "POST", "/api/v1/chunks" },
+        { "POST", "/api/v1/people/backfill" },
         { "GET", "/api/v1/diagnostics" },
         { "POST", "/api/v1/diagnostics" },
         { "GET", "/api/v1/settings" },
