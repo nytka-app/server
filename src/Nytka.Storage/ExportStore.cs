@@ -13,7 +13,7 @@ public abstract record ExportLine
     public abstract string Type { get; }
 }
 
-public sealed record ExportPerson(Guid Id, string Name, IReadOnlyList<string> Voices, DateTime CreatedAt) : ExportLine
+public sealed record ExportPerson(Guid Id, string Name, string? Note, bool Voiceprint, IReadOnlyList<string> Voices, DateTime CreatedAt) : ExportLine
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "person";
@@ -30,7 +30,7 @@ public sealed record ExportConversation(
 }
 
 public sealed record ExportTask(
-    Guid Id, Guid ConversationId, string Text, bool Done, DateTime? DoneAt, DateTime CreatedAt, DateTime UpdatedAt) : ExportLine
+    Guid Id, Guid ConversationId, Guid? PersonId, string Text, bool Done, DateTime? DoneAt, DateTime CreatedAt, DateTime UpdatedAt) : ExportLine
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "task";
@@ -41,6 +41,14 @@ public sealed record ExportMemory(
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "memory";
+}
+
+public sealed record ExportPersonFact(
+    Guid Id, Guid PersonId, string Text, string Source, string? Basis, Guid? ConversationId, bool Edited,
+    DateTime CreatedAt, DateTime UpdatedAt) : ExportLine
+{
+    [JsonPropertyOrder(-1)]
+    public override string Type => "person_fact";
 }
 
 public sealed record ExportBookmark(Guid Id, DateTime At, string? Note, string Source, DateTime CreatedAt) : ExportLine
@@ -75,7 +83,7 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
 
     private sealed record VoiceRow(Guid PersonId, string SpeakerId);
 
-    private sealed record PersonRow(Guid Id, string Name, DateTime CreatedAt);
+    private sealed record PersonRow(Guid Id, string Name, string? Note, bool Voiceprint, DateTime CreatedAt);
 
     private sealed record DigestRaw(Guid Id, string LocalDate, string Headline, string Overview, string Body, DateTime CreatedAt);
 
@@ -89,10 +97,14 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
             "select person_id as PersonId, speaker_id as SpeakerId from person_voices order by speaker_id", transaction: transaction, cancellationToken: ct)))
             .ToLookup(v => v.PersonId, v => v.SpeakerId);
         var people = (await connection.QueryAsync<PersonRow>(new CommandDefinition(
-            "select id as Id, name as Name, created_at as CreatedAt from people order by lower(name), id", transaction: transaction, cancellationToken: ct))).ToList();
+            """
+            select id as Id, name as Name, note as Note, exists (select 1 from person_voiceprints v where v.person_id = people.id) as Voiceprint,
+                   created_at as CreatedAt
+            from people order by lower(name), id
+            """, transaction: transaction, cancellationToken: ct))).ToList();
         foreach (var person in people)
         {
-            yield return new ExportPerson(person.Id, person.Name, voices[person.Id].ToList(), person.CreatedAt);
+            yield return new ExportPerson(person.Id, person.Name, person.Note, person.Voiceprint, voices[person.Id].ToList(), person.CreatedAt);
         }
 
         DateTime? afterAt = null;
@@ -136,7 +148,7 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
 
         await foreach (var task in connection.QueryUnbufferedAsync<ExportTask>(
             """
-            select id as Id, conversation_id as ConversationId, text as Text, done as Done, done_at as DoneAt,
+            select id as Id, conversation_id as ConversationId, person_id as PersonId, text as Text, done as Done, done_at as DoneAt,
                    created_at as CreatedAt, updated_at as UpdatedAt
             from tasks where deleted_at is null order by created_at, id
             """, transaction: transaction).WithCancellation(ct))
@@ -152,6 +164,16 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
             """, transaction: transaction).WithCancellation(ct))
         {
             yield return memory;
+        }
+
+        await foreach (var fact in connection.QueryUnbufferedAsync<ExportPersonFact>(
+            """
+            select id as Id, person_id as PersonId, text as Text, source as Source, basis as Basis, conversation_id as ConversationId,
+                   edited as Edited, created_at as CreatedAt, updated_at as UpdatedAt
+            from person_facts where deleted_at is null order by created_at, id
+            """, transaction: transaction).WithCancellation(ct))
+        {
+            yield return fact;
         }
 
         await foreach (var bookmark in connection.QueryUnbufferedAsync<ExportBookmark>(

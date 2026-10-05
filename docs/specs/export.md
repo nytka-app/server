@@ -7,7 +7,7 @@ from Omi and comes out of Nytka, with no vendor in between.
 ## Done when
 
 1. `GET /api/v1/export` with an admin token streams the user's conversations with their transcripts,
-   tasks, memories, bookmarks, digests, people and non-secret settings.
+   tasks, memories, bookmarks, digests, people with their facts and non-secret settings.
 2. The file starts with a header (format name, format version, generation time) and ends with a line
    that counts each kind of record, so a cut download is recognizable.
 3. Deleted tasks and memories are absent. No API key, token, token hash or webhook secret is in the
@@ -32,7 +32,7 @@ Times are ISO 8601 in UTC (`2026-09-30T10:00:00Z`) except `localDate`, the user'
 ids.
 
 **Order.** `header`, `setting`s, `person`s, `conversation`s (oldest first), `task`s, `memory`s,
-`bookmark`s, `digest`s, `end`. Within a kind, records are in time order.
+`person_fact`s, `bookmark`s, `digest`s, `end`. Within a kind, records are in time order.
 
 **Snapshot.** The export reads inside one read-only repeatable-read transaction, so a conversation that
 closes or a task that is ticked mid-download does not appear half-changed. The transaction lives as long
@@ -44,10 +44,11 @@ as the download.
 |---|---|
 | `header` | `format` (`"nytka-export"`), `version` (an integer, `1`), `generatedAt`, `serverVersion` |
 | `setting` | `key`, `value` (a string, as an environment variable would carry it) |
-| `person` | `id`, `name`, `voices` (the provider's speaker ids named after this person), `createdAt` |
+| `person` | `id`, `name`, `note` (your own note on the person, else null), `voiceprint` (true when a voiceprint of this person is kept; the vector itself is never exported), `voices` (the provider's speaker ids named after this person), `createdAt` |
 | `conversation` | `id`, `source` (`nytka` or `omi`), `externalId` (the Omi id for `omi`, else null), `startedAt`, `endedAt`, `status` (`open` or `closed`), `title` (the one the app shows: the user's, else the generated one, else null), `titleEdited` (true when `title` is the user's), `summary`, `segments` |
-| `task` | `id`, `conversationId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt` |
+| `task` | `id`, `conversationId`, `personId` (the person it is owed to or by, else null), `text`, `done`, `doneAt`, `createdAt`, `updatedAt` |
 | `memory` | `id`, `text`, `source` (`ai`, `user` or `omi`), `conversationId` (null for one added by hand), `createdAt`, `updatedAt` |
+| `person_fact` | `id`, `personId`, `text`, `source` (`ai` or `user`), `basis` (`said`, `about` or `mentioned` for `ai`, null for `user`), `conversationId` (null for one added by hand), `edited`, `createdAt`, `updatedAt` |
 | `bookmark` | `id`, `at`, `note`, `source` (`pendant` or `app`), `createdAt` |
 | `digest` | `id`, `localDate`, `headline`, `overview`, `highlights` (`[{ text, conversationId }]`), `decisions`, `openQuestions`, `createdAt` |
 | `end` | `counts`: the number of lines written per `type` (`header` and `end` not counted; a kind with none is absent) |
@@ -58,8 +59,8 @@ imported segments), `isUser` (true for the wearer by the rule in [your-voice.md]
 name given to that voice, else null). A bookmark carries no conversation: as in the API, the one it
 belongs to is found by time (30 seconds around the span).
 
-Only live rows are written: a task or memory the user deleted is not. A conversation deleted by the
-user is gone with its segments, tasks and memories. A highlight in a digest may name a conversation that
+Only live rows are written: a task, memory or person fact the user deleted is not. A conversation deleted by the
+user is gone with its segments, tasks, memories and the facts taken from it. A highlight in a digest may name a conversation that
 is gone.
 
 ### Settings
@@ -89,6 +90,8 @@ other tools, and for moving away.
   per conversation already available from `GET /api/v1/conversations/{id}/audio`. A zip with audio
   would need a second, non-streaming format; a script that loops over the conversations in the export
   and fetches each file does the same job.
+- Voice groups, voiceprints, name suggestions, voice matches, calendar events and briefs: working state or
+  vectors of other people's voices, not the user's data (`docs/specs/people.md`).
 - Webhooks, tokens, diagnostics, jobs, search indexes and raw transcription responses: configuration or
   working state, not the user's data.
 - Importing the file into Nytka.

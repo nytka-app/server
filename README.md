@@ -575,16 +575,18 @@ curl -sS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" "$NYTKA_URL/api/v1/export
 ```
 
 Every line has a `type` first. The order is `header` (`format: "nytka-export"`, `version`, `generatedAt`,
-`serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `voices`, `createdAt`),
+`serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `note`, `voiceprint` as true or false, `voices`, `createdAt`),
 `conversation` (`id`, `source`, `externalId`, `startedAt`, `endedAt`, `status`, `title`, `titleEdited`,
 `summary`, and `segments`: `{ startedAt, endedAt, text, speaker, speakerId, isUser, person }`), `task`
-(`id`, `conversationId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`), `memory` (`id`, `text`,
-`source`, `conversationId`, `createdAt`, `updatedAt`), `bookmark` (`id`, `at`, `note`, `source`,
+(`id`, `conversationId`, `personId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`), `memory` (`id`, `text`,
+`source`, `conversationId`, `createdAt`, `updatedAt`), `person_fact` (`id`, `personId`, `text`, `source`,
+`basis`, `conversationId`, `edited`, `createdAt`, `updatedAt`), `bookmark` (`id`, `at`, `note`, `source`,
 `createdAt`), `digest` (`id`, `localDate`, `headline`, `overview`, `highlights`, `decisions`,
 `openQuestions`, `createdAt`) and `end` (`counts` per type). A file without its `end` line was cut
 short. Times are UTC, ids are stable between exports.
 
-- Deleted tasks and memories are not in it. API keys, tokens, webhooks and their secrets, and every
+- Deleted tasks, memories and person facts are not in it. Voice groups, voiceprints (only `voiceprint:
+  true|false` is), name suggestions, voice matches, calendar events and briefs are not either. API keys, tokens, webhooks and their secrets, and every
   URL setting are left out; the `setting` lines are the non-secret settings in effect.
 - No audio: fetch `GET /api/v1/conversations/{id}/audio` for the conversations you want.
 - Nytka cannot import its own export yet. Every field is specified in

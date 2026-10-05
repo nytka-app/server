@@ -172,7 +172,7 @@ the two do not match. The spec files keep their `v0.x` names.
 - **1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
   documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week. This is
   a real release number, the target of the 1.0 release.
-- **People (after 1.0).** Name suggestions for unnamed voices from what is said, opt-in grouping of
+- **People (shipped on the server).** Name suggestions for unnamed voices from what is said, opt-in grouping of
   other people's voices with "Who is this?" cards, facts and a page for each person, tasks owed to a
   person, a brief before a calendar meeting, and one review inbox. Details:
   [specs/people.md](specs/people.md).
@@ -263,6 +263,9 @@ nothing phones home.
 | Segment | One transcribed stretch of a conversation, with an optional speaker. |
 | Task | Something to do, taken from a conversation. Omi's "action items" import as tasks. |
 | Memory | A lasting fact about you, taken from your conversations. |
+| Person | Someone the user names: a name, a note, the voices and facts that belong to them, tasks owed to them. |
+| Fact | A short statement about one person, taken from a conversation or written by hand; the server sets whether they said it, it was said about them, or only mentioned. |
+| Voice group | Voices of unnamed speakers that sound alike, kept so one "Who is this?" card covers all of them. Opt-in; never leaves the database. |
 | Token | A named credential for the server, with scope `admin` or `read`. |
 | Webhook | An address the server calls when a conversation, task or memory is new, with a signature that shows the call came from your server. |
 | MCP | The Model Context Protocol: how AI agents read your conversations, tasks and memories from the server. |
