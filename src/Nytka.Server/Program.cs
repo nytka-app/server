@@ -124,7 +124,6 @@ api.MapExport();
 api.MapVoice();
 api.MapVoiceGroups();
 api.MapReview();
-api.MapSpeech();
 api.MapBriefs();
 app.MapNytkaMcp();
 
