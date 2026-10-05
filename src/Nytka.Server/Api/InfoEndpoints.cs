@@ -27,6 +27,8 @@ public static class InfoEndpoints
     /// without a calendar feed (the app reads <c>calendar.icsUrl</c> from the settings). "voice-groups": voice matching of other people is on, the model is there and speech audio is
     /// kept for a day or more, since fingerprints die with it. "tags": tags on conversations and people (docs/specs/tags.md). "tag-suggestions": proposed tags for conversations,
     /// <c>GET /api/v1/tags/suggestions</c> and the review kind <c>tag</c>. "roles": a name suggestion may carry a role, and people have <c>named</c> (docs/specs/tags.md, Roles).
+    /// "speech-kind": a line has a speech kind and the owner marks it (docs/specs/speech-kind.md): <c>speechKind</c> on <c>PATCH /api/v1/segments/{id}</c>,
+    /// <c>POST /api/v1/conversations/{id}/speech</c>, <c>mediaShare</c> and <c>media=</c> on the conversation list.
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -39,6 +41,7 @@ public static class InfoEndpoints
         features.Add("tags");
         features.Add("tag-suggestions");
         features.Add("roles");
+        features.Add("speech-kind");
 
         return features;
     }

@@ -190,6 +190,8 @@ you copy without thinking would lock its setting.
 | `Nytka__People__VoiceThreshold` | no | `0.7` | editable | Similarity, 0.5 to 0.95, at or above which a voice joins a group or matches a person's voiceprint |
 | `Nytka__Calendar__IcsUrl` | no | | env only | `http` or `https` address of a read-only ICS feed; with it set, meetings of the next 48 hours with someone you named get a [calendar brief](#calendar-briefs). The address usually carries a token, so `GET /api/v1/settings` shows only `isSet`, and no log or error repeats it |
 | `Nytka__Calendar__BriefMinutes` | no | `30` | editable | How long before a meeting its brief is made, 5 to 240 minutes |
+| `Nytka__Speech__Mode` | no | `shadow` | editable | `off`, `shadow` or `on`: whether [speech kinds](#speech-kind) are guessed (`off`: no), only shown (`shadow`) or applied (`on`); your own marks apply in every mode. A change queues `apply-speech` |
+| `Nytka__Speech__MediaThreshold` | no | `0.8` | editable | Score, 0.5 to 0.99, at or above which a guess is `media`; a score less than 0.15 below it is `unsure`. A change works out the stored guesses again |
 | `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
@@ -204,7 +206,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
+  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Search__Dictionary`, `Nytka__Speech__*` and `Nytka__Voice__*` are checked when first used, so type them as
   the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
   `Nytka__Search__Dictionary` stops indexing.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
@@ -489,6 +491,43 @@ people apart in Ukrainian and Russian is unmeasured until you run it, so the swi
 No voiceprint, group centroid or fingerprint appears in an API answer, export, webhook, MCP answer or
 log; `pg_dump` holds them.
 
+## Speech kind
+
+The pendant records everything near it. Some of that is not a person talking to you: a TV, a video, a
+podcast, music with vocals, or the far side of a call on speaker. Every line of a transcript can carry a
+**speech kind**: `person` (someone near you, you included), `media` (sound from a device) or `call` (the far
+side of a call on speaker). `GET /api/v1/info` lists `speech-kind` under `features`.
+
+**Which kind applies.** The first of these: your mark on the line, in every mode; then, only while
+`Nytka__Speech__Mode` is `on`, Nytka's guess, with `unsure` read as `person`; then none, and the line is
+treated as before. The result is stored on the line, so every reader asks one column. A conversation's
+segments carry it as `speechKind`, with `speechGuess`, `speechScore` (0 to 1, how much the line looks like
+media), `speechSignals` (what moved the score) and `speechMarked` (true when your mark decides).
+
+**No guesses yet.** This version stores your marks and applies the setting. Nothing computes a guess, so
+`speechGuess`, `speechScore` and `speechSignals` stay empty, and only your marks set a kind.
+
+**Marking.** `PATCH /api/v1/segments/{id}` with `speechKind` (`person`, `media`, `call`, or `null` to
+clear your mark) marks one line, alone or with `isUser` and `personId`. Any line takes a mark, yours
+included, so a TV voice Nytka took for you can be fixed. `POST /api/v1/conversations/{id}/speech` with
+`{ "kind": "media" }` marks every line of a conversation that is not yours, for an evening with the TV on,
+and answers `{ "marked": 12 }`; `null` clears those marks. Both need an admin token. A mark survives every
+change of the settings.
+
+**Settings.** `Nytka__Speech__Mode` is `shadow` by default: guesses are kept and shown and change
+nothing. `off` makes none; `on` lets them set the kind. `Nytka__Speech__MediaThreshold` (0.8) is the score at
+or above which a guess is `media`; a score less than 0.15 below it is `unsure`, a lower one `person`, so a
+doubt is never `media`. A change of either queues the `apply-speech` job, which works out the stored guesses
+and kinds again from the scores and your marks, with no audio and no model.
+
+**Media conversations.** Each item of `GET /api/v1/conversations` carries `mediaShare`: the share of the
+conversation's speech time whose kind is `media`, 0 with none. `media=hide` leaves out the conversations at
+0.8 or more, `media=only` keeps just those.
+
+**Nothing disappears.** A media line stays in transcripts, search, export and MCP. The export's segments
+carry `speechKind` and `speechMarked`; MCP's `get_conversation` shows a media line's speaker as `Media` and
+a call line's as `<label> (call)`. The design is in [docs/specs/speech-kind.md](docs/specs/speech-kind.md).
+
 ## Review
 
 One list for everything waiting on your answer, so the app needs one screen. `GET /api/v1/review`
@@ -685,7 +724,7 @@ curl -sS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" "$NYTKA_URL/api/v1/export
 Every line has a `type` first. The order is `header` (`format: "nytka-export"`, `version`, `generatedAt`,
 `serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `note`, `voiceprint` as true or false, `voices`, `tags`, `named`, `createdAt`),
 `conversation` (`id`, `source`, `externalId`, `startedAt`, `endedAt`, `status`, `title`, `titleEdited`,
-`summary`, `tags`, and `segments`: `{ startedAt, endedAt, text, speaker, speakerId, isUser, person }`), `task`
+`summary`, `tags`, and `segments`: `{ startedAt, endedAt, text, speaker, speakerId, isUser, person, speechKind, speechMarked }`), `task`
 (`id`, `conversationId`, `personId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`), `memory` (`id`, `text`,
 `source`, `conversationId`, `createdAt`, `updatedAt`), `person_fact` (`id`, `personId`, `text`, `source`,
 `basis`, `conversationId`, `edited`, `createdAt`, `updatedAt`), `bookmark` (`id`, `at`, `note`, `source`,
@@ -989,7 +1028,7 @@ through OAuth cannot connect.
 
 | Tool | Input | Output |
 |---|---|---|
-| `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `tag?`, `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview, tags }], nextBefore }` |
+| `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `tag?`, `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview, mediaShare, tags }], nextBefore }` |
 | `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts, tags }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
@@ -1006,7 +1045,7 @@ structured content and as JSON text. A tool returns the fields its REST endpoint
 limits and defaults in the table (`search` has no `offset`). Pass `nextBefore` as `before` to read the
 next page. An unknown id is a tool error ("No such conversation."); a malformed id, time, status or
 kind or tag is JSON-RPC error `-32602`. The transcript has one line per segment, in UTC and without a
-speaker label when there is none: `[HH:mm:ss] Speaker: text`. It is cut at a line boundary after
+speaker label when there is none: `[HH:mm:ss] Speaker: text`; a [media](#speech-kind) line's speaker is `Media` and a call line's `<label> (call)`. It is cut at a line boundary after
 60,000 characters into parts. `part` picks one (from 1; one outside `1` to `parts` is `-32602`),
 `parts` counts them and `truncated` is true while a later part exists, so a client reads the rest with
 `part: 2`, `3` and so on. Only the first 20 parts are read. `transcript` is null when it is false.
@@ -1116,17 +1155,18 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions` and `roles` (name suggestions carry roles and people have `named`), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`) and `speech-kind` ([speech kinds](#speech-kind) on lines), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
 | GET | `/api/v1/coverage?from=&to=&bucket=&limit=` | admin | The "Nothing is lost" report: `{ from, to, timeZone, bucket, totals, buckets, gaps, gapsTotal, now, warnings }`; see [Running the no-loss wear test](#running-the-no-loss-wear-test); `bucket` is `day` (default) or `hour`, `to` defaults to now, `from` to six days before today; `limit` defaults to 500, caps at 5000; `400` for a range over 62 days (14 for hours) |
-| GET | `/api/v1/conversations?before=&since=&tag=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](#tags) (`400` for a name that is none); `limit` defaults to 30, caps at 100 |
-| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource }`, `isUserSource` being `manual`, `voice`, `provider` or null; see [Your voice](#your-voice)) and `bookmarks` (`{ id, at, note }`) |
+| GET | `/api/v1/conversations?before=&since=&tag=&media=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, mediaShare, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `mediaShare` the share (0 to 1) of the conversation's speech time whose [speech kind](#speech-kind) is `media`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](#tags) (`400` for a name that is none); `media` is `hide` (leaves out those with a `mediaShare` of 0.8 or more) or `only` (keeps just those), else `400`; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource, speechKind, speechGuess, speechScore, speechSignals, speechMarked }`, `isUserSource` being `manual`, `voice`, `provider` or null, see [Your voice](#your-voice); `speechKind` the [speech kind](#speech-kind) that applies (`person`, `media`, `call` or null), `speechGuess` Nytka's guess (also `unsure`) with its `speechScore` and `speechSignals` (a list, empty when none), `speechMarked` true when your mark decides) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
+| POST | `/api/v1/conversations/{id}/speech` | admin | Body `{ kind }`: `person`, `media`, `call`, or `null` to clear. Marks every line of the conversation that is not yours, in every mode: `200 { marked }`, the number of lines; `400` for another kind, `404` for an unknown conversation; see [Speech kind](#speech-kind) |
 | DELETE | `/api/v1/conversations/{id}` | admin | Deletes it with its transcript, audio, tasks and memories |
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
 | GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
@@ -1158,7 +1198,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/voice/reset` | admin | Back to the enrolled voiceprint, forgetting what it learned; `200` as GET, `404` with no voice enrolled |
 | DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts, and every voice group; your marks stay. `204`, also with nothing enrolled |
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
-| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
+| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId?, speechKind? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `speechKind` is `person`, `media`, `call` or `null` (clears your mark) on any line, yours included, see [Speech kind](#speech-kind); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named }`; `404` for an unknown person |
@@ -1219,6 +1259,7 @@ transcripts and your webhook secrets.
 - [Tags](#tags) (a name, and which conversations and people hold it) stay until you remove the last link, delete the tag, or delete what held it. They are words you chose and can be sensitive, so a dump holds them.
 - Proposed tags (the name, the conversation it came from, the person for a person's tag, and your answer) stay until you delete that conversation or person; accepted and rejected ones too, which is how a rejected tag stays rejected. They hold model-chosen words about your day, so a dump holds them.
 - Name suggestions (the name or role, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
+- Each line of a transcript carries its [speech kind](#speech-kind) as columns of `segments`: your mark (`speech_manual`), Nytka's guess with its score, signals and version (`speech_guess`, `speech_score`, `speech_signals`, `speech_version`) and the kind that applies (`speech_kind`). They stay with the line. A single row, `speech_state`, records the mode and threshold the stored guesses and kinds follow. No audio, no voiceprint and no text goes into them.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.

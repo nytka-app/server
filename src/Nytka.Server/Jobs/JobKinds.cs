@@ -13,6 +13,7 @@ public static class JobKinds
     public const string DeliverWebhook = "deliver-webhook";
     public const string MakeDigest = "make-digest";
     public const string RescoreVoice = "rescore-voice";
+    public const string ApplySpeech = "apply-speech";
     public const string SuggestNames = "suggest-names";
     public const string GroupVoices = "group-voices";
     public const string ExtractPersonFacts = "extract-person-facts";
@@ -20,7 +21,7 @@ public static class JobKinds
     public const string MakeBrief = "make-brief";
 
     /// <summary>
-    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, rescore-voice and one nobody
+    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, rescore-voice, apply-speech and one nobody
     /// handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()

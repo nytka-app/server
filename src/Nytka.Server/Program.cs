@@ -16,6 +16,7 @@ using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Search;
 using Nytka.Server.Settings;
+using Nytka.Server.Speech;
 using Nytka.Server.Tags;
 using Nytka.Server.Transcription;
 using Nytka.Server.Voice;
@@ -79,6 +80,7 @@ builder.Services.AddNytkaVoice();
 builder.Services.AddNytkaPeople();
 builder.Services.AddNytkaTags();
 builder.Services.AddNytkaCalendar();
+builder.Services.AddNytkaSpeech();
 
 var app = builder.Build();
 

@@ -3,10 +3,13 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
-/// <summary><paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.</summary>
+/// <summary>
+/// <paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.
+/// <paramref name="MediaShare"/> is the share of the conversation's speech time whose speech kind is media, 0 with no speech.
+/// </summary>
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
-    int Bookmarks, string Source)
+    int Bookmarks, string Source, double MediaShare)
 {
     /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -17,14 +20,45 @@ public sealed record ConversationHeader(
     string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source);
 
 /// <summary>
-/// <paramref name="Speaker"/> is the provider's label, <paramref name="SpeakerId"/> its stable id for the voice,
-/// <paramref name="IsUser"/> whether it is the wearer's by <see cref="SpeakerLabel.IsUser"/> and <paramref name="IsUserSource"/>
-/// which step of that rule decided it, and the person is the name the user gave the voice.
+/// A segment as a conversation shows it. <see cref="Speaker"/> is the provider's label, <see cref="SpeakerId"/> its stable id for the
+/// voice, <see cref="IsUser"/> whether it is the wearer's by <see cref="SpeakerLabel.IsUser"/> and <see cref="IsUserSource"/> which
+/// step of that rule decided it, and the person is the name the user gave the voice. <see cref="SpeechKind"/> is the speech kind that
+/// applies (null when none does), <see cref="SpeechGuess"/>, <see cref="SpeechScore"/> and <see cref="SpeechSignals"/> what Nytka
+/// guessed and why, and <see cref="SpeechMarked"/> whether the owner's mark decides.
 /// </summary>
-public sealed record SegmentRow(
-    long Id, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, Guid? PersonId,
-    string? PersonName, string? IsUserSource)
+/// <remarks>A class, not a record: Dapper cannot pass a <c>text[]</c> to a constructor parameter of type <c>string[]</c>.</remarks>
+public sealed class SegmentRow
 {
+    public long Id { get; init; }
+
+    public DateTime StartedAt { get; init; }
+
+    public DateTime EndedAt { get; init; }
+
+    public string Text { get; init; } = "";
+
+    public string? Speaker { get; init; }
+
+    public string? SpeakerId { get; init; }
+
+    public bool? IsUser { get; init; }
+
+    public Guid? PersonId { get; init; }
+
+    public string? PersonName { get; init; }
+
+    public string? IsUserSource { get; init; }
+
+    public string? SpeechKind { get; init; }
+
+    public string? SpeechGuess { get; init; }
+
+    public float? SpeechScore { get; init; }
+
+    public string[] SpeechSignals { get; init; } = [];
+
+    public bool SpeechMarked { get; init; }
+
     /// <summary>What a model reads as the speaker: the wearer, else the person's name, else the provider's label.</summary>
     public string? Label() => IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
 }
@@ -174,20 +208,21 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Newest first by start. The preview joins the first segments' text; the caller trims it. <paramref name="tag"/>
-    /// (normalized) keeps only conversations that have it.
+    /// (normalized) keeps only conversations that have it. <paramref name="media"/> is <c>hide</c> to leave out the conversations
+    /// that are mostly media (<see cref="SpeechKinds.MediaShareLimit"/> or more of their speech time), <c>only</c> to keep just those.
     /// </summary>
     public async Task<IReadOnlyList<ConversationSummary>> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
-            """
+            $"""
             select c.id as Id, c.started_at as StartedAt, c.ended_at as EndedAt, c.status as Status,
                    coalesce(p.text, '') as Preview, coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary,
                    c.ai_status as AiStatus,
                    (select count(*)::int from bookmarks b
                     where b.at >= c.started_at - interval '30 seconds' and b.at <= c.ended_at + interval '30 seconds') as Bookmarks,
-                   c.source as Source
+                   c.source as Source, m.share as MediaShare
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -195,15 +230,18 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                       where s.conversation_id = c.id
                       order by s.started_at limit 20) f
             ) p on true
+            {SpeechKinds.MediaShareJoin}
             where (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
               and (cast(@since as timestamptz) is null or c.started_at >= cast(@since as timestamptz))
               and (cast(@tag as text) is null or exists (
                     select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
                     where ct.conversation_id = c.id and t.name = @tag))
+              and (cast(@media as text) is null or (@media = 'hide' and m.share < @mediaShareLimit)
+                    or (@media = 'only' and m.share >= @mediaShareLimit))
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { before, since, limit, tag }, cancellationToken: ct));
+            new { before, since, limit, tag, media, mediaShareLimit = SpeechKinds.MediaShareLimit }, cancellationToken: ct));
         var items = rows.ToList();
         var tags = await TagStore.OfConversationsAsync(connection, null, items.Select(c => c.Id).ToList(), ct);
         return items.Select(c => tags.TryGetValue(c.Id, out var names) ? c with { Tags = names } : c).ToList();
@@ -227,7 +265,9 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
                s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser,
                {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
-               {SpeakerLabel.IsUserSource} as IsUserSource
+               {SpeakerLabel.IsUserSource} as IsUserSource, s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess,
+               s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
+               s.speech_manual is not null as SpeechMarked
         from segments s {SpeakerLabel.Joins}
         """;
 

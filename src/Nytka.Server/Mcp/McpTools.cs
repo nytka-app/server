@@ -11,7 +11,8 @@ using Nytka.Storage;
 namespace Nytka.Server.Mcp;
 
 public sealed record McpConversationItem(
-    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview, IReadOnlyList<string> Tags);
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview, double MediaShare,
+    IReadOnlyList<string> Tags);
 
 public sealed record McpConversationList(IReadOnlyList<McpConversationItem> Items, DateTime? NextBefore);
 
@@ -59,7 +60,7 @@ public sealed class McpTools(McpQueries queries)
 
         var take = Math.Clamp(limit, 1, 50);
         var rows = await queries.ListConversationsAsync(ParseTime(since, nameof(since)), ParseTime(before, nameof(before)), take, normalized, ct);
-        var items = rows.Select(r => new McpConversationItem(r.Id, r.StartedAt, r.EndedAt, r.Title, r.Summary, Trim(r.Preview), r.Tags)).ToList();
+        var items = rows.Select(r => new McpConversationItem(r.Id, r.StartedAt, r.EndedAt, r.Title, r.Summary, Trim(r.Preview), r.MediaShare, r.Tags)).ToList();
         return Ok(new McpConversationList(items, items.Count == take ? items[^1].StartedAt : null));
     }
 

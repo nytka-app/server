@@ -5,6 +5,7 @@ using Nytka.Server.Digests;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
+using Nytka.Server.Speech;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
@@ -13,13 +14,13 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle), the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices and the calendar's sync and briefs. Dedupe keys make every call
-/// safe to repeat.
+/// to go idle), the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs and
+/// the speech kinds' follow-up of their settings. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
-    CalendarQueue calendar,
+    CalendarQueue calendar, SpeechStore speech,
     SpeakerModel speaker, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
@@ -46,6 +47,19 @@ public sealed class Scheduler(
         await QueueRescoreAsync(now, ct);
         await QueueGroupVoicesAsync(now, ct);
         await calendar.QueueAsync(now, ct);
+        await QueueApplySpeechAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Applies the speech kind settings when the stored guesses and kinds follow another <c>speech.mode</c> or
+    /// <c>speech.mediaThreshold</c>: after a change in the app, or at start after the environment changed one.
+    /// </summary>
+    private async Task QueueApplySpeechAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (await speech.NeedsApplyAsync(SpeechSettings.Mode(settings), SpeechSettings.MediaThreshold(settings), ct))
+        {
+            await queue.EnqueueAsync(JobKinds.ApplySpeech, new { }, JobKinds.ApplySpeech, now, ct);
+        }
     }
 
     /// <summary>Queues the grouping of other people's voices while <c>people.voiceMatching</c> is on, the model is loaded and a fingerprint waits.</summary>
