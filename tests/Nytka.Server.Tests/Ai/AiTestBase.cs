@@ -66,7 +66,13 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
         {
             services.AddSingleton<ILlmClient>(Llm);
             services.AddSingleton<IEventSubscriber>(Events);
+            ConfigureServices(services);
         });
+    }
+
+    /// <summary>Extra services for the host, after the fake model and the recording subscriber.</summary>
+    protected virtual void ConfigureServices(IServiceCollection services)
+    {
     }
 
     /// <summary>A closed conversation that ended five minutes ago, one segment per text a second apart.</summary>

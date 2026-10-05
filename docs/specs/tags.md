@@ -220,7 +220,7 @@ Roles follow `people.suggestNames`: they are part of the name suggestion.
 | `PUT`, `DELETE /api/v1/people/{id}/tags/{name}` | admin | the same for a person |
 | `POST /api/v1/tags/{name}/rename` `{ name }` | admin | `200` with the tag; `404`; `409` when the new name is in use (merge instead) |
 | `POST /api/v1/tags/{name}/merge` `{ into }` | admin | moves every link to `into` (created if needed), drops duplicates and the old tag; `200` with `into` |
-| `DELETE /api/v1/tags/{name}` | admin | removes the tag from everything; `204` |
+| `DELETE /api/v1/tags/{name}` | admin | removes the tag from everything; `204`, `404` for an unknown tag |
 | `GET /api/v1/conversations?tag=` | read | as today, only conversations with the tag; items gain `tags` |
 | `GET /api/v1/conversations/{id}` | read | gains `tags` |
 | `GET /api/v1/people?tag=` | read | as today, only people with the tag; items gain `tags` and `named` |

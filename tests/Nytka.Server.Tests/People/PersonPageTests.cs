@@ -260,7 +260,8 @@ public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(rest.GetProperty("lastSeenAt").GetDateTime(), items[0].GetProperty("lastSeenAt").GetDateTime());
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("lastSeenAt").ValueKind);
         Assert.Equal(byId.GetRawText(), byName.GetRawText());
-        foreach (var property in rest.EnumerateObject().Where(p => p.Name is not ("hasVoiceprint" or "voiceprintSamples")))
+        // "tags": the MCP tools carry them from T-2 (docs/plans/2026-10-05-tags.md).
+        foreach (var property in rest.EnumerateObject().Where(p => p.Name is not ("hasVoiceprint" or "voiceprintSamples" or "tags")))
         {
             Assert.Equal(property.Value.GetRawText(), byId.GetProperty(property.Name).GetRawText());
         }

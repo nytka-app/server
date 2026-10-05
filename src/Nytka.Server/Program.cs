@@ -21,11 +21,14 @@ using Nytka.Server.Voice;
 using Nytka.Server.Webhooks;
 using Nytka.Storage;
 using Serilog;
+using Serilog.Events;
 using Serilog.Formatting.Compact;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// The hosting log line for a request carries its path and query, which hold a tag name (invariant 5).
 builder.Host.UseSerilog((context, logging) => logging
+    .MinimumLevel.Override("Microsoft.AspNetCore.Hosting.Diagnostics", LogEventLevel.Warning)
     .ReadFrom.Configuration(context.Configuration)
     .Enrich.FromLogContext()
     .WriteTo.Console(new RenderedCompactJsonFormatter()));
@@ -107,6 +110,7 @@ api.MapSearch();
 api.MapAsk();
 api.MapWebhooks();
 api.MapPeople();
+api.MapTags();
 api.MapImport();
 api.MapBookmarks();
 api.MapDigests();

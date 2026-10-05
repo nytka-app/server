@@ -125,7 +125,7 @@ public sealed partial class AskService(
                 return [];
             }
 
-            var recent = await conversations.ListAsync(to, from, MaxConversations, ct);
+            var recent = await conversations.ListAsync(to, from, MaxConversations, null, ct);
             return recent.Select(c => new Candidate(SearchStore.Conversation, c.Id, 0, c.StartedAt, null, null)).ToList();
         }
 

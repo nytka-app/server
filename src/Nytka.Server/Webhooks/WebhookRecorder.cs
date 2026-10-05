@@ -185,13 +185,16 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         var tasks = (await connection.QueryAsync<TaskRef>(new CommandDefinition(
             "select id as Id, text as Text from tasks where conversation_id = @id and deleted_at is null order by created_at, id",
             new { id }, transaction, cancellationToken: ct))).ToList();
-        return new ConversationData(conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, conversation.AiUpdatedAt);
+        var tags = (await TagStore.OfConversationsAsync(connection, transaction, [id], ct)).GetValueOrDefault(id) ?? [];
+        return new ConversationData(
+            conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, tags, conversation.AiUpdatedAt);
     }
 
     private sealed record ConversationHead(Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, DateTime? AiUpdatedAt);
 
     private sealed record ConversationData(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<TaskRef> Tasks,
+        IReadOnlyList<string> Tags,
         [property: System.Text.Json.Serialization.JsonIgnore] DateTime? AiUpdatedAt = null);
 
     private sealed record TaskRef(Guid Id, string Text);
