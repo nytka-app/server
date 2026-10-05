@@ -21,7 +21,11 @@ public sealed record MemoryCandidate(string Text, string Fingerprint, Guid? Repl
 public sealed record KnownMemory(Guid Id, string Text);
 
 /// <summary>A segment as extraction reads it.</summary>
-public sealed record SegmentLine(long Id, DateTime StartedAt, string? Speaker, string Text);
+public sealed record SegmentLine(long Id, DateTime StartedAt, string? Speaker, string Text, string? SpeechKind = null)
+{
+    /// <summary>Whether the speech kind that applies is media: such a line is left out of the prompt (docs/specs/speech-kind.md).</summary>
+    public bool IsMedia => SpeechKind == Storage.SpeechKinds.Media;
+}
 
 /// <summary>A conversation as extraction reads it. <see cref="LastSegmentId"/> is the highest segment id among <see cref="Segments"/>.</summary>
 public sealed record ExtractionInput(string? Title, DateTime StartedAt, long? LastSegmentId, IReadOnlyList<SegmentLine> Segments);
@@ -121,7 +125,7 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
 
         var rows = (await connection.QueryAsync<SegmentLine>(new CommandDefinition(
             $"""
-            select s.id as Id, s.started_at as StartedAt, {SpeakerLabel.Column} as Speaker, s.text as Text
+            select s.id as Id, s.started_at as StartedAt, {SpeakerLabel.Column} as Speaker, s.text as Text, s.speech_kind as SpeechKind
             from segments s {SpeakerLabel.Joins}
             where s.conversation_id = @conversationId
             order by s.started_at, s.id

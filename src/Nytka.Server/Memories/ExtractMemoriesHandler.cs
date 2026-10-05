@@ -90,7 +90,7 @@ public sealed class ExtractMemoriesHandler(
     /// <summary>What the model proposes for each window of the transcript, pooled, cut to length and kept to five.</summary>
     private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ExtractionInput input, CancellationToken ct)
     {
-        var lines = TranscriptText.Render(input.Segments.Select(s =>
+        var lines = TranscriptText.Render(input.Segments.Where(s => !s.IsMedia).Select(s =>
             new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)), UserTimeZone.Resolve(settings));
         var windows = TranscriptWindows.Split(lines, llmOptions.CurrentValue.MaxInputChars);
         var known = await memories.NewestAsync(KnownMemories, ct);

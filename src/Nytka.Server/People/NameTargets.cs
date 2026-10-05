@@ -30,7 +30,7 @@ public static partial class NameTargets
     public static IReadOnlyList<NameTarget> Find(IReadOnlyList<NameSegment> segments)
     {
         var groups = new Dictionary<string, (string Kind, string? SpeakerId, Guid? PersonId, string? KnownAs, List<long> Ids)>();
-        foreach (var segment in segments.Where(s => s.Unnamed || s.RoleOnly))
+        foreach (var segment in segments.Where(s => !s.IsMedia && (s.Unnamed || s.RoleOnly)))
         {
             var (key, kind, speakerId) = KeyOf(segment);
             if (key is null)

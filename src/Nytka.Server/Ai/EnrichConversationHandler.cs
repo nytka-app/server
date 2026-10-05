@@ -88,6 +88,7 @@ public sealed class EnrichConversationHandler(
             .DistinctBy(p => p.Id)
             .ToList();
         var brief = IsBrief(segments.Sum(s => Words(s.Text)));
+        var mediaLines = segments.Any(s => s.SpeechKind == SpeechKinds.Media && Words(s.Text) > 0);
         var suggestTags = TagSettings.Suggest(settings);
         ConversationAnswer answer;
         try
@@ -96,7 +97,7 @@ public sealed class EnrichConversationHandler(
             var tagNames = suggestTags && !brief ? await tags.NamesInUseAsync(ConversationPrompt.MaxTagNames, ct) : [];
             answer = await AskAsync(
                 new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, brief,
-                people.Select(p => p.Name).ToList(), tagNames, suggestTags, ct);
+                people.Select(p => p.Name).ToList(), tagNames, suggestTags, mediaLines, ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -141,7 +142,7 @@ public sealed class EnrichConversationHandler(
     /// <summary>One call for a transcript that fits a window; one per window and a merge call for a longer one.</summary>
     private async Task<ConversationAnswer> AskAsync(
         DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
-        IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, CancellationToken ct)
+        IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, bool mediaLines, CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -155,7 +156,7 @@ public sealed class EnrichConversationHandler(
         }
 
         var zoneName = UserTimeZone.Name(zone);
-        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief, suggestTags);
+        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief, suggestTags, mediaLines);
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
@@ -165,7 +166,7 @@ public sealed class EnrichConversationHandler(
         var answer = parts.Count == 1
             ? parts[0]
             : await CompleteAsync(
-                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags),
+                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags, mediaLines),
                 ConversationPrompt.UserForMerge(startedAt, parts, zone, people, tagNames), ct);
         var result = brief ? answer with { Tasks = [] } : answer;
         return brief || !suggestTags ? result with { Tags = [] } : result;

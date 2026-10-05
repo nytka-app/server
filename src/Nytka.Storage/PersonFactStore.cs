@@ -24,7 +24,12 @@ public sealed record KnownFact(Guid PersonId, string Text);
 /// A segment as fact extraction reads it. <see cref="PersonId"/> is the person the label rule gives it (null when
 /// none) and <see cref="IsUser"/> whether it is the wearer's, which wins over any person.
 /// </summary>
-public sealed record FactSegment(long Id, DateTime StartedAt, string? Speaker, string Text, bool IsUser, Guid? PersonId);
+public sealed record FactSegment(
+    long Id, DateTime StartedAt, string? Speaker, string Text, bool IsUser, Guid? PersonId, string? SpeechKind = null)
+{
+    /// <summary>Whether the speech kind that applies is media: such a line is never a fact's evidence (docs/specs/speech-kind.md).</summary>
+    public bool IsMedia => SpeechKind == Storage.SpeechKinds.Media;
+}
 
 /// <summary>A conversation as fact extraction reads it. <see cref="LastSegmentId"/> is the highest segment id among <see cref="Segments"/>.</summary>
 public sealed record FactInput(string? Title, DateTime StartedAt, long? LastSegmentId, IReadOnlyList<FactSegment> Segments);
@@ -169,7 +174,8 @@ public sealed class PersonFactStore(NpgsqlDataSource dataSource)
         var rows = (await connection.QueryAsync<FactSegment>(new CommandDefinition(
             $"""
             select s.id as Id, s.started_at as StartedAt, {SpeakerLabel.Column} as Speaker, s.text as Text,
-                   ({SpeakerLabel.IsUser}) is true as IsUser, {SpeakerLabel.PersonId} as PersonId
+                   ({SpeakerLabel.IsUser}) is true as IsUser, {SpeakerLabel.PersonId} as PersonId,
+                   s.speech_kind as SpeechKind
             from segments s {SpeakerLabel.Joins}
             where s.conversation_id = @conversationId
             order by s.started_at, s.id

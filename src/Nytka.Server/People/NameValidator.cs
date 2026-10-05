@@ -144,7 +144,7 @@ public static partial class NameValidator
     /// <summary>
     /// The segment that says the name: the model's own when its text does, else the nearest of the
     /// <see cref="EvidenceReach"/> segments either side that does (the earlier on a tie); null when none does. A segment of fewer
-    /// than <paramref name="minWords"/> words does not (a name's evidence is <see cref="MinEvidenceWords"/>; a role's is 1).
+    /// than <paramref name="minWords"/> words does not, and nor does a media line (a name's evidence is <see cref="MinEvidenceWords"/>; a role's is 1).
     /// </summary>
     public static NameSegment? Evidence(string name, long segmentId, IReadOnlyList<NameSegment> segments, int minWords = MinEvidenceWords)
     {
@@ -163,7 +163,7 @@ public static partial class NameValidator
         {
             foreach (var index in distance == 0 ? [at] : new[] { at - distance, at + distance })
             {
-                if (index >= 0 && index < segments.Count && WordCount(segments[index].Text) >= minWords && Occurs(name, segments[index].Text))
+                if (index >= 0 && index < segments.Count && !segments[index].IsMedia && WordCount(segments[index].Text) >= minWords && Occurs(name, segments[index].Text))
                 {
                     return segments[index];
                 }

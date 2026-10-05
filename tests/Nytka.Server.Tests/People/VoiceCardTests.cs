@@ -164,6 +164,26 @@ public sealed class VoiceCardTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_group_whose_line_is_media_in_on_has_no_card_and_in_shadow_keeps_it()
+    {
+        var lone = await Lone(6, Vec((5, 1)));
+        await Run();
+        var segment = await db.ScalarAsync<long>("select id from segments");
+        await db.ExecuteAsync("update segments set speech_guess = 'media' where id = @segment", new { segment });
+        var speech = _server.Get<SpeechStore>();
+        (await Client.PatchAsJsonAsync("/api/v1/settings", new { values = new Dictionary<string, string> { ["speech.mode"] = "on" } })).EnsureSuccessStatusCode();
+
+        await speech.ApplyAsync(SpeechKinds.Shadow, 0.8f, default);
+        Assert.Equal(lone.Conversation.ToString(), Assert.Single(await Cards()).GetProperty("conversationId").GetString());
+
+        await speech.ApplyAsync(SpeechKinds.On, 0.8f, default);
+        Assert.Empty(await Cards());
+
+        await speech.MarkAsync(segment, SpeechKinds.Person, default);
+        Assert.Single(await Cards());
+    }
+
+    [Fact]
     public async Task A_30_s_stretch_gives_a_10_s_clip_and_the_lines_it_starts_in()
     {
         var conversation = await Conversation();

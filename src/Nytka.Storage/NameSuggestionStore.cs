@@ -12,8 +12,11 @@ namespace Nytka.Storage;
 /// </summary>
 public sealed record NameSegment(
     long Id, DateTime StartedAt, long BatchId, string? Speaker, string? SpeakerId, string? Label, string Text, bool Unnamed,
-    bool IsWearer, Guid? PersonId = null, bool PersonNamed = true)
+    bool IsWearer, Guid? PersonId = null, bool PersonNamed = true, string? SpeechKind = null)
 {
+    /// <summary>Whether the speech kind that applies is media: such a line is no target and no evidence (docs/specs/speech-kind.md).</summary>
+    public bool IsMedia => SpeechKind == Storage.SpeechKinds.Media;
+
     public bool RoleOnly => !IsWearer && PersonId is not null && !PersonNamed;
 }
 
@@ -106,7 +109,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
                    {SpeakerLabel.Column} as Label, s.text as Text,
                    ({SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is null) as Unnamed,
                    coalesce({SpeakerLabel.IsUser}, false) as IsWearer,
-                   {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonNamed} as PersonNamed
+                   {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonNamed} as PersonNamed, s.speech_kind as SpeechKind
             from segments s {SpeakerLabel.Joins}
             where s.conversation_id = @conversationId
             order by s.started_at, s.id

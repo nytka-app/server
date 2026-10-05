@@ -59,8 +59,8 @@ public sealed class SegmentRow
 
     public bool SpeechMarked { get; init; }
 
-    /// <summary>What a model reads as the speaker: the wearer, else the person's name, else the provider's label.</summary>
-    public string? Label() => IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
+    /// <summary>What a model reads as the speaker: <c>Media</c> for a media line, else the wearer, else the person's name, else the provider's label.</summary>
+    public string? Label() => SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
 }
 
 /// <summary>What <c>/status</c> reports about the AI runs: how many wait, and the newest failed and finished ones.</summary>
