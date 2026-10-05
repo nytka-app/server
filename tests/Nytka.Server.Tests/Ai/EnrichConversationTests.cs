@@ -153,10 +153,13 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
     [Theory]
     [InlineData("not json at all")]
     [InlineData("""{"title":"t","summary":"s"}""")]
-    [InlineData("""{"title":"t","summary":"s","tasks":[],"extra":1}""")]
-    [InlineData("""{"title":"t","summary":3,"tasks":[]}""")]
-    [InlineData("""{"title":"t","summary":"s","tasks":["Call Ben"]}""")] // the old shape: strings
-    [InlineData("""{"title":"t","summary":"s","tasks":[{"text":"Call Ben"}]}""")] // person is required
+    [InlineData("""{"title":"t","summary":"s","tasks":[]}""")] // the shape before tags: tags is required
+    [InlineData("""{"title":"t","summary":"s","tasks":[],"tags":"work"}""")]
+    [InlineData("""{"title":"t","summary":"s","tasks":[],"tags":[null]}""")]
+    [InlineData("""{"title":"t","summary":"s","tasks":[],"tags":[],"extra":1}""")]
+    [InlineData("""{"title":"t","summary":3,"tasks":[],"tags":[]}""")]
+    [InlineData("""{"title":"t","summary":"s","tasks":["Call Ben"],"tags":[]}""")] // the old shape: strings
+    [InlineData("""{"title":"t","summary":"s","tasks":[{"text":"Call Ben"}],"tags":[]}""")] // person is required
     public async Task A_broken_answer_fails_the_attempt(string answer)
     {
         var id = await Seed(Talk);

@@ -63,6 +63,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
                 "people.suggestNames",
                 "people.voiceMatching", "people.voiceThreshold",
                 "people.facts",
+                "tags.suggest",
                 "calendar.icsUrl", "calendar.briefMinutes",
             ],
             items.EnumerateArray().Select(i => i.GetProperty("key").GetString()));

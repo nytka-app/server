@@ -11,8 +11,9 @@ public class ConversationPromptTests
         var schema = JsonSerializer.Deserialize<JsonElement>(ConversationPrompt.Schema);
 
         Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
-        Assert.Equal(["title", "summary", "tasks"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
-        Assert.Equal(["title", "summary", "tasks"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["title", "summary", "tasks", "tags"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["title", "summary", "tags", "tasks"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal("string", schema.GetProperty("properties").GetProperty("tags").GetProperty("items").GetProperty("type").GetString());
         var item = schema.GetProperty("properties").GetProperty("tasks").GetProperty("items");
         Assert.False(item.GetProperty("additionalProperties").GetBoolean());
         Assert.Equal(["text", "person"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
@@ -28,6 +29,33 @@ public class ConversationPromptTests
         Assert.StartsWith("Date: 2026-09-29 Tuesday\nPeople: Olena\n\n", ConversationPrompt.UserForMerge(started, [], people: ["Olena"]), StringComparison.Ordinal);
         Assert.DoesNotContain("People", ConversationPrompt.User(started, "line", people: []), StringComparison.Ordinal);
         Assert.Contains("copied exactly from the \"People\" list", ConversationPrompt.System("auto"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_user_messages_list_the_tags_in_use_up_to_100()
+    {
+        var started = new DateTimeOffset(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
+        var many = Enumerable.Range(1, 150).Select(i => $"t{i}").ToList();
+
+        Assert.Equal("Date: 2026-09-29 Tuesday\nPeople: Olena\nTags: work, repair\n\nTranscript:\nline", ConversationPrompt.User(started, "line", people: ["Olena"], tags: ["work", "repair"]));
+        Assert.StartsWith("Date: 2026-09-29 Tuesday\nTags: work\n\n", ConversationPrompt.UserForMerge(started, [], tags: ["work"]), StringComparison.Ordinal);
+        Assert.DoesNotContain("Tags:", ConversationPrompt.User(started, "line", tags: []), StringComparison.Ordinal);
+        var line = ConversationPrompt.User(started, "line", tags: many).Split('\n').Single(l => l.StartsWith("Tags: ", StringComparison.Ordinal));
+        Assert.Equal(100, line["Tags: ".Length..].Split(", ").Length);
+    }
+
+    [Fact]
+    public void The_system_message_asks_for_at_most_3_tags_and_keeps_the_excluded_subjects_out()
+    {
+        var system = ConversationPrompt.System("auto");
+
+        Assert.Contains("at most 3 short lowercase tags", system, StringComparison.Ordinal);
+        Assert.Contains("never a person's name", system, StringComparison.Ordinal);
+        Assert.Contains("health, religion, ethnicity or politics, or about how someone sounds", system, StringComparison.Ordinal);
+        Assert.Contains("Tags: return an empty list.", ConversationPrompt.System("auto", brief: true), StringComparison.Ordinal);
+        Assert.Contains("Tags: return an empty list.", ConversationPrompt.System("auto", suggestTags: false), StringComparison.Ordinal);
+        Assert.DoesNotContain("at most 3", ConversationPrompt.System("auto", suggestTags: false), StringComparison.Ordinal);
+        Assert.Contains("one tag list", ConversationPrompt.SystemForMerge("auto"), StringComparison.Ordinal);
     }
 
     [Theory]

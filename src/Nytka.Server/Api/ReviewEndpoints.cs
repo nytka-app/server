@@ -44,11 +44,13 @@ public static class ReviewEndpoints
     /// </summary>
     private static async Task<IResult> AcceptAsync(
         string kind, string id, NameSuggestionStore suggestions, VoiceGroupStore groups, PeopleStore people, ReviewStore review,
-        VoiceStore voices, SettingsService settings, TimeProvider time, CancellationToken ct)
+        VoiceStore voices, SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         switch (kind)
         {
+            case ReviewStore.TagKind when Guid.TryParse(id, out var tag):
+                return TagEndpoints.Accepted(await tagSuggestions.AcceptAsync(tag, now, ct));
             case ReviewStore.NameKind when Guid.TryParse(id, out var suggestion):
                 var (result, personId) = await suggestions.AcceptAsync(suggestion, now, ct);
                 return result switch
@@ -74,11 +76,13 @@ public static class ReviewEndpoints
     /// </summary>
     private static async Task<IResult> RejectAsync(
         string kind, string id, NameSuggestionStore suggestions, VoiceGroupStore groups, ReviewStore review, VoiceStore voices,
-        SettingsService settings, TimeProvider time, CancellationToken ct)
+        SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         switch (kind)
         {
+            case ReviewStore.TagKind when Guid.TryParse(id, out var tag):
+                return TagEndpoints.Rejected(await tagSuggestions.RejectAsync(tag, now, ct));
             case ReviewStore.NameKind when Guid.TryParse(id, out var suggestion):
                 return await suggestions.RejectAsync(suggestion, now, ct) switch
                 {

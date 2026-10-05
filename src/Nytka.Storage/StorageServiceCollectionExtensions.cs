@@ -40,6 +40,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<ReviewStore>();
         services.AddSingleton<CalendarStore>();
         services.AddSingleton<TagStore>();
+        services.AddSingleton<TagSuggestionStore>();
 
         return services;
     }

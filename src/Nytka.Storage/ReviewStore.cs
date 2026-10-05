@@ -5,9 +5,10 @@ namespace Nytka.Storage;
 
 /// <summary>
 /// What Nytka proposes for an item. Which fields are set depends on the kind: <c>name</c> has a name, maybe a person and a
-/// confidence; <c>voice</c> a person and a similarity; <c>label</c> a verdict (<see cref="IsUser"/>) and a similarity.
+/// confidence; <c>voice</c> a person and a similarity; <c>label</c> a verdict (<see cref="IsUser"/>) and a similarity; <c>tag</c> a
+/// <see cref="Tag"/> name and, for a person's tag, the person.
 /// </summary>
-public sealed record ReviewProposal(string? Name, Guid? PersonId, float? Confidence, float? Similarity, bool? IsUser);
+public sealed record ReviewProposal(string? Name, Guid? PersonId, float? Confidence, float? Similarity, bool? IsUser, string? Tag = null);
 
 /// <summary>One thing waiting for the owner's answer. <paramref name="Id"/> is a guid, or a segment id for a <c>label</c>.</summary>
 public sealed record ReviewItem(
@@ -22,6 +23,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
     public const string NameKind = "name";
     public const string VoiceKind = "voice";
     public const string LabelKind = "label";
+    public const string TagKind = "tag";
 
     /// <summary>The most label items offered, and how far back they reach.</summary>
     public const int MaxLabels = 20;
@@ -34,6 +36,8 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
     private sealed record Row(
         string Id, Guid ConversationId, string? Title, DateTime At, string Text, string? Name, Guid? PersonId, float? Confidence,
         float? Similarity, bool? IsUser);
+
+    private sealed record TagRow(string Id, Guid ConversationId, string? Title, DateTime At, string Text, string Tag, Guid? PersonId);
 
     private async Task<IEnumerable<ReviewItem>> QueryAsync(NpgsqlConnection connection, string kind, string sql, object args, CancellationToken ct) =>
         (await connection.QueryAsync<Row>(new CommandDefinition(sql, args, cancellationToken: ct))).Select(r => new ReviewItem(
@@ -100,6 +104,19 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
             limit @take
             """,
             new { userThreshold, margin = LabelMargin, since = now - LabelWindow, take = Math.Min(limit, MaxLabels) }, ct));
+        // The text is the summary the tag was proposed from.
+        items.AddRange((await connection.QueryAsync<TagRow>(new CommandDefinition(
+            """
+            select t.id::text as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, t.created_at as At,
+                   coalesce(c.ai_summary, '') as Text, t.name as Tag, t.person_id as PersonId
+            from tag_suggestions t
+            join conversations c on c.id = t.conversation_id
+            where t.status = 'pending'
+            order by t.created_at desc, t.id desc
+            limit @limit
+            """,
+            new { limit }, cancellationToken: ct))).Select(r => new ReviewItem(
+                TagKind, r.Id, r.ConversationId, r.Title, r.At, r.Text, new ReviewProposal(null, r.PersonId, null, null, null, r.Tag))));
         return items.OrderByDescending(i => i.At).ThenBy(i => i.Id, StringComparer.Ordinal).Take(limit).ToList();
     }
 

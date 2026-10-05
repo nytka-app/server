@@ -44,6 +44,15 @@ public sealed class TagStore(NpgsqlDataSource dataSource)
             new { prefix }, cancellationToken: ct))).ToList();
     }
 
+    /// <summary>The names of the <paramref name="limit"/> tags most in use, then by name: what the model is shown to reuse.</summary>
+    public async Task<IReadOnlyList<string>> NamesInUseAsync(int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<string>(new CommandDefinition(
+            $"select name from ({CountSelect}) t order by t.conversations + t.people desc, t.name limit @limit",
+            new { limit }, cancellationToken: ct))).ToList();
+    }
+
     public async Task<TagCount?> GetAsync(string name, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);

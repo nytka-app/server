@@ -11,7 +11,7 @@ namespace Nytka.Server.Tests;
 public sealed class FakeLlm : ILlmClient
 {
     public const string DefaultAnswer =
-        """{"title":"Lunch with Anna","summary":"They talked about the trip.","tasks":[{"text":"Call Ben","person":null},{"text":"Buy milk","person":null}]}""";
+        """{"title":"Lunch with Anna","summary":"They talked about the trip.","tasks":[{"text":"Call Ben","person":null},{"text":"Buy milk","person":null}],"tags":[]}""";
 
     private readonly List<LlmRequest> _requests = [];
 
@@ -39,7 +39,11 @@ public sealed class FakeLlm : ILlmClient
 
     /// <summary>An answer whose tasks name the person they are owed to.</summary>
     public static string AnswerFor(string title, string summary, params (string Text, string? Person)[] tasks) =>
-        JsonSerializer.Serialize(new { title, summary, tasks = tasks.Select(t => new { text = t.Text, person = t.Person }) });
+        JsonSerializer.Serialize(new { title, summary, tasks = tasks.Select(t => new { text = t.Text, person = t.Person }), tags = Array.Empty<string>() });
+
+    /// <summary>An answer with no tasks and the given proposed tags.</summary>
+    public static string AnswerTagged(string title, string summary, params string[] tags) =>
+        JsonSerializer.Serialize(new { title, summary, tasks = Array.Empty<string>(), tags });
 
     public Task<string> CompleteJsonAsync(LlmRequest request, CancellationToken ct)
     {

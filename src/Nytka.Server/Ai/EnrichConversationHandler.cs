@@ -5,6 +5,7 @@ using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
+using Nytka.Server.Tags;
 using Nytka.Storage;
 
 namespace Nytka.Server.Ai;
@@ -19,6 +20,7 @@ public sealed class EnrichConversationHandler(
     ConversationStore conversations,
     BatchStore batches,
     TaskStore tasks,
+    TagStore tags,
     NpgsqlDataSource dataSource,
     ILlmClient llm,
     IOptionsMonitor<LlmOptions> options,
@@ -85,12 +87,16 @@ public sealed class EnrichConversationHandler(
             .Select(s => new TaskPerson(s.PersonId!.Value, s.PersonName!))
             .DistinctBy(p => p.Id)
             .ToList();
+        var brief = IsBrief(segments.Sum(s => Words(s.Text)));
+        var suggestTags = TagSettings.Suggest(settings);
         ConversationAnswer answer;
         try
         {
+            // Up to 100 tag names go to the model, so none are read when proposals are off or the conversation is brief.
+            var tagNames = suggestTags && !brief ? await tags.NamesInUseAsync(ConversationPrompt.MaxTagNames, ct) : [];
             answer = await AskAsync(
-                new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, IsBrief(segments.Sum(s => Words(s.Text))),
-                people.Select(p => p.Name).ToList(), ct);
+                new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, brief,
+                people.Select(p => p.Name).ToList(), tagNames, suggestTags, ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -135,7 +141,7 @@ public sealed class EnrichConversationHandler(
     /// <summary>One call for a transcript that fits a window; one per window and a merge call for a longer one.</summary>
     private async Task<ConversationAnswer> AskAsync(
         DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
-        IReadOnlyList<string> people, CancellationToken ct)
+        IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -149,18 +155,20 @@ public sealed class EnrichConversationHandler(
         }
 
         var zoneName = UserTimeZone.Name(zone);
-        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief);
+        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief, suggestTags);
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
-            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people), ct));
+            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people, tagNames), ct));
         }
 
         var answer = parts.Count == 1
             ? parts[0]
             : await CompleteAsync(
-                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName), ConversationPrompt.UserForMerge(startedAt, parts, zone, people), ct);
-        return brief ? answer with { Tasks = [] } : answer;
+                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags),
+                ConversationPrompt.UserForMerge(startedAt, parts, zone, people, tagNames), ct);
+        var result = brief ? answer with { Tasks = [] } : answer;
+        return brief || !suggestTags ? result with { Tags = [] } : result;
     }
 
     private async Task<ConversationAnswer> CompleteAsync(string system, string user, CancellationToken ct) =>
@@ -195,6 +203,8 @@ public sealed class EnrichConversationHandler(
         }
 
         var created = await tasks.ReconcileAsync(connection, transaction, conversationId, aiTasks, now, ct);
+        await TagSuggestionStore.AddAsync(
+            connection, transaction, conversationId, null, await ProposedTagsAsync(connection, transaction, conversationId, answer.Tags, people, ct), now, ct);
         await events.PublishAsync(new NytkaEvent(NytkaEvent.ConversationReady, conversationId), connection, transaction, ct);
         foreach (var taskId in created)
         {
@@ -203,6 +213,30 @@ public sealed class EnrichConversationHandler(
 
         await transaction.CommitAsync(ct);
         return stored;
+    }
+
+    /// <summary>
+    /// The model's tags that may be proposed: valid ones, not held by the conversation and not a listed person's name or a word of
+    /// it, at most <see cref="ConversationPrompt.MaxTags"/>. A proposal for a name stored before, rejected ones included, is
+    /// dropped by the insert.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> ProposedTagsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, IReadOnlyList<string> proposed,
+        IReadOnlyList<TaskPerson> people, CancellationToken ct)
+    {
+        var names = proposed.Select(TagName.Normalize).OfType<string>().Distinct().ToList();
+        if (names.Count == 0)
+        {
+            return [];
+        }
+
+        var held = (await TagStore.OfConversationsAsync(connection, transaction, [conversationId], ct)).GetValueOrDefault(conversationId) ?? [];
+        var persons = people
+            .SelectMany(p => p.Name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Append(p.Name))
+            .Select(TagName.Normalize)
+            .OfType<string>()
+            .ToHashSet();
+        return names.Where(n => !held.Contains(n) && !persons.Contains(n)).Take(ConversationPrompt.MaxTags).ToList();
     }
 
     /// <summary>The listed person a name equals, ignoring case; null for no name or an unlisted one.</summary>
