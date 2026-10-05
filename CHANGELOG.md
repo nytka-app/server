@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/nytka-app/server/compare/v0.19.0...v0.20.0) (2026-10-05)
+
+
+### Features
+
+* proposed tags for people, and the tags docs (T-5, T-7) ([#97](https://github.com/nytka-app/server/issues/97)) ([6431572](https://github.com/nytka-app/server/commit/64315724e985563bf23895c4478af99e6b278890))
+
 ## [0.19.0](https://github.com/nytka-app/server/compare/v0.18.0...v0.19.0) (2026-10-05)
 
 
