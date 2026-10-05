@@ -321,7 +321,7 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
 - A voice is what the label rule can tell apart: the provider's `speaker_id`, or, for a segment with
   only a `speaker` label, that label within one batch. A segment with neither cannot be named.
 - A conversation under 60 words, a repeated summary with no new speech, and a voice that already has
-  a name or is yours are not asked about. At most one suggestion per voice per run, the most
+  a name (a person known only by a [role](#roles) is asked for one) or is yours are not asked about. At most one suggestion per voice per run, the most
   confident.
 - **Accept** names the voice as `POST /api/v1/people` does, so every segment of that `speaker_id`
   shows the name, in every conversation; a suggestion for a batch's label names that batch's segments
@@ -337,6 +337,37 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
   suggested, nor is a voice that is also the wearer.
 - **Limits.** English audio playing nearby is a voice like any other: a name spoken by media can be
   suggested, and you reject it.
+
+### Roles
+
+Someone is often known by what they do before you know their name: the repairman. The same call may
+return a **role** for a voice when the transcript ties one to it: the voice says it ("I'm the plumber"), or
+another speaker refers to or addresses it so ("the repairman is here", "майстер приїхав", "дякую,
+майстре"). The model gives the base form of the word ("майстер"); the server stores what it sent after
+normalizing it as a [tag](#tags), with no stemming. The model is told to take nothing from how a voice sounds
+and to give no age, gender, health, religion, ethnicity or politics.
+
+- **Checks.** A role is one to three words of letters, none a pronoun, answer or generic address (the name
+  stoplist: "ти", "he", "friend", "друже"), is not one the wearer gave for themselves ("I'm the plumber"),
+  and occurs in the line shown as evidence or one of the three either side (any case ending). A suggestion
+  with neither a valid name nor a valid role is dropped; a name that fails with a valid role leaves the role.
+- **A role without a name** is a suggestion shown as "Repairman" (`name`, with `role: "repairman"`
+  and `named: false`). **Accept** creates a **new** person, never one found by name (two repairmen are two
+  people until you merge them): "Repairman", or "Repairman 2" when that name is taken, with `named: false`
+  and the role as a plain [tag](#tags) (`repairman`), and names the voice, label or batch as for any name.
+  With a name and a role, accept names the voice as above and the person also gets the role as a tag.
+- **A name said later.** The voice of a person known only by role is sent to the model as "Voice A (known
+  as: repairman)", and a name it hears for them becomes a suggestion with `target: "person"` and that
+  person's `personId`. Accept renames the person (their id, voices, segments and tags stay) and sets
+  `named: true`, or, when a person of that name exists, merges the role-only person into them. Renaming by hand
+  (`PATCH /api/v1/people/{id}` with `name`) also sets `named: true`. A role-only person is not listed among the
+  people already named in the prompt, and gets no role suggestion.
+- Nothing matches roles across conversations by text: the same repairman in another conversation is the
+  same person once the voice is linked (voice grouping, or by hand).
+- Roles are part of the name suggestion: they follow `Nytka__People__SuggestNames`, are rejected the same way
+  (a rejected role is never offered again for that voice), and `GET /api/v1/info` lists `roles` under `features`.
+  Existing conversations are asked again for roles through `POST /api/v1/people/backfill?force=true` (the name
+  checks are now version 2).
 
 A failed run is retried like [memories](#memories): three attempts, then an hour later, three rounds
 at most. The text of the conversation goes to your language model endpoint, as for a summary, together
@@ -450,7 +481,7 @@ log; `pg_dump` holds them.
 One list for everything waiting on your answer, so the app needs one screen. `GET /api/v1/review`
 merges four queues, newest first:
 
-- **`name`:** a pending [name suggestion](#people), shown with the line that carries the name.
+- **`name`:** a pending [name suggestion](#people), shown with the line that carries the name; it may carry a [role](#roles).
 - **`voice`:** a pending [voice match](#voice-grouping) ("Is this Olena?"), shown with its first three
   lines and its similarity, with no clip. None while voice matching is off.
 - **`label`:** a segment of the last 14 days that Nytka scored within 0.05 of `Nytka__Voice__UserThreshold`
@@ -458,7 +489,7 @@ merges four queues, newest first:
 - **`tag`:** a pending [proposed tag](#tags) for a conversation, shown with the conversation's summary.
 
 An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
-confidence, similarity, isUser, tag } }`; fields that do not belong to the kind are `null`. `id` is a
+confidence, similarity, isUser, tag, role, named } }`; fields that do not belong to the kind are `null`. `id` is a
 segment id for a label and a guid for the others. `limit` is 1 to 200, default 50.
 
 `POST /api/v1/review/{kind}/{id}/accept` and `/reject` answer an item. A `name` or `voice` item is
@@ -570,7 +601,7 @@ them; your own lines never count, and it is null when they were never heard), th
 and the open tasks owed to them (newest 100). `hasVoiceprint` and `voiceprintSamples` say whether a
 [voiceprint](#voice-grouping) exists and how many segments it was made from; the voiceprint itself
 never leaves the database. `404` for an unknown person. The `list_people` and `get_person` [MCP tools](#mcp)
-read the same page, without the two voiceprint fields.
+read the same page, without the two voiceprint fields. `named` is `false` for a person known so far only by a [role](#roles).
 
 ## Facts about people
 
@@ -637,7 +668,7 @@ curl -sS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" "$NYTKA_URL/api/v1/export
 ```
 
 Every line has a `type` first. The order is `header` (`format: "nytka-export"`, `version`, `generatedAt`,
-`serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `note`, `voiceprint` as true or false, `voices`, `tags`, `createdAt`),
+`serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `note`, `voiceprint` as true or false, `voices`, `tags`, `named`, `createdAt`),
 `conversation` (`id`, `source`, `externalId`, `startedAt`, `endedAt`, `status`, `title`, `titleEdited`,
 `summary`, `tags`, and `segments`: `{ startedAt, endedAt, text, speaker, speakerId, isUser, person }`), `task`
 (`id`, `conversationId`, `personId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`), `memory` (`id`, `text`,
@@ -950,7 +981,7 @@ through OAuth cannot connect.
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `list_digests` | `before?` (a date, `yyyy-MM-dd`), `limit?` (1 to 100, default 30) | `{ items: [{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }], nextBefore }` |
 | `search` | `query`, `kinds?` (a list of `conversation`, `memory` and `person`), `tag?`, `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
-| `list_people` | `tag?` | `{ items: [{ id, name, lastSeenAt, facts, tags }] }`, most recently heard first, then by name; `facts` counts live facts |
+| `list_people` | `tag?` | `{ items: [{ id, name, lastSeenAt, facts, tags, named }] }`, most recently heard first, then by name; `facts` counts live facts; `named` is false for a person known only by a [role](#roles) |
 | `get_person` | `id` (UUID) or `name` (any case), one of the two | the [person page](#person-page) as `GET /api/v1/people/{id}` returns it, without `hasVoiceprint` and `voiceprintSamples`; a tool error ("No such person.") for an unknown one |
 | `list_tags` | `query?` (names starting with it) | `{ items: [{ name, conversations, people, uses }] }`, most used first, as `GET /api/v1/tags` (see [Tags](#tags)) |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
@@ -1070,7 +1101,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags` and `tag-suggestions`, `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions` and `roles` (name suggestions carry roles and people have `named`), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1113,11 +1144,11 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts, and every voice group; your marks stay. `204`, also with nothing enrolled |
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
-| GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
-| PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
-| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags }`; `404` for an unknown person |
-| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker`, `label` or `group` (`groupId` is the voice group); see [People](#people) |
-| POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named); `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
+| GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
+| PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
+| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named }`; `404` for an unknown person |
+| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, role, named, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker`, `label`, `group` (`groupId` is the voice group) or `person` (the voice of a person known only by a [role](#roles); `personId` is that person); `role` is a tag name or null, and `named` false means the role alone, `name` being its display form; see [People](#people) |
+| POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named), creates the person known by a [role](#roles), or renames or merges the person of a `person` target; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/revalidate` | admin | Deletes pending name suggestions the model made that fail the [name checks](#people); `200` with `{ checked, removed, kept }` |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
 | POST | `/api/v1/people/backfill?limit=&force=` | admin | Queues [name suggestions and facts](#backfill) for summarized conversations they have not read (`force=true`: also names runs made under older checks); `limit` 1 to 1000 (default 200), `400` outside it; `200` with `{ queued: { suggestNames, facts }, skipped, remaining }`; `409` without a language model |
@@ -1125,7 +1156,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people/cards` | admin | `{ items }`, at most 4 and at most 2 per conversation, newest first, empty while voice matching is off: `{ kind, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }`; `kind` is `group` ("Who is this?", no person or similarity) or `match` ("Is this Olena?"); see [Voice grouping](#voice-grouping) |
 | GET | `/api/v1/people/cards/{kind}/{id}/clip` | admin | The card's clip, `audio/ogg`, at most 10 s; `404` for an unknown card or when its audio is gone |
 | POST | `/api/v1/people/cards/{kind}/{id}` | admin | Body `{ personId }`, `{ name }`, `{ skip: true }` or `{ reject: true }`, exactly one; naming or confirming answers `200` with the person, skipping (7 days) or rejecting `204`; `404` for an unknown card or person; `400` for a match named with someone else |
-| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser, tag } }`; `kind` is `name`, `voice` (none while voice matching is off), `label` or `tag`; see [Review](#review) |
+| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser, tag, role, named } }`; `kind` is `name`, `voice` (none while voice matching is off), `label` or `tag`; see [Review](#review) |
 | POST | `/api/v1/review/{kind}/{id}/accept` | admin | `name` and `voice`: `200` with the person; `label`: stores Nytka's verdict as your mark, `204`; `tag`: `200 { tags }`, the conversation's; `404` for an unknown kind or item; `409` for a name or tag that is no longer pending, or a tag when the conversation has 20 |
 | POST | `/api/v1/review/{kind}/{id}/reject` | admin | `204`; a `label` stores the opposite of Nytka's verdict as your mark; `404` and `409` as accept |
 | DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |
@@ -1168,10 +1199,10 @@ transcripts and your webhook secrets.
 - Daily digests stay until you delete their rows; they hold model-written text about your day, so a dump holds them too.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
-- A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
+- A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them). A person known only by a [role](#roles) is marked `named: false` until a name is given.
 - [Tags](#tags) (a name, and which conversations and people hold it) stay until you remove the last link, delete the tag, or delete what held it. They are words you chose and can be sensitive, so a dump holds them.
 - Proposed tags (the name, the conversation it came from and your answer) stay until you delete that conversation; accepted and rejected ones too, which is how a rejected tag stays rejected. They hold model-chosen words about your day, so a dump holds them.
-- Name suggestions (the name, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
+- Name suggestions (the name or role, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.

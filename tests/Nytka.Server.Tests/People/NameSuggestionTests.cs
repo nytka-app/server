@@ -20,7 +20,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
     private static string Answer(params (string Voice, string Name, long Segment, double Confidence)[] suggestions) =>
         JsonSerializer.Serialize(new
         {
-            suggestions = suggestions.Select(s => new { voice = s.Voice, name = s.Name, segmentId = s.Segment, confidence = s.Confidence }),
+            suggestions = suggestions.Select(s => new { voice = s.Voice, name = s.Name, role = (string?)null, segmentId = s.Segment, confidence = s.Confidence }),
         });
 
     /// <summary>Four lines: a long unlabelled one, then voice "4" (SPEAKER_4), a labelled line with no voice id, and the wearer.</summary>

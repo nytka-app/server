@@ -28,7 +28,7 @@ public sealed class SuggestNamesHandler(
 
     public string Kind => JobKinds.SuggestNames;
 
-    public sealed record Suggestion(string Voice, string Name, long SegmentId, double Confidence);
+    public sealed record Suggestion(string Voice, string? Name, long SegmentId, double Confidence, string? Role);
 
     public sealed record Answer(IReadOnlyList<Suggestion> Suggestions);
 
@@ -94,11 +94,15 @@ public sealed class SuggestNamesHandler(
     }
 
     /// <summary>
-    /// The drop rules: a suggestion goes when its voice is not one sent or is the wearer's, its segment is not in the
-    /// conversation, its name fails <see cref="NameValidator.IsName"/>, is the wearer's (<paramref name="userName"/> or a
-    /// name the wearer gave for themselves), occurs in no segment near the one named (<see cref="NameValidator.Evidence"/>),
-    /// or its confidence is under 0.5. Of the rest, one per target, the most confident, with the segment that says the name
-    /// as evidence. A name equal to a person's carries that person.
+    /// The drop rules: a suggestion goes when its voice is not one sent or is the wearer's, or its confidence is under 0.5. Its
+    /// name is kept when it passes <see cref="NameValidator.IsName"/>, is not the wearer's (<paramref name="userName"/> or a
+    /// name the wearer gave for themselves) and occurs in a segment near the one named (<see cref="NameValidator.Evidence"/>).
+    /// Its role (docs/specs/tags.md, Roles) is kept when, as a tag name, it passes <see cref="NameValidator.IsRole"/>, is not
+    /// one the wearer gave for themselves and occurs in a segment near the one named; a person known only by role gets no role.
+    /// With neither the suggestion goes; with a role only it is a role-only candidate (the role's display form as the name,
+    /// <c>Named</c> false). Of the rest, one per target, the most confident, with the segment that says the name (else the
+    /// role) as evidence. A name equal to a named person's carries that person; for a person known only by role the candidate
+    /// carries that person, and a name equal to the role's own is dropped.
     /// </summary>
     public static IReadOnlyList<NameCandidate> Apply(
         IEnumerable<Suggestion> pooled, IReadOnlyList<NameTarget> targets, IReadOnlyList<NameSegment> segments, string? userName,
@@ -113,22 +117,48 @@ public sealed class SuggestNamesHandler(
         var best = new Dictionary<char, NameCandidate>();
         foreach (var suggestion in pooled)
         {
-            var name = ExtractMemoriesHandler.OneLine(suggestion.Name);
             if (VoiceOf(suggestion.Voice, targets) is not { } target
                 || target.SpeakerId is { } speaker && segments.Any(s => s.IsWearer && s.SpeakerId == speaker)
                 || !(suggestion.Confidence >= MinConfidence)
-                || best.TryGetValue(target.Letter, out var known) && known.Confidence >= suggestion.Confidence
-                || wearer.Any(w => NameValidator.SameName(name, w))
-                || NameValidator.Evidence(name, suggestion.SegmentId, segments) is not { } evidence
-                || !NameValidator.IsName(name, evidence.Text))
+                || best.TryGetValue(target.Letter, out var known) && known.Confidence >= suggestion.Confidence)
             {
                 continue;
             }
 
-            var person = people.GetValueOrDefault(name.ToLowerInvariant());
+            var name = suggestion.Name is null ? "" : ExtractMemoriesHandler.OneLine(suggestion.Name);
+            var nameLine = name.Length > 0
+                && !wearer.Any(w => NameValidator.SameName(name, w))
+                && !(target.KnownAs is { } own && string.Equals(name, own, StringComparison.OrdinalIgnoreCase))
+                && NameValidator.Evidence(name, suggestion.SegmentId, segments) is { } evidence
+                && NameValidator.IsName(name, evidence.Text)
+                    ? evidence
+                    : null;
+            var tag = target.Kind == "person" || suggestion.Role is null
+                ? null
+                : TagName.Normalize(ExtractMemoriesHandler.OneLine(suggestion.Role));
+            var roleLine = tag is not null
+                && NameValidator.IsRole(tag)
+                && !NameValidator.IsWearerRole(tag, segments)
+                    ? NameValidator.Evidence(NameValidator.RoleWords(tag), suggestion.SegmentId, segments)
+                    : null;
+            if (nameLine is null && roleLine is null)
+            {
+                continue;
+            }
+
+            var confidence = (float)Math.Min(suggestion.Confidence, 1);
+            var role = roleLine is null ? null : tag;
+            if (nameLine is null)
+            {
+                // Never matched to a person by name: two repairmen are two people.
+                best[target.Letter] = new NameCandidate(
+                    target.Kind, target.SpeakerId, target.SegmentIds, TagName.Display(tag!), null, roleLine!.Id, confidence, role, Named: false);
+                continue;
+            }
+
+            var person = target.Kind == "person" ? null : people.GetValueOrDefault(name.ToLowerInvariant());
             best[target.Letter] = new NameCandidate(
-                target.Kind, target.SpeakerId, target.SegmentIds, person?.Name ?? name, person?.Id, evidence.Id,
-                (float)Math.Min(suggestion.Confidence, 1));
+                target.Kind, target.SpeakerId, target.SegmentIds, person?.Name ?? name, target.PersonId ?? person?.Id, nameLine.Id, confidence, role);
         }
 
         return best.Values.ToList();
@@ -138,6 +168,11 @@ public sealed class SuggestNamesHandler(
     private static NameTarget? VoiceOf(string voice, IReadOnlyList<NameTarget> targets)
     {
         var text = voice.Trim();
+        if (text.IndexOf('(') is var bracket and >= 0)
+        {
+            text = text[..bracket].Trim();
+        }
+
         if (text.StartsWith("Voice ", StringComparison.OrdinalIgnoreCase))
         {
             text = text[6..].Trim();

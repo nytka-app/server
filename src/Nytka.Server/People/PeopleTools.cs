@@ -14,7 +14,7 @@ public sealed record McpPersonList(IReadOnlyList<PersonSummary> Items);
 public sealed record McpPerson(
     Guid Id, string Name, string? Note, DateTime CreatedAt, DateTime? LastSeenAt, string[] Voices,
     IReadOnlyList<PersonConversation> Conversations, IReadOnlyList<PersonFactRow> Facts, IReadOnlyList<TaskRow> OpenTasks,
-    IReadOnlyList<string> Tags);
+    IReadOnlyList<string> Tags, bool Named);
 
 /// <summary>The <c>list_people</c> and <c>get_person</c> tools (docs/specs/people.md, API): what REST returns, no voiceprint field.</summary>
 [McpServerToolType]
@@ -68,7 +68,8 @@ public sealed class PeopleTools(PeopleStore people)
         }
 
         return Ok(new McpPerson(
-            view.Id, view.Name, view.Note, view.CreatedAt, view.LastSeenAt, view.Voices, view.Conversations, view.Facts, view.OpenTasks, view.Tags));
+            view.Id, view.Name, view.Note, view.CreatedAt, view.LastSeenAt, view.Voices, view.Conversations, view.Facts, view.OpenTasks, view.Tags,
+            view.Named));
     }
 
     private static CallToolResult Ok<T>(T value)

@@ -13,7 +13,7 @@ public abstract record ExportLine
     public abstract string Type { get; }
 }
 
-public sealed record ExportPerson(Guid Id, string Name, string? Note, bool Voiceprint, IReadOnlyList<string> Voices, IReadOnlyList<string> Tags, DateTime CreatedAt) : ExportLine
+public sealed record ExportPerson(Guid Id, string Name, string? Note, bool Voiceprint, IReadOnlyList<string> Voices, IReadOnlyList<string> Tags, bool Named, DateTime CreatedAt) : ExportLine
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "person";
@@ -83,7 +83,7 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
 
     private sealed record VoiceRow(Guid PersonId, string SpeakerId);
 
-    private sealed record PersonRow(Guid Id, string Name, string? Note, bool Voiceprint, DateTime CreatedAt);
+    private sealed record PersonRow(Guid Id, string Name, string? Note, bool Voiceprint, bool Named, DateTime CreatedAt);
 
     private sealed record DigestRaw(Guid Id, string LocalDate, string Headline, string Overview, string Body, DateTime CreatedAt);
 
@@ -99,14 +99,14 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
         var people = (await connection.QueryAsync<PersonRow>(new CommandDefinition(
             """
             select id as Id, name as Name, note as Note, exists (select 1 from person_voiceprints v where v.person_id = people.id) as Voiceprint,
-                   created_at as CreatedAt
+                   named as Named, created_at as CreatedAt
             from people order by lower(name), id
             """, transaction: transaction, cancellationToken: ct))).ToList();
         var personTags = await TagStore.OfPeopleAsync(connection, transaction, people.Select(p => p.Id).ToArray(), ct);
         foreach (var person in people)
         {
             yield return new ExportPerson(
-                person.Id, person.Name, person.Note, person.Voiceprint, voices[person.Id].ToList(), personTags.GetValueOrDefault(person.Id) ?? [], person.CreatedAt);
+                person.Id, person.Name, person.Note, person.Voiceprint, voices[person.Id].ToList(), personTags.GetValueOrDefault(person.Id) ?? [], person.Named, person.CreatedAt);
         }
 
         DateTime? afterAt = null;

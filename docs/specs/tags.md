@@ -102,10 +102,14 @@ the voice (the voice says "I'm the plumber", or another speaker says "the repair
 addresses it as "майстре"), as the base form of the word in the conversation's language, singular and
 lowercase ("майстер", not "майстре"); never from how the voice sounds, and never age, gender, health,
 religion, ethnicity or politics. A voice of a person known only by role is sent as `Voice A (known as:
-repairman)`, so a name said later is proposed for that person.
+repairman)` (the role is the person's name without its number), so a name said later is proposed for that person.
 
-**Apply.** The role is normalized as a tag; an invalid one becomes null. A suggestion with neither a
-valid name nor a role is dropped. Otherwise the rules of [people.md](people.md) Layer 1 stand.
+**Apply.** The role is normalized as a tag; an invalid one becomes null. It must also be 1 to 3 words of
+letters, none a pronoun, answer, interjection or generic address (the name stoplist, without its capital-letter
+exception), not a role the wearer gave for themselves, and it must occur (any case ending) in the segment the
+model named or one of the three either side, else it becomes null. A person known only by role gets no role. A
+suggestion with neither a valid name nor a role is dropped. Otherwise the rules of [people.md](people.md)
+Layer 1 stand. `NameValidator.Version` goes to 2, so `backfill?force=true` asks old conversations for roles.
 
 **What is stored.** `name_suggestions` gains `role text null` and `named boolean`. A role-only
 suggestion stores the role's display form in `name` ("Repairman": first letter upper case, `-` as a
