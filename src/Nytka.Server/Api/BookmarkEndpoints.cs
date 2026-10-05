@@ -144,7 +144,7 @@ public static partial class BookmarkEndpoints
     }
 
     /// <summary>A time with an explicit offset (<c>Z</c> or <c>+hh:mm</c>); one without would mean the server's zone.</summary>
-    private static bool HasOffset(string value) => OffsetPattern().IsMatch(value);
+    internal static bool HasOffset(string value) => OffsetPattern().IsMatch(value);
 
     [System.Text.RegularExpressions.GeneratedRegex(@"T.*(Z|[+-]\d{2}:\d{2})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex OffsetPattern();

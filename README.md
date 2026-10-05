@@ -162,7 +162,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Stt__Model` | no | | editable | Sent as `model`; OpenAI and Groq need it |
 | `Nytka__Stt__Language` | no | `auto` | editable | `auto` lets the endpoint detect the language; or a language tag such as `uk` or `en`, sent as `language` (providers usually want a two-letter ISO 639-1 code) |
 | `Nytka__Conversations__Gap` | no | `00:02:00` | editable | Silence that ends a conversation, `hh:mm:ss`, from 30 seconds to 1 hour |
-| `Nytka__Audio__RetentionDays` | no | `14` | editable | Days to keep speech audio, 0 to 3650; `0` deletes it once transcribed |
+| `Nytka__Audio__RetentionDays` | no | `14` | editable | Days to keep speech audio and [context ranges](#context-from-the-phone), 0 to 3650; `0` deletes audio once transcribed and ranges a day after they end |
 | `Nytka__Mute__Windows` | no | `[]` | editable | JSON list of weekly windows whose audio is dropped by capture time before transcription, at most 50, such as `[{"days":[1,2,3,4,5],"start":"09:30","end":"10:00"}]`. `days` are ISO weekdays of the start day (1 Monday to 7 Sunday), `start` and `end` are local `HH:mm`; an end at or before the start crosses midnight. Uses `Nytka__User__TimeZone` |
 | `Nytka__User__TimeZone` | no | `UTC` | editable | IANA time zone such as `Europe/Kyiv`: prompts and mute windows use it; an unknown id falls back to UTC |
 | `Nytka__Llm__BaseUrl` | no | | editable | Base URL of an OpenAI-compatible chat endpoint, without a query or fragment; the server calls `<base URL>/chat/completions` |
@@ -749,6 +749,20 @@ conversation stays in `GET /api/v1/bookmarks` alone (`conversationId` is then nu
 conversation keeps its bookmarks. The `bookmark.created` webhook and the `list_bookmarks` MCP tool
 carry the same fields.
 
+## Context from the phone
+
+The pendant also hears what your phone plays: a video, a podcast, the far side of a call on speaker. The app can
+tell the server when that happened, as a **range** for each stretch in which the phone played sound through its own
+loudspeaker (`kind` `media`) or was in a call (`call`). A range holds the `kind`, the `route` of the sound (`speaker`,
+`earpiece`, `headset`, `bluetooth` or `other`) and two times, and nothing else: never an app name, a title or a number.
+Android does not tell the app which app plays, and the app does not ask.
+
+The app sends ranges to `POST /api/v1/context/ranges` in batches of up to 500, each with an id it made, so a batch it
+retries changes nothing. It sends them while `/api/v1/info` lists `context-ranges` and its "Phone context" switch is on.
+`GET /api/v1/context/ranges` lists them. Nothing else reads them yet; they are the context for telling a person near you
+from a voice that comes out of a screen or a loudspeaker. The server keeps a range as long as speech audio
+(`Nytka__Audio__RetentionDays`; with `0`, a day after it ends) and logs counts only, never a time or an id.
+
 ## Daily digest
 
 Once a day the server writes a short account of your day: a headline, an overview of two to four
@@ -1155,7 +1169,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`) and `speech-kind` ([speech kinds](#speech-kind) on lines), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`) `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1183,6 +1197,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time and `beforeId` the id of the last item of the previous page (`nextBefore`, `nextBeforeId`), so equal times are not skipped; `limit` defaults to 30, caps at 100 |
 | POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `at` with an explicit offset, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
 | PATCH, DELETE | `/api/v1/bookmarks/{id}` | admin | PATCH body `{ note }`, `null` clears it; DELETE answers `204` |
+| POST | `/api/v1/context/ranges` | admin | Body `{ items: [{ id, kind, route, startedAt, endedAt }] }`, 1 to 500 items: `id` a UUID the app makes, `kind` `media` or `call`, `route` `speaker`, `earpiece`, `headset`, `bluetooth` or `other`, times with an explicit offset; `endedAt` not before `startedAt` and at most 12 hours after it, `startedAt` from 1970 on and at most 24 hours ahead of the server's clock. `200 { accepted, skipped }`, `skipped` counting ids the server already held; `400` names the field and the item (`items[2].kind`), never a value, and stores none of the batch; see [Context from the phone](#context-from-the-phone) |
+| GET | `/api/v1/context/ranges?since=&until=&limit=` | admin | `{ items }`, oldest start first: `{ id, kind, route, startedAt, endedAt }`; `since` keeps ranges that started at or after it and `until` those that started before it; `limit` defaults to 200, caps at 1000 |
 | GET | `/api/v1/digests?before=&limit=` | read | `{ items, nextBefore }`, newest date first; a digest is `{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }`; `before` is a date (`yyyy-MM-dd`) and keeps earlier ones, `nextBefore` is the last date of the page, set only when an earlier digest exists; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
@@ -1263,6 +1279,7 @@ transcripts and your webhook secrets.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.
+- [Context ranges](#context-from-the-phone) (a kind, a route and two times, with the id the app made; no app, title or number) stay as long as speech audio: retention deletes those that ended before the audio cutoff, or a day after they end with `RetentionDays=0`. They say when your phone played sound or was in a call, so a dump holds them.
 - Once you enroll [your voice](#your-voice): your voiceprint (192 numbers, plus the enrolled mean it
   resets to) until you delete it, and a fingerprint of each checked segment for as long as its speech
   audio stays (`RetentionDays`; with `0` not at all). The similarity and the verdict stay on the

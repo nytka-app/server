@@ -117,6 +117,7 @@ api.MapPeople();
 api.MapTags();
 api.MapImport();
 api.MapBookmarks();
+api.MapContext();
 api.MapDigests();
 api.MapExport();
 api.MapVoice();
