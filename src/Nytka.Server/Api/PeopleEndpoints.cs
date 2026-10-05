@@ -32,6 +32,7 @@ public static class PeopleEndpoints
         people.MapGet("/suggestions", SuggestionsAsync).AllowRead();
         people.MapPost("/backfill", BackfillAsync);
         people.MapPost("/suggestions/revalidate", RevalidateAsync);
+        people.MapPost("/suggestions/accept-by-name", AcceptByNameAsync);
         people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
         people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
@@ -135,7 +136,10 @@ public static class PeopleEndpoints
 
     public sealed record SuggestionList(IReadOnlyList<NameSuggestionRow> Items);
 
-    /// <summary>Names the model suggested for unnamed voices, newest first, at most 200. <c>status</c> is <c>pending</c> (default), <c>accepted</c> or <c>rejected</c>.</summary>
+    /// <summary>
+    /// Names the model suggested for unnamed voices, newest first, at most 200. <c>status</c> is <c>pending</c> (default), <c>accepted</c> or
+    /// <c>rejected</c>. <c>sameName</c> is the number of pending suggestions with the same name (any case), the item's own included.
+    /// </summary>
     private static async Task<IResult> SuggestionsAsync(string? status, NameSuggestionStore suggestions, CancellationToken ct) =>
         status is null or "pending" or "accepted" or "rejected"
             ? Results.Ok(new SuggestionList(await suggestions.ListAsync(status ?? "pending", MaxSuggestions, ct)))
@@ -154,6 +158,34 @@ public static class PeopleEndpoints
             SuggestionDecision.NotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such suggestion."),
             SuggestionDecision.NotPending => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The suggestion is no longer pending."),
             _ => Results.Ok(await people.GetAsync(personId!.Value, ct)),
+        };
+    }
+
+    public sealed record AcceptedByName(PersonRow? Person, int Accepted, int Skipped);
+
+    /// <summary>
+    /// Body <c>{ name }</c>. Accepts every pending suggestion of that name (any case) for a voice, a label or a voice group, as
+    /// the single accept does and in one transaction, so the name is one person. Suggestions of only a role and of a <c>person</c>
+    /// target stay. 200 with <c>{ person, accepted, skipped }</c> (<c>skipped</c>: a suggestion that can no longer apply, as a
+    /// voice that already belongs to someone else); 400 for a missing or blank name; 404 when none is pending; 409 when the
+    /// pending ones name different people or the name is that of a person known only by role.
+    /// </summary>
+    private static async Task<IResult> AcceptByNameAsync(
+        HttpRequest http, NameSuggestionStore suggestions, PeopleStore people, TimeProvider time, CancellationToken ct)
+    {
+        var body = await ReadObjectAsync(http, ct);
+        if (body is not { } json || Name(json) is not { } name)
+        {
+            return Invalid("name", $"Must be text of 1 to {MaxNameLength} characters.");
+        }
+
+        var result = await suggestions.AcceptByNameAsync(name, time.GetUtcNow(), ct);
+        return result.Result switch
+        {
+            AcceptByName.NotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No pending suggestion has that name."),
+            AcceptByName.Conflict => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The pending suggestions for that name disagree."),
+            _ => Results.Ok(new AcceptedByName(
+                result.PersonId is { } person ? await people.GetAsync(person, ct) : null, result.Accepted, result.Skipped)),
         };
     }
 

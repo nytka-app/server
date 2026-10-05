@@ -34,7 +34,7 @@ public sealed class SuggestionRevalidator(NameSuggestionStore suggestions, Setti
             var role = item.Named ? null : TagName.Normalize(item.Role);
             if (item.Named
                     ? !NameValidator.IsName(name, item.EvidenceText)
-                        || !NameValidator.Occurs(name, item.EvidenceText)
+                        || !NameValidator.IsEvidenceFor(name, item.EvidenceText)
                         || userName is not null && NameValidator.SameName(name, userName)
                         || wearer.Any(w => NameValidator.SameName(name, w))
                     : role is null

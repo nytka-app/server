@@ -15,6 +15,8 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool NameSuggestions => true;
 
+    private const int NameValidatorVersion = Nytka.Server.People.NameValidator.Version;
+
     private HttpClient Client => Server.CreateAuthorizedClient();
 
     private static string Answer(params (string Voice, string Name, long Segment, double Confidence)[] suggestions) =>
@@ -436,6 +438,192 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         await Client.PostAsync($"/api/v1/people/suggestions/{olena}/accept", null);
 
         Assert.Equal(["Olena"], await Db.QueryAsync<string>("select name from name_suggestions"));
+    }
+
+    /// <summary>A conversation with a long line and one line each for the given voices, and a pending suggestion of the name for each.</summary>
+    private async Task<Guid[]> Recurring(string name, params string[] speakerIds)
+    {
+        var id = await Seed(Talk);
+        var suggestions = new List<Guid>();
+        foreach (var speakerId in speakerIds)
+        {
+            await AddSegment(id, $"Hello there, {name}.", Now.AddMinutes(-3), $"SPEAKER_{speakerId}", speakerId);
+            suggestions.Add(await InsertSuggestion(id, speakerId, name, await MaxSegmentId(id)));
+        }
+
+        return [.. suggestions];
+    }
+
+    private async Task<Guid> InsertSuggestion(
+        Guid conversation, string? speakerId, string name, long evidence, string target = "speaker", string? role = null, bool named = true)
+    {
+        var suggestion = Guid.NewGuid();
+        await Db.ExecuteAsync(
+            """
+            insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, role, named, evidence_segment_id, confidence, created_at)
+            values (@suggestion, @conversation, @target, @speakerId, case when @target = 'label' then array[@evidence::bigint] else '{}' end, @name, @role, @named,
+                    @evidence, 0.9, now())
+            """, new { suggestion, conversation, target, speakerId, name, role, named, evidence });
+        return suggestion;
+    }
+
+    private Task<HttpResponseMessage> AcceptByName(string? name, HttpClient? client = null) =>
+        (client ?? Client).PostAsJsonAsync("/api/v1/people/suggestions/accept-by-name", new { name });
+
+    [Fact]
+    public async Task Accepting_by_name_names_every_voice_of_it_as_one_person()
+    {
+        await Recurring("Olena", "4", "5", "6");
+
+        var response = await AcceptByName("olena");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal((3, 0), (body.GetProperty("accepted").GetInt32(), body.GetProperty("skipped").GetInt32()));
+        Assert.Equal("Olena", body.GetProperty("person").GetProperty("name").GetString());
+        Assert.Equal(["4", "5", "6"], body.GetProperty("person").GetProperty("voices").EnumerateArray().Select(v => v.GetString()!).Order());
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from people"));
+        Assert.Equal(3, await Db.ScalarAsync<long>("select count(*) from name_suggestions where status = 'accepted'"));
+        Assert.Empty(await Pending());
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_again_finds_nothing_pending()
+    {
+        await Recurring("Olena", "4", "5");
+        await AcceptByName("Olena");
+
+        Assert.Equal(HttpStatusCode.NotFound, (await AcceptByName("Olena")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await AcceptByName("Nobody")).StatusCode);
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from people"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_skips_a_voice_that_already_belongs_to_someone_else()
+    {
+        await Recurring("Olena", "4", "5", "6");
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (gen_random_uuid(), 'Marko', now())");
+        await Db.ExecuteAsync("insert into person_voices (speaker_id, person_id, created_at) select '5', id, now() from people where name = 'Marko'");
+
+        var body = await (await AcceptByName("Olena")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal((2, 1), (body.GetProperty("accepted").GetInt32(), body.GetProperty("skipped").GetInt32()));
+        Assert.Equal("Marko", await Db.ScalarAsync<string>("select p.name from person_voices v join people p on p.id = v.person_id where v.speaker_id = '5'"));
+        Assert.Equal(2, await Db.ScalarAsync<long>("select count(*) from people"));
+        Assert.Equal(["4", "6"], (await Db.QueryAsync<string>("select speaker_id from person_voices v join people p on p.id = v.person_id where p.name = 'Olena' order by 1")));
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from name_suggestions where status = 'pending'"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_leaves_role_only_and_person_suggestions_and_other_names()
+    {
+        var id = await Seed(Talk);
+        await AddSegment(id, "Hello there, Olena.", Now.AddMinutes(-3), "SPEAKER_4", "4");
+        var evidence = await MaxSegmentId(id);
+        await InsertSuggestion(id, "4", "Olena", evidence);
+        await InsertSuggestion(id, "5", "Olena", evidence, role: "repairman", named: false);
+        await InsertSuggestion(id, "6", "Marko", evidence);
+
+        var body = await (await AcceptByName("Olena")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(1, body.GetProperty("accepted").GetInt32());
+        Assert.Equal(["Marko", "Olena"], (await Db.QueryAsync<string>("select name from name_suggestions where status = 'pending'")).Order());
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from people"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_a_name_only_a_role_suggestion_has_is_not_found()
+    {
+        var id = await Seed(Talk);
+        await AddSegment(id, "Hello there, repairman.", Now.AddMinutes(-3), "SPEAKER_4", "4");
+        await InsertSuggestion(id, "4", "Repairman", await MaxSegmentId(id), role: "repairman", named: false);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await AcceptByName("Repairman")).StatusCode);
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from people"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_labels_the_segments_of_a_label_suggestion_too()
+    {
+        var (id, _, voice, label, _) = await Talked();
+        await InsertSuggestion(id, "4", "Olena", voice);
+        await InsertSuggestion(id, null, "Olena", label, target: "label");
+
+        var body = await (await AcceptByName("Olena")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(2, body.GetProperty("accepted").GetInt32());
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from people"));
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from segments where person_id is not null"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_is_refused_for_a_read_token_and_a_missing_or_blank_name()
+    {
+        await Recurring("Olena", "4");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await AcceptByName("Olena", Server.CreateClientWithScope("read"))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await AcceptByName(null)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await AcceptByName("   ")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/v1/people/suggestions/accept-by-name", new { })).StatusCode);
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from name_suggestions where status = 'pending'"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from people"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_is_a_conflict_when_the_pending_ones_name_different_people()
+    {
+        var suggestions = await Recurring("Olena", "4", "5");
+        var other = await Db.ScalarAsync<string>(
+            "insert into people (id, name, created_at) values (gen_random_uuid(), 'Marko', now()) returning id::text");
+        var third = await Db.ScalarAsync<string>(
+            "insert into people (id, name, created_at) values (gen_random_uuid(), 'Dana', now()) returning id::text");
+        await Db.ExecuteAsync("update name_suggestions set person_id = @other::uuid where id = @a", new { other, a = suggestions[0] });
+        await Db.ExecuteAsync("update name_suggestions set person_id = @third::uuid where id = @b", new { third, b = suggestions[1] });
+
+        Assert.Equal(HttpStatusCode.Conflict, (await AcceptByName("Olena")).StatusCode);
+        Assert.Equal(2, await Db.ScalarAsync<long>("select count(*) from name_suggestions where status = 'pending'"));
+    }
+
+    [Fact]
+    public async Task Accepting_by_name_finds_the_person_who_has_the_name_and_makes_no_second_one()
+    {
+        await Recurring("Olena", "4", "5");
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (gen_random_uuid(), 'OLENA', now())");
+
+        var body = await (await AcceptByName("Olena")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("OLENA", body.GetProperty("person").GetProperty("name").GetString());
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from people"));
+        Assert.Equal(2, await Db.ScalarAsync<long>("select count(*) from person_voices"));
+    }
+
+    [Fact]
+    public async Task The_list_counts_the_pending_suggestions_with_the_same_name()
+    {
+        await Recurring("Olena", "4", "5", "6");
+        var id = await Seed(Talk);
+        await AddSegment(id, "Hello there, Marko.", Now.AddMinutes(-3), "SPEAKER_7", "7");
+        await InsertSuggestion(id, "7", "Marko", await MaxSegmentId(id));
+
+        var items = await Pending();
+
+        Assert.Equal([3, 3, 3], items.Where(i => i.GetProperty("name").GetString() == "Olena").Select(i => i.GetProperty("sameName").GetInt32()));
+        Assert.Equal(1, items.Single(i => i.GetProperty("name").GetString() == "Marko").GetProperty("sameName").GetInt32());
+    }
+
+    [Fact]
+    public async Task A_one_word_evidence_line_gets_no_suggestion()
+    {
+        var id = await Seed(Talk);
+        await AddSegment(id, "Hello there.", Now.AddMinutes(-4), "SPEAKER_4", "4");
+        await AddSegment(id, "Olena.", Now.AddMinutes(-3), "SPEAKER_9");
+        var ids = await Db.QueryAsync<long>("select id from segments where conversation_id = @id order by started_at", new { id });
+        Llm.Respond = _ => Answer(("Voice A", "Olena", ids[2], 0.9));
+
+        await Suggest(id);
+
+        Assert.Equal(0, await Rows());
+        Assert.Equal(NameValidatorVersion, await Db.ScalarAsync<int>("select validator from people_runs where kind = 'names'"));
     }
 
     [Fact]

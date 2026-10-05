@@ -33,7 +33,7 @@ public sealed record NameCandidate(
 
 public sealed record NameSuggestionRow(
     Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
-    float Confidence, NameEvidence Evidence);
+    float Confidence, NameEvidence Evidence, int SameName = 1);
 
 public sealed record NameEvidence(long SegmentId, DateTime StartedAt, string Text);
 
@@ -44,7 +44,12 @@ public sealed record NameRun(string Status, long? ThroughSegmentId, int Failures
 /// <summary>A pending suggestion as revalidation reads it, with the text of its evidence segment.</summary>
 public sealed record PendingName(Guid Id, Guid ConversationId, string Name, string? Role, bool Named, string EvidenceText);
 
-public enum SuggestionDecision { Ok, NotFound, NotPending }
+public enum SuggestionDecision { Ok, NotFound, NotPending, Skipped }
+
+public enum AcceptByName { Ok, NotFound, Conflict }
+
+/// <summary>What accepting every pending suggestion for one name did: the person, how many were applied and how many could not be.</summary>
+public sealed record AcceptByNameResult(AcceptByName Result, Guid? PersonId = null, int Accepted = 0, int Skipped = 0);
 
 /// <summary>Name suggestions (<c>name_suggestions</c>) and the record of the runs that make them (<c>people_runs</c>, kind <c>names</c>).</summary>
 public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
@@ -57,7 +62,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
     private sealed record Row(
         Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
-        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText);
+        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText, int SameName);
 
     // A class, not a record: Npgsql reports an int8[] column as System.Array, which a constructor parameter of long[] does not match.
     private sealed class Pending
@@ -249,7 +254,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             """
             select n.id as Id, n.conversation_id as ConversationId, n.target as Target, n.speaker_id as SpeakerId,
                    n.group_id as GroupId, n.name as Name, n.role as Role, n.named as Named, n.person_id as PersonId, n.confidence as Confidence,
-                   e.id as EvidenceSegmentId, e.started_at as EvidenceStartedAt, e.text as EvidenceText
+                   e.id as EvidenceSegmentId, e.started_at as EvidenceStartedAt, e.text as EvidenceText,
+                   (select count(*)::int from name_suggestions p where p.status = 'pending' and lower(p.name) = lower(n.name)) as SameName
             from name_suggestions n
             join segments e on e.id = n.evidence_segment_id
             where n.status = @status
@@ -259,7 +265,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             new { status, limit }, cancellationToken: ct));
         return rows.Select(r => new NameSuggestionRow(
             r.Id, r.ConversationId, r.Target, r.SpeakerId, r.GroupId, r.Name, r.Role, r.Named, r.PersonId, r.Confidence,
-            new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText))).ToList();
+            new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText), r.SameName)).ToList();
     }
 
     /// <summary>
@@ -275,6 +281,80 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
+        var accepted = await AcceptAsync(connection, transaction, id, now, skipTaken: false, ct);
+        if (accepted.Result == SuggestionDecision.Ok)
+        {
+            await transaction.CommitAsync(ct);
+        }
+
+        return accepted;
+    }
+
+    /// <summary>
+    /// Accepts every pending <c>speaker</c>, <c>label</c> and <c>group</c> suggestion of a name that has no role only
+    /// (<c>named</c>), matched without case, in one transaction through the same code as <see cref="AcceptAsync(Guid, DateTimeOffset, CancellationToken)"/>,
+    /// so the name is one person. A suggestion that can no longer apply is skipped and leaves nothing behind: its voice
+    /// already belongs to another person, its segments all have a person, its group is gone, or an earlier accept dropped it.
+    /// <see cref="AcceptByName.NotFound"/> when none is pending; <see cref="AcceptByName.Conflict"/> when the pending
+    /// suggestions carry different people, or the name is that of a person known only by role.
+    /// </summary>
+    public async Task<AcceptByNameResult> AcceptByNameAsync(string name, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var pending = (await connection.QueryAsync<(Guid Id, Guid? PersonId)>(new CommandDefinition(
+            """
+            select id as Id, person_id as PersonId from name_suggestions
+            where status = 'pending' and named and target in ('speaker', 'label', 'group') and lower(name) = lower(@name)
+            order by created_at, id
+            for update
+            """,
+            new { name }, transaction, cancellationToken: ct))).ToList();
+        if (pending.Count == 0)
+        {
+            return new AcceptByNameResult(AcceptByName.NotFound);
+        }
+
+        if (pending.Select(p => p.PersonId).Where(p => p is not null).Distinct().Count() > 1
+            || await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "select exists (select 1 from people where lower(name) = lower(@name) and not named)", new { name }, transaction, cancellationToken: ct)))
+        {
+            return new AcceptByNameResult(AcceptByName.Conflict);
+        }
+
+        Guid? person = null;
+        var accepted = 0;
+        var skipped = 0;
+        foreach (var (id, _) in pending)
+        {
+            await transaction.SaveAsync("suggestion", ct);
+            var decision = await AcceptAsync(connection, transaction, id, now, skipTaken: true, ct);
+            if (decision.Result == SuggestionDecision.Ok)
+            {
+                person = decision.PersonId;
+                accepted++;
+            }
+            else
+            {
+                await transaction.RollbackAsync("suggestion", ct);
+                skipped++;
+            }
+        }
+
+        await transaction.CommitAsync(ct);
+        person ??= await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+            "select id from people where lower(name) = lower(@name)", new { name }, cancellationToken: ct));
+        return new AcceptByNameResult(AcceptByName.Ok, person, accepted, skipped);
+    }
+
+    /// <summary>
+    /// The body of both accepts, inside the caller's transaction, which the caller commits on <see cref="SuggestionDecision.Ok"/>.
+    /// With <paramref name="skipTaken"/> a suggestion that would change nothing, or take a voice from another person, is
+    /// <see cref="SuggestionDecision.Skipped"/>.
+    /// </summary>
+    private static async Task<(SuggestionDecision Result, Guid? PersonId)> AcceptAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, DateTimeOffset now, bool skipTaken, CancellationToken ct)
+    {
         var row = await connection.QuerySingleOrDefaultAsync<Pending>(new CommandDefinition(
             """
             select id as Id, target as Target, speaker_id as SpeakerId, group_id as GroupId, segment_ids as SegmentIds,
@@ -306,7 +386,6 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             {
                 // The suggestion goes with the merged person (cascade), so there is no status to set.
                 await PeopleStore.MergeAsync(connection, transaction, known, target, ct);
-                await transaction.CommitAsync(ct);
                 return (SuggestionDecision.Ok, target);
             }
 
@@ -316,11 +395,25 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         }
         else if (row.Target == "speaker")
         {
+            if (skipTaken && await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "select exists (select 1 from person_voices v join people p on p.id = v.person_id where v.speaker_id = @speakerId and lower(p.name) <> lower(@name))",
+                    new { row.SpeakerId, row.Name }, transaction, cancellationToken: ct)))
+            {
+                return (SuggestionDecision.Skipped, null);
+            }
+
             person = await PersonAsync(connection, transaction, row, now, ct);
             await PeopleStore.LinkVoiceAsync(connection, transaction, person, row.SpeakerId!, now, ct);
         }
         else if (row.Target == "label")
         {
+            if (skipTaken && !await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "select exists (select 1 from segments where id = any(@segmentIds) and person_id is null)",
+                    new { segmentIds = row.SegmentIds }, transaction, cancellationToken: ct)))
+            {
+                return (SuggestionDecision.Skipped, null);
+            }
+
             person = await PersonAsync(connection, transaction, row, now, ct);
             await connection.ExecuteAsync(new CommandDefinition(
                 "update segments set person_id = @person where id = any(@segmentIds) and person_id is null",
@@ -331,11 +424,10 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             person = await PeopleStore.FindOrCreateAsync(connection, transaction, row.Name, now, ct);
             if (await VoiceGroupStore.ConfirmGroupAsync(connection, transaction, groupId, person, now, ct) != VoiceConfirm.Ok)
             {
-                return (SuggestionDecision.NotFound, null);
+                return (skipTaken ? SuggestionDecision.Skipped : SuggestionDecision.NotFound, null);
             }
 
             // The group goes with every suggestion for it, this one included (cascade), so there is no status to set.
-            await transaction.CommitAsync(ct);
             return (SuggestionDecision.Ok, person);
         }
         else
@@ -361,7 +453,6 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             """,
             new { id, row.Target, row.SpeakerId, personKey = row.Target == "person" ? row.PersonId?.ToString() : null, first = row.SegmentIds.Length == 0 ? (long?)null : row.SegmentIds[0] },
             transaction, cancellationToken: ct));
-        await transaction.CommitAsync(ct);
         return (SuggestionDecision.Ok, person);
     }
 

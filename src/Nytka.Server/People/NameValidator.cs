@@ -10,12 +10,15 @@ namespace Nytka.Server.People;
 /// </summary>
 public static partial class NameValidator
 {
-    public const int Version = 2;
+    public const int Version = 3;
     public const int MaxTokens = 3;
     public const int MaxLength = 40;
 
     /// <summary>The most words of a role (<c>dog-walker</c> is two).</summary>
     public const int MaxRoleTokens = 3;
+
+    /// <summary>The fewest words a line has to be evidence for a name: a name alone as a whole line ("Пока.") is no evidence.</summary>
+    public const int MinEvidenceWords = 2;
 
     /// <summary>How many segments either side of the model's segment are searched for the one that says the name.</summary>
     public const int EvidenceReach = 3;
@@ -56,6 +59,8 @@ public static partial class NameValidator
         "солнце", "зайка", "котик", "дети", "люди", "мужик", "чувак",
         "man", "guys", "dude", "bro", "buddy", "sir", "madam", "honey", "baby", "darling", "sweetie", "girl", "boy", "kid", "kids",
         "friend",
+        // observed non-names (version 3)
+        "should", "клас", "пока", "скепсис", "хулі", "цин", "спокійно", "єсть", "леді", "давай",
     };
 
     [GeneratedRegex(@"^\p{L}+(?:['’ʼ-]\p{L}+)*$")]
@@ -71,6 +76,15 @@ public static partial class NameValidator
     // What a wearer says to give their own role: "I'm the plumber", "I am a plumber", "я майстер".
     [GeneratedRegex(@"(?i:\b(?:i am|i['’]m|я))\s*[—–-]?\s*(?:(?i:the|a|an)\s+)?(?<role>\p{L}+(?:['’ʼ-]\p{L}+)*)")]
     private static partial Regex RoleIntroduction();
+
+    /// <summary>Whether <paramref name="word"/> is on the stoplist, in any case.</summary>
+    public static bool IsStoplisted(string word) => Stoplist.Contains(word.ToLowerInvariant());
+
+    /// <summary>How many words <paramref name="text"/> has.</summary>
+    public static int WordCount(string text) => Words().Count(text);
+
+    /// <summary>Whether <paramref name="text"/> can be the line that says <paramref name="name"/>: it holds every word of it and is at least <see cref="MinEvidenceWords"/> words long.</summary>
+    public static bool IsEvidenceFor(string name, string text) => WordCount(text) >= MinEvidenceWords && Occurs(name, text);
 
     public static string[] Tokens(string name) => name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
@@ -129,9 +143,10 @@ public static partial class NameValidator
 
     /// <summary>
     /// The segment that says the name: the model's own when its text does, else the nearest of the
-    /// <see cref="EvidenceReach"/> segments either side that does (the earlier on a tie); null when none does.
+    /// <see cref="EvidenceReach"/> segments either side that does (the earlier on a tie); null when none does. A segment of fewer
+    /// than <paramref name="minWords"/> words does not (a name's evidence is <see cref="MinEvidenceWords"/>; a role's is 1).
     /// </summary>
-    public static NameSegment? Evidence(string name, long segmentId, IReadOnlyList<NameSegment> segments)
+    public static NameSegment? Evidence(string name, long segmentId, IReadOnlyList<NameSegment> segments, int minWords = MinEvidenceWords)
     {
         var at = 0;
         while (at < segments.Count && segments[at].Id != segmentId)
@@ -148,7 +163,7 @@ public static partial class NameValidator
         {
             foreach (var index in distance == 0 ? [at] : new[] { at - distance, at + distance })
             {
-                if (index >= 0 && index < segments.Count && Occurs(name, segments[index].Text))
+                if (index >= 0 && index < segments.Count && WordCount(segments[index].Text) >= minWords && Occurs(name, segments[index].Text))
                 {
                     return segments[index];
                 }

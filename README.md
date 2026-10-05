@@ -328,11 +328,20 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
   only, as `PATCH /api/v1/segments/{id}` with `personId` does. A name equal to a person's (any case)
   uses that person. Other pending names for the same voice go. A suggestion for a [voice group](#voice-grouping)
   names the group as a card does, and goes with the group.
+- **Accept by name** (`POST /api/v1/people/suggestions/accept-by-name` with `{ "name": "Olena" }`, admin) accepts every pending
+  suggestion of that name (any case) for a voice, a label or a voice group, through the same code as accept and in one
+  transaction (all or nothing), so one name is one person. Role-only suggestions and `person` targets stay. It answers
+  `200 { person, accepted, skipped }`: `skipped` counts a suggestion that can no longer apply (its voice already belongs to
+  another person, all its segments have a person, its group is gone), which changes nothing. `404` when no pending
+  suggestion has the name, `400` for a missing or blank name, `409` when the pending ones carry different people or the
+  name is that of a person known only by a role. `GET /api/v1/people/suggestions` gives each item `sameName`, the number of
+  pending suggestions with the same name (its own included), so the app can offer "accept all 16".
 - **Reject** keeps the name on record, so it is never suggested again for that voice.
 - **Checks.** The server does not trust the model: a name is one to three capitalized words of letters
   (40 characters at most), none a pronoun, answer, interjection, evaluation or generic address
   ("Ти", "Нет", "Прикольно", "Девочка", "girl") unless the line writes it with a capital in mid-sentence,
-  and it must occur in the line shown as evidence (any case ending: Діма, Діму, Дімі). The wearer's own
+  and it must occur in the line shown as evidence (any case ending: Діма, Діму, Дімі), which must be at least two words
+  long: a name alone as a whole line ("Пока.") is no evidence, and a longer neighbouring line that says it is. The wearer's own
   name (`Nytka__Memories__UserName`, or a name the wearer gave for themselves, "I'm X", "я X") is never
   suggested, nor is a voice that is also the wearer.
 - **Limits.** English audio playing nearby is a voice like any other: a name spoken by media can be
@@ -367,7 +376,7 @@ and to give no age, gender, health, religion, ethnicity or politics.
 - Roles are part of the name suggestion: they follow `Nytka__People__SuggestNames`, are rejected the same way
   (a rejected role is never offered again for that voice), and `GET /api/v1/info` lists `roles` under `features`.
   Existing conversations are asked again for roles through `POST /api/v1/people/backfill?force=true` (the name
-  checks are now version 2).
+  checks are now version 3).
 
 A failed run is retried like [memories](#memories): three attempts, then an hour later, three rounds
 at most. The text of the conversation goes to your language model endpoint, as for a summary, together
@@ -387,7 +396,8 @@ finds publish `person.fact.created` like any other, so a webhook subscribed to i
 
 To read old conversations again after the name checks changed, call `POST /api/v1/people/suggestions/revalidate` (admin; deletes
 the pending suggestions that fail the checks and answers `{ checked, removed, kept }`), then `POST /api/v1/people/backfill?force=true`
-until `remaining` is `0`: `force` also queues conversations whose name run was made under older checks. A plain backfill queues
+until `remaining` is `0`: `force` also queues conversations whose name run was made under older checks (version 3: the
+two-word evidence line and a longer stoplist). A plain backfill queues
 only conversations with no finished run. Accepted and rejected suggestions stay.
 
 ## Tags
@@ -1152,8 +1162,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named }`; `404` for an unknown person |
-| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, role, named, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker`, `label`, `group` (`groupId` is the voice group) or `person` (the voice of a person known only by a [role](#roles); `personId` is that person); `role` is a tag name or null, and `named` false means the role alone, `name` being its display form; see [People](#people) |
+| GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, role, named, personId, confidence, sameName, evidence: { segmentId, startedAt, text } }` (`sameName`: pending suggestions with the same name, any case, itself included), `target` being `speaker`, `label`, `group` (`groupId` is the voice group) or `person` (the voice of a person known only by a [role](#roles); `personId` is that person); `role` is a tag name or null, and `named` false means the role alone, `name` being its display form; see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named), creates the person known by a [role](#roles), or renames or merges the person of a `person` target; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
+| POST | `/api/v1/people/suggestions/accept-by-name` `{ name }` | admin | Accepts every pending suggestion of that name (any case) for a voice, label or voice group as accept does, in one transaction, so the name is one person; role-only and `person` suggestions stay; `200` with `{ person, accepted, skipped }` (`skipped`: no longer applies, as a voice that belongs to someone else); `404` when none is pending; `400` for a missing or blank name; `409` when the pending ones disagree; see [People](#people) |
 | POST | `/api/v1/people/suggestions/revalidate` | admin | Deletes pending name suggestions the model made that fail the [name checks](#people); `200` with `{ checked, removed, kept }` |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
 | POST | `/api/v1/people/backfill?limit=&force=` | admin | Queues [name suggestions and facts](#backfill) for summarized conversations they have not read (`force=true`: also names runs made under older checks); `limit` 1 to 1000 (default 200), `400` outside it; `200` with `{ queued: { suggestNames, facts }, skipped, remaining }`; `409` without a language model |
