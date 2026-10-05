@@ -60,9 +60,10 @@ public sealed partial class MediaPeopleFeaturesTests(PostgresFixture db) : AiTes
     private async Task Guesses(string mode)
     {
         (await Client.PatchAsJsonAsync("/api/v1/settings", new { values = new Dictionary<string, string> { ["speech.mode"] = mode } })).EnsureSuccessStatusCode();
-        await Db.ExecuteAsync("update segments set speech_guess = 'media' where text in (@media, @marked)", new { media = Media, marked = Marked });
-        await Db.ExecuteAsync("update segments set speech_guess = 'call' where text = @call", new { call = Call });
-        await Db.ExecuteAsync("update segments set speech_guess = 'person' where speech_guess is null and speaker_id is not null");
+        await Db.ExecuteAsync("update segments set speech_guess = 'media', speech_version = 1 where text in (@media, @marked)", new { media = Media, marked = Marked });
+        await Db.ExecuteAsync("update segments set speech_guess = 'call', speech_version = 1 where text = @call", new { call = Call });
+        await Db.ExecuteAsync("update segments set speech_guess = 'person', speech_version = 1 where speech_guess is null and speaker_id is not null");
+        await Db.ExecuteAsync("update segments set speech_version = 1 where speech_version is null");
         await Store.MarkAsync(await SegmentId(Marked), SpeechKinds.Person, default);
         await Store.ApplyAsync(mode, 0.8f, default);
     }
@@ -187,7 +188,7 @@ public sealed partial class MediaPeopleFeaturesTests(PostgresFixture db) : AiTes
         await AddSegment(id, Nurse, Now.AddSeconds(-220), "SPEAKER_4", "4", false);
         await AddSegment(id, "Anna started a new job at the clinic.", Now.AddSeconds(-210), "SPEAKER_8", "8", false);
         var call = await SegmentId("Anna started a new job at the clinic.");
-        await Db.ExecuteAsync("update segments set speech_guess = 'call' where id = @call", new { call });
+        await Db.ExecuteAsync("update segments set speech_guess = 'call', speech_version = 1 where id = @call", new { call });
         await Store.ApplyAsync(SpeechKinds.On, 0.8f, default);
         Llm.Respond = request => request.SchemaName == "person_facts"
             ? JsonSerializer.Serialize(new
@@ -209,7 +210,7 @@ public sealed partial class MediaPeopleFeaturesTests(PostgresFixture db) : AiTes
         var through = await MaxSegmentId(await Db.ScalarAsync<Guid>("select id from conversations"));
         var conversation = await Db.ScalarAsync<Guid>("select id from conversations");
         await AddSegment(conversation, "Tonight on the news, the weather will stay dry across the whole country.", Now.AddSeconds(-170), "SPEAKER_9", "9", false);
-        await Db.ExecuteAsync("update segments set speech_guess = 'media', speech_kind = 'media' where speech_kind is null");
+        await Db.ExecuteAsync("update segments set speech_guess = 'media', speech_kind = 'media', speech_version = 1 where speech_kind is null");
         var last = await MaxSegmentId(conversation);
         Assert.NotEqual(through, last);
 
