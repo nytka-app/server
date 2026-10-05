@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/nytka-app/server/compare/v0.18.0...v0.19.0) (2026-10-05)
+
+
+### Features
+
+* roles in name suggestions for people known by what they do (T-6) ([#94](https://github.com/nytka-app/server/issues/94)) ([af77bad](https://github.com/nytka-app/server/commit/af77badc3289d5497c1cf3b827460b713da2588f))
+
 ## [0.18.0](https://github.com/nytka-app/server/compare/v0.17.0...v0.18.0) (2026-10-05)
 
 
