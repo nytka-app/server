@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/nytka-app/server/compare/v0.20.0...v0.21.0) (2026-10-05)
+
+
+### Features
+
+* stricter name evidence and accept every suggestion for one name ([#99](https://github.com/nytka-app/server/issues/99)) ([953b6ce](https://github.com/nytka-app/server/commit/953b6cec979976cf1f82dff01b42826c01142c05))
+
 ## [0.20.0](https://github.com/nytka-app/server/compare/v0.19.0...v0.20.0) (2026-10-05)
 
 
