@@ -107,7 +107,7 @@ public sealed class ExtractPersonFactsHandler(
     private async Task<Asked> AskAsync(FactInput input, IReadOnlyList<PersonRef> involved, CancellationToken ct)
     {
         var zone = UserTimeZone.Resolve(settings);
-        var lines = input.Segments.Select(s => new { s.Id, Line = TranscriptText.Render(
+        var lines = input.Segments.Where(s => !s.IsMedia).Select(s => new { s.Id, Line = TranscriptText.Render(
                 [new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)], zone).FirstOrDefault() })
             .Where(l => l.Line is not null)
             .Select(l => $"#{l.Id} {l.Line}")

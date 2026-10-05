@@ -28,7 +28,7 @@ public static class NamePrompt
         """;
 
     /// <summary>
-    /// One line per segment: <c>[HH:mm:ss] #id label: text</c>. A target shows as its letter's voice, any other segment with
+    /// One line per segment but a media line: <c>[HH:mm:ss] #id label: text</c>. A target shows as its letter's voice, any other segment with
     /// the label the label rule gives it.
     /// </summary>
     public static IReadOnlyList<string> Lines(NameInput input, IReadOnlyList<NameTarget> targets, TimeZoneInfo zone)
@@ -42,7 +42,7 @@ public static class NamePrompt
             }
         }
 
-        return TranscriptText.Render(input.Segments.Select(s =>
+        return TranscriptText.Render(input.Segments.Where(s => !s.IsMedia).Select(s =>
         {
             var label = voices.TryGetValue(s.Id, out var voice) ? voice : s.Label;
             return new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), string.IsNullOrWhiteSpace(label) ? $"#{s.Id}" : $"#{s.Id} {label}", s.Text);

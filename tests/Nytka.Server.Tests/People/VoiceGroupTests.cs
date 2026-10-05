@@ -141,6 +141,72 @@ public sealed class VoiceGroupTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0, await GroupJobs());
     }
 
+    private Task Kind(long segment, string? guess, string? mark = null) => db.ExecuteAsync(
+        "update segments set speech_guess = @guess, speech_manual = @mark where id = @segment", new { segment, guess, mark });
+
+    /// <summary>Sets <c>speech.mode</c>, as the scheduler would otherwise apply the default again, and applies it.</summary>
+    private async Task ApplySpeech(string mode)
+    {
+        (await _server.CreateAuthorizedClient().PatchAsJsonAsync("/api/v1/settings", new { values = new Dictionary<string, string> { ["speech.mode"] = mode } }))
+            .EnsureSuccessStatusCode();
+        await _server.Get<SpeechStore>().ApplyAsync(mode, 0.8f, default);
+    }
+
+    private async Task<long> Grouped() => await db.ScalarAsync<long>("select count(*) from segment_fingerprints where grouped");
+
+    [Fact]
+    public async Task In_shadow_guesses_leave_grouping_as_it_was()
+    {
+        var conversation = await Conversation();
+        await Kind(await Segment(conversation, Vec((2, 1))), SpeechKinds.Media);
+        await Kind(await Segment(conversation, Vec((2, 1), (3, 0.05f))), SpeechKinds.Call);
+        await Segment(conversation, Vec((5, 1)));
+        await ApplySpeech(SpeechKinds.Shadow);
+
+        await Run();
+
+        Assert.Equal(3, await Grouped());
+        Assert.Equal(2, await Count("voice_groups"));
+    }
+
+    [Fact]
+    public async Task In_on_media_and_call_lines_are_not_grouped_and_a_marked_person_is()
+    {
+        var conversation = await Conversation();
+        await Kind(await Segment(conversation, Vec((2, 1))), SpeechKinds.Media);
+        await Kind(await Segment(conversation, Vec((2, 1), (3, 0.05f))), SpeechKinds.Call);
+        await Kind(await Segment(conversation, Vec((5, 1))), SpeechKinds.Media, SpeechKinds.Person);
+        await Kind(await Segment(conversation, Vec((7, 1))), SpeechKinds.Person);
+        await ApplySpeech(SpeechKinds.On);
+
+        await Run();
+
+        Assert.Equal(2, await Grouped());
+        Assert.Equal(2, await Count("voice_groups"));
+        Assert.Equal(0, await db.ScalarAsync<long>(
+            "select count(*) from segment_fingerprints f join segments s on s.id = f.segment_id where f.grouped and s.speech_kind in ('media', 'call')"));
+    }
+
+    [Fact]
+    public async Task In_on_a_fingerprint_waits_for_its_guess_and_queues_no_grouping_meanwhile()
+    {
+        var conversation = await Conversation();
+        var segment = await Segment(conversation, Vec((2, 1)));
+        await ApplySpeech(SpeechKinds.On);
+
+        await Run();
+
+        Assert.Equal(0, await Grouped());
+        Assert.Equal(0, await GroupJobs());
+        Assert.False(await Groups.HasUngroupedAsync(Model, default));
+
+        await Kind(segment, SpeechKinds.Person);
+        await ApplySpeech(SpeechKinds.On);
+        await Run();
+
+        Assert.Equal(1, await Grouped());
+    }
+
     [Fact]
     public async Task A_group_centroid_is_the_running_mean_of_its_fingerprints()
     {

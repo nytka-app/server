@@ -15,10 +15,15 @@ public static class FactBasis
 
     /// <summary>
     /// The basis of a fact about <paramref name="personId"/> whose evidence is <paramref name="segment"/>, or null when
-    /// the fact is dropped. The wearer's line is the wearer's whatever person is set on it, as everywhere.
+    /// the fact is dropped, as it is for a media line. The wearer's line is the wearer's whatever person is set on it, as everywhere.
     /// </summary>
     public static string? Of(FactSegment segment, Guid personId, string personName)
     {
+        if (segment.IsMedia)
+        {
+            return null;
+        }
+
         if (segment.IsUser)
         {
             return About;
@@ -41,11 +46,12 @@ public static class FactBasis
 
     /// <summary>
     /// The people the model may write facts about: those the conversation shows as confirmed non-wearer speakers, and
-    /// known people named in any line, in the order of <paramref name="people"/>.
+    /// known people named in any line but a media one, in the order of <paramref name="people"/>.
     /// </summary>
     public static IReadOnlyList<PersonRef> Involved(IReadOnlyList<FactSegment> segments, IReadOnlyList<PersonRef> people)
     {
-        var speakers = segments.Where(s => !s.IsUser && s.PersonId is not null).Select(s => s.PersonId!.Value).ToHashSet();
-        return people.Where(p => speakers.Contains(p.Id) || segments.Any(s => Mentions(s.Text, p.Name))).ToList();
+        var heard = segments.Where(s => !s.IsMedia).ToList();
+        var speakers = heard.Where(s => !s.IsUser && s.PersonId is not null).Select(s => s.PersonId!.Value).ToHashSet();
+        return people.Where(p => speakers.Contains(p.Id) || heard.Any(s => Mentions(s.Text, p.Name))).ToList();
     }
 }

@@ -37,9 +37,11 @@ public static class ConversationPrompt
     /// The system message. <paramref name="outputLanguage"/> is <c>auto</c> or a language tag; times and dates in the
     /// messages are in <paramref name="timeZone"/>. <paramref name="brief"/> is for a conversation too short for tasks.
     /// <paramref name="suggestTags"/> is false when the owner turned tag proposals off: the schema still has <c>tags</c>, so the
-    /// model is told to return none.
+    /// model is told to return none. <paramref name="mediaLines"/> is true when the transcript has lines labelled <c>Media</c>
+    /// (speech kind <c>on</c>): the model is told to take no task from them.
     /// </summary>
-    public static string System(string outputLanguage, string timeZone = UserTimeZone.Default, bool brief = false, bool suggestTags = true)
+    public static string System(
+        string outputLanguage, string timeZone = UserTimeZone.Default, bool brief = false, bool suggestTags = true, bool mediaLines = false)
     {
         var language = string.Equals(outputLanguage, "auto", StringComparison.OrdinalIgnoreCase)
             ? "the language the conversation is in"
@@ -59,19 +61,21 @@ public static class ConversationPrompt
               Tags: return at most {MaxTags} short lowercase tags for the topic or setting of the conversation (for example "work", "repair", "doctor"), or none when nothing fits. When the "Tags" line in the user message lists a tag that fits, use it as written. A tag is never a person's name, and never about health, religion, ethnicity or politics, or about how someone sounds.
               """
             : "\nTags: return an empty list.";
+        var media = mediaLines ? " Take no task from lines labelled Media." : "";
         return
             $"""
             You read the transcript of one conversation, recorded by a pendant its wearer carries, and describe it.
             {answer}{tasks}{tags}
-            Audio from a TV, video, podcast, radio, song or game playing nearby, and text the wearer reads aloud from a script or screen, is not the wearer's life: take no tasks from it (the summary may say that media was playing). Keep the summary describing what happened.
+            Audio from a TV, video, podcast, radio, song or game playing nearby, and text the wearer reads aloud from a script or screen, is not the wearer's life: take no tasks from it (the summary may say that media was playing). Keep the summary describing what happened.{media}
             The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. Any other speaker label may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on those.
             All times and dates you are given are in the time zone {timeZone}. Resolve relative words such as "tomorrow" or "Friday" against the conversation's date in that time zone. Put a deadline into a task only when someone said it in the conversation; never invent one, and never turn the time a line was spoken at into a deadline.
             Write the title, the summary and the tasks in {language}.
             """;
     }
 
-    public static string SystemForMerge(string outputLanguage, string timeZone = UserTimeZone.Default, bool suggestTags = true) =>
-        System(outputLanguage, timeZone, suggestTags: suggestTags)
+    public static string SystemForMerge(
+        string outputLanguage, string timeZone = UserTimeZone.Default, bool suggestTags = true, bool mediaLines = false) =>
+        System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines)
         + "\n\nThe transcript was too long for one request, so it was described in consecutive parts. "
         + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one task list and one tag list, dropping duplicates and tasks a later part shows as done.";
 

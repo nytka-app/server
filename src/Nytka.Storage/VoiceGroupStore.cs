@@ -58,10 +58,14 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
         """;
 
     /// <summary>
-    /// SQL, after <see cref="SpeakerLabel.Joins"/>, for a segment aliased <c>s</c> that grouping may take: not the wearer's and
-    /// with no person.
+    /// SQL, after <see cref="SpeakerLabel.Joins"/>, for a segment aliased <c>s</c> that grouping may take: not the wearer's, with no
+    /// person, and not media or a call. While the applied speech mode is <c>on</c> it also has a kind (its conversation's guess or the
+    /// owner's mark), so a fingerprint waits for the guess instead of joining a group as a stranger.
     /// </summary>
-    private const string Eligible = $"{SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is null";
+    private const string Eligible =
+        $"{SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is null "
+        + $"and s.speech_kind is distinct from '{SpeechKinds.Media}' and s.speech_kind is distinct from '{SpeechKinds.Call}' "
+        + $"and (s.speech_kind is not null or {SpeechKinds.AppliedMode} is distinct from '{SpeechKinds.On}')";
 
     private sealed record FingerprintRow(long SegmentId, Guid ConversationId, byte[] Fingerprint);
 

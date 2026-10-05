@@ -348,6 +348,10 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
   suggested, nor is a voice that is also the wearer.
 - **Limits.** English audio playing nearby is a voice like any other: a name spoken by media can be
   suggested, and you reject it.
+- **With `Nytka__Speech__Mode` `on`** ([speech kind](#speech-kind)), a line whose kind is `media` is no voice to
+  name, no line that can show a neighbour's name, and is not sent to the model; a `call` line is named as before.
+  Voice grouping and the cards skip `media` and `call` lines and wait for a line's guess, and facts and memories
+  never read a media line. In `shadow` and `off` nothing here changes (except where your own mark says `media`).
 
 ### Roles
 
@@ -523,6 +527,23 @@ and kinds again from the scores and your marks, with no audio and no model.
 **Media conversations.** Each item of `GET /api/v1/conversations` carries `mediaShare`: the share of the
 conversation's speech time whose kind is `media`, 0 with none. `media=hide` leaves out the conversations at
 0.8 or more, `media=only` keeps just those.
+
+**What media stops feeding.** With `Nytka__Speech__Mode` `on`, a line whose kind is `media` leaves the features
+that learn about people. The lines are dropped after they are read, so a conversation whose only new line is
+media is not read again and again. A `call` line is named and used for facts like a person's, and only
+excluded from voice grouping.
+
+| Feature | What changes for a `media` line |
+|---|---|
+| [Name suggestions](#people) | it is no voice to name, no evidence for a neighbour's name, and not in the prompt |
+| [Voice grouping and cards](#voice-grouping) | it is not grouped or offered (a `call` line neither); a line waits for its guess before it joins a group |
+| [Facts about people](#facts-about-people) | it is never a fact's evidence, with no `mentioned` basis either, and not in the prompt |
+| [Memories](#memories) | it is not in the prompt |
+| Summary, tasks and tags | it stays, labelled `Media`, and the model is told to take no task from it |
+| [Ask](#ask) | a media snippet is labelled `Media` in the context |
+
+When the kinds of a conversation change while the mode is `on` (`apply-speech`, or your mark), its summary,
+names, facts and memories are queued to run again.
 
 **Nothing disappears.** A media line stays in transcripts, search, export and MCP. The export's segments
 carry `speechKind` and `speechMarked`; MCP's `get_conversation` shows a media line's speaker as `Media` and
