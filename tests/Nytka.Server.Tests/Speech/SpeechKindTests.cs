@@ -313,37 +313,48 @@ public sealed class SpeechKindTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(new Stored(null, null, null), await State("hello"));
     }
 
-    [Fact]
-    public async Task A_line_of_the_wearer_cannot_be_media_and_nothing_is_written()
+    [Theory]
+    [InlineData(SpeechKinds.Shadow, SpeechKinds.Person, null)]
+    [InlineData(SpeechKinds.Shadow, SpeechKinds.Media, null)]
+    [InlineData(SpeechKinds.Shadow, SpeechKinds.Call, null)]
+    [InlineData(SpeechKinds.On, SpeechKinds.Person, SpeechKinds.Person)]
+    [InlineData(SpeechKinds.On, SpeechKinds.Media, SpeechKinds.Person)]
+    [InlineData(SpeechKinds.On, SpeechKinds.Call, SpeechKinds.Person)]
+    public async Task A_line_the_label_rule_took_for_the_wearer_takes_any_mark_and_a_clear_gives_the_guess_back(string mode, string kind, string? cleared)
     {
-        await Seed("mine", "theirs");
+        await Seed("mine");
         await Db.ExecuteAsync("update segments set is_user = true where text = 'mine'");
-        await Db.ExecuteAsync("update segments set is_user = false where text = 'theirs'");
+        await Guess("mine", SpeechKinds.Person, null);
+        await Store.ApplyAsync(mode, 0.8f, default);
         var mine = await SegmentId("mine");
 
-        var alone = await Patch(mine, new { speechKind = "media" });
-        var together = await Patch(mine, new { isUser = true, speechKind = "media" });
+        var response = await Patch(mine, new { speechKind = kind });
 
-        Assert.Equal(HttpStatusCode.BadRequest, alone.StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, together.StatusCode);
-        Assert.Equal(["speechKind"], (await alone.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").EnumerateObject().Select(p => p.Name));
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from segments where speech_manual is not null or is_user_manual is not null"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var segment = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            (kind, true, true, "provider"),
+            (segment.GetProperty("speechKind").GetString(), segment.GetProperty("speechMarked").GetBoolean(), segment.GetProperty("isUser").GetBoolean(), segment.GetProperty("isUserSource").GetString()));
+        Assert.Equal(new Stored(kind, kind, "person"), await State("mine"));
+
+        Assert.Equal(HttpStatusCode.OK, (await Patch(mine, new { speechKind = (string?)null })).StatusCode);
+        Assert.Equal(new Stored(null, cleared, "person"), await State("mine"));
     }
 
-    [Fact]
-    public async Task A_wearer_line_may_be_person_or_call_and_media_once_the_same_body_says_it_is_not_the_wearers()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task The_wearers_own_mark_and_the_kind_apply_together_whichever_way_the_wearers_mark_goes(bool isUser)
     {
         await Seed("mine");
         await Db.ExecuteAsync("update segments set is_user = true where text = 'mine'");
         var mine = await SegmentId("mine");
 
-        Assert.Equal(HttpStatusCode.OK, (await Patch(mine, new { speechKind = "person" })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await Patch(mine, new { speechKind = "call" })).StatusCode);
-        var both = await Patch(mine, new { isUser = false, speechKind = "media" });
+        var response = await Patch(mine, new { isUser, speechKind = "media" });
 
-        Assert.Equal(HttpStatusCode.OK, both.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(new Stored("media", "media", null), await State("mine"));
-        Assert.Equal(false, await Db.ScalarAsync<bool?>("select is_user_manual from segments where text = 'mine'"));
+        Assert.Equal(isUser, await Db.ScalarAsync<bool?>("select is_user_manual from segments where text = 'mine'"));
     }
 
     [Theory]

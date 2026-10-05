@@ -186,7 +186,7 @@ public static class VoiceEndpoints
     /// <summary>
     /// Body <c>{ isUser?, personId?, speechKind? }</c>, at least one. <c>isUser</c> is true, false, or null to clear the mark;
     /// <c>personId</c> a person, or null to clear the segment's own person; <c>speechKind</c> <c>person</c>, <c>media</c>, <c>call</c>
-    /// or null to clear the mark. A wearer's line cannot be media: the <c>isUser</c> and <c>personId</c> of the same body apply first.
+    /// or null to clear the mark, on any line, the wearer's included, so a TV voice the label rule took for the wearer can be fixed.
     /// Answers the segment as a conversation shows it.
     /// </summary>
     private static async Task<IResult> MarkAsync(
@@ -251,12 +251,6 @@ public static class VoiceEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        // Refused before anything is written, so a voiceprint does not learn from a line the same body calls media.
-        if (kind == SpeechKinds.Media && isUser == true)
-        {
-            return WearerMedia();
-        }
-
         if (hasPerson)
         {
             switch (await people.SetSegmentPersonAsync(id, personId, ct))
@@ -273,26 +267,15 @@ public static class VoiceEndpoints
             return NoSegment();
         }
 
-        if (hasKind)
+        if (hasKind && !await speech.MarkAsync(id, kind, ct))
         {
-            if (kind == SpeechKinds.Media && await conversations.SegmentAsync(id, ct) is { IsUser: true })
-            {
-                return WearerMedia();
-            }
-
-            if (!await speech.MarkAsync(id, kind, ct))
-            {
-                return NoSegment();
-            }
+            return NoSegment();
         }
 
         return await conversations.SegmentAsync(id, ct) is { } segment ? Results.Ok(segment) : NoSegment();
     }
 
     private static IResult NoSegment() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such segment.");
-
-    private static IResult WearerMedia() =>
-        Results.ValidationProblem(new Dictionary<string, string[]> { ["speechKind"] = ["A line of the wearer cannot be media."] });
 
     private static IResult TooLong() => Results.Problem(
         statusCode: StatusCodes.Status413PayloadTooLarge, title: $"An enrollment may not exceed {VoiceEnrollment.MaxSeconds} seconds.");

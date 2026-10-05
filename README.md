@@ -508,10 +508,11 @@ media), `speechSignals` (what moved the score) and `speechMarked` (true when you
 `speechGuess`, `speechScore` and `speechSignals` stay empty, and only your marks set a kind.
 
 **Marking.** `PATCH /api/v1/segments/{id}` with `speechKind` (`person`, `media`, `call`, or `null` to
-clear your mark) marks one line, alone or with `isUser` and `personId`; a line of yours cannot be `media`
-(`400`). `POST /api/v1/conversations/{id}/speech` with `{ "kind": "media" }` marks every line of a
-conversation that is not yours, for an evening with the TV on, and answers `{ "marked": 12 }`; `null` clears
-those marks. Both need an admin token. A mark survives every change of the settings.
+clear your mark) marks one line, alone or with `isUser` and `personId`. Any line takes a mark, yours
+included, so a TV voice Nytka took for you can be fixed. `POST /api/v1/conversations/{id}/speech` with
+`{ "kind": "media" }` marks every line of a conversation that is not yours, for an evening with the TV on,
+and answers `{ "marked": 12 }`; `null` clears those marks. Both need an admin token. A mark survives every
+change of the settings.
 
 **Settings.** `Nytka__Speech__Mode` is `shadow` by default: guesses are kept and shown and change
 nothing. `off` makes none; `on` lets them set the kind. `Nytka__Speech__MediaThreshold` (0.8) is the score at
@@ -1197,7 +1198,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/voice/reset` | admin | Back to the enrolled voiceprint, forgetting what it learned; `200` as GET, `404` with no voice enrolled |
 | DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts, and every voice group; your marks stay. `204`, also with nothing enrolled |
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
-| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId?, speechKind? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `speechKind` is `person`, `media`, `call` or `null` (clears your mark), see [Speech kind](#speech-kind), and `media` on a line of yours is `400`; `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
+| PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId?, speechKind? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `speechKind` is `person`, `media`, `call` or `null` (clears your mark) on any line, yours included, see [Speech kind](#speech-kind); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named }`; `404` for an unknown person |
