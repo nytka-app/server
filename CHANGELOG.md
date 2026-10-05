@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.0](https://github.com/nytka-app/server/compare/v0.17.0...v0.18.0) (2026-10-05)
+
+
+### Features
+
+* proposed tags for conversations and a tag kind in the review inbox (T-4) ([#91](https://github.com/nytka-app/server/issues/91)) ([e54f9d7](https://github.com/nytka-app/server/commit/e54f9d7a2d6ecbd5a1e5876b22d8f4ab12fa641b))
+* tag filter in search and MCP tags (T-2) ([#93](https://github.com/nytka-app/server/issues/93)) ([281d52b](https://github.com/nytka-app/server/commit/281d52b60e07cfc0733a52f18f0fd9902537e021))
+
 ## [0.17.0](https://github.com/nytka-app/server/compare/v0.16.0...v0.17.0) (2026-10-05)
 
 
