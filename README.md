@@ -177,6 +177,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Memories__UserName` | no | empty | editable | Who "you" is for the model, up to 64 characters; empty means the person wearing the pendant |
 | `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](#people) for unnamed voices; it needs the language model |
 | `Nytka__People__Facts` | no | `true` | editable | `false` stops [facts about people](#facts-about-people) from being taken from conversations; it needs the language model |
+| `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](#tags) for conversations and stops sending it tag names; it needs the language model |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
@@ -203,7 +204,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
+  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
   the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
   `Nytka__Search__Dictionary` stops indexing.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
@@ -361,6 +362,16 @@ tag but you. Lists show them, and `?tag=` on conversations and people keeps the 
   both. Rename, merge into another tag and delete work on the whole server and need an `admin` token.
 - The `conversation.ready` webhook carries `tags`, the conversation's tags when it was summarized. Adding
   a tag sends no event; read `GET /api/v1/conversations/{id}` for the current ones.
+- **Proposed tags.** With `Nytka__Tags__Suggest` on (the default) and a [language model](#the-language-model) set, each
+  summary may bring up to 3 proposed tags for the conversation. A proposal is a name waiting in the
+  [review inbox](#review) (kind `tag`) and `GET /api/v1/tags/suggestions`; it tags nothing until you accept it. A
+  rejected tag is never proposed again for that conversation, and neither is one you accepted and later removed. The model
+  does not propose a name of a person in the conversation, an invalid name, or a tag the conversation has. A conversation
+  under 60 words gets none. Accepting is the same add as `PUT`, so it is refused with `409` when the conversation has 20
+  tags, and the proposal stays pending. Merging two conversations gives the survivor the proposals of both.
+- **What the model sees.** With proposals on, the 100 tags in use most (names only) go to the model with each summary so
+  it reuses them, and the prompt asks for nothing about health, religion, ethnicity, politics or how someone sounds. The
+  model reads text, never audio. With proposals off no tag name is sent and an answer's tags are ignored.
 - Tags can be private ("therapy"). No tag name is in a log line or an error message; the server logs no
   request lines (Serilog's `Request starting` and `Request finished`), because they hold the path.
 
@@ -422,21 +433,23 @@ log; `pg_dump` holds them.
 ## Review
 
 One list for everything waiting on your answer, so the app needs one screen. `GET /api/v1/review`
-merges three queues, newest first:
+merges four queues, newest first:
 
 - **`name`:** a pending [name suggestion](#people), shown with the line that carries the name.
 - **`voice`:** a pending [voice match](#voice-grouping) ("Is this Olena?"), shown with its first three
   lines and its similarity, with no clip. None while voice matching is off.
 - **`label`:** a segment of the last 14 days that Nytka scored within 0.05 of `Nytka__Voice__UserThreshold`
   and you have not marked, at most 20; the proposal is Nytka's verdict (`isUser`) and the similarity.
+- **`tag`:** a pending [proposed tag](#tags) for a conversation, shown with the conversation's summary.
 
 An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
-confidence, similarity, isUser } }`; fields that do not belong to the kind are `null`. `id` is a
+confidence, similarity, isUser, tag } }`; fields that do not belong to the kind are `null`. `id` is a
 segment id for a label and a guid for the others. `limit` is 1 to 200, default 50.
 
 `POST /api/v1/review/{kind}/{id}/accept` and `/reject` answer an item. A `name` or `voice` item is
 answered as its own routes do (`200` with the person on accept, `204` on reject; `409` when a
-suggestion is no longer pending), so nothing changes a label until you accept. For a `label`, accept
+suggestion is no longer pending), and a `tag` as `POST /api/v1/tags/suggestions/{id}/accept` does (`200` with the
+conversation's tags; `409` when it is no longer pending or the conversation has 20 tags), so nothing changes a label or a tag until you accept. For a `label`, accept
 stores Nytka's verdict as your mark (`PATCH /api/v1/segments/{id}` with `isUser`) and reject stores the
 opposite, both `204`; either way the segment leaves the list, and a mark of yours may teach your
 voiceprint as that route does. `404` for an unknown kind or item. The list needs a read token, the
@@ -475,7 +488,7 @@ JSON object and puts the schema in the prompt.
 Nothing is queued while the base URL or the model is empty, and an open conversation is never
 summarized. At most 100 conversations are queued a minute. A conversation under 20 words is `skipped` ("Too short to summarize."). A run writes a
 title (up to 80 characters), a summary (up to 1,200) and up to ten tasks (200 characters each), in
-`llm.outputLanguage`, and asks for tasks only the wearer has to do. Each task may name the person it
+`llm.outputLanguage`, and asks for tasks only the wearer has to do, and for up to three [proposed tags](#tags). Each task may name the person it
 is owed to, taken from the people you named in that conversation (see [Tasks](#tasks)). A transcript longer than
 `Nytka__Llm__MaxInputChars` is cut at line boundaries into windows; each is answered on its own and
 a last request merges them. More than six windows fail the run.
@@ -494,7 +507,8 @@ model is set. A conversation that grows after its summary, for instance when the
 audio, is summarized again once it closes. A title you set stays, and tasks you completed, edited or
 deleted are neither duplicated nor brought back.
 
-**Privacy.** The text of each conversation goes to the model endpoint you set, and nowhere else. Point
+**Privacy.** The text of each conversation goes to the model endpoint you set, and nowhere else. With
+`Nytka__Tags__Suggest` on, so do up to 100 of your [tag names](#tags), with each summary; turn it off to keep them home. Point
 `Nytka__Llm__BaseUrl` at a local server, such as Ollama, to keep it on your network. Logs and errors
 never hold transcript text or a response body.
 
@@ -1037,7 +1051,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs` and `tags`, `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags` and `tag-suggestions`, `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1091,8 +1105,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people/cards` | admin | `{ items }`, at most 4 and at most 2 per conversation, newest first, empty while voice matching is off: `{ kind, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }`; `kind` is `group` ("Who is this?", no person or similarity) or `match` ("Is this Olena?"); see [Voice grouping](#voice-grouping) |
 | GET | `/api/v1/people/cards/{kind}/{id}/clip` | admin | The card's clip, `audio/ogg`, at most 10 s; `404` for an unknown card or when its audio is gone |
 | POST | `/api/v1/people/cards/{kind}/{id}` | admin | Body `{ personId }`, `{ name }`, `{ skip: true }` or `{ reject: true }`, exactly one; naming or confirming answers `200` with the person, skipping (7 days) or rejecting `204`; `404` for an unknown card or person; `400` for a match named with someone else |
-| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser } }`; `kind` is `name`, `voice` (none while voice matching is off) or `label`; see [Review](#review) |
-| POST | `/api/v1/review/{kind}/{id}/accept` | admin | `name` and `voice`: `200` with the person; `label`: stores Nytka's verdict as your mark, `204`; `404` for an unknown kind or item; `409` for a name that is no longer pending |
+| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser, tag } }`; `kind` is `name`, `voice` (none while voice matching is off), `label` or `tag`; see [Review](#review) |
+| POST | `/api/v1/review/{kind}/{id}/accept` | admin | `name` and `voice`: `200` with the person; `label`: stores Nytka's verdict as your mark, `204`; `tag`: `200 { tags }`, the conversation's; `404` for an unknown kind or item; `409` for a name or tag that is no longer pending, or a tag when the conversation has 20 |
 | POST | `/api/v1/review/{kind}/{id}/reject` | admin | `204`; a `label` stores the opposite of Nytka's verdict as your mark; `404` and `409` as accept |
 | DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |
 | GET | `/api/v1/people/{id}/facts?before=&limit=` | read | `{ items, nextBefore }`, newest first; a fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }`, `source` is `ai` or `user`, `basis` is `said`, `about`, `mentioned` or null; `limit` defaults to 50, caps at 200; `404` for an unknown person |
@@ -1103,6 +1117,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | PUT, DELETE | `/api/v1/people/{id}/tags/{name}` | admin | The same for a person |
 | POST | `/api/v1/tags/{name}/rename` | admin | Body `{ name }`; `200` with the tag; `404` for an unknown tag; `409` when the new name is another tag's (merge instead) |
 | POST | `/api/v1/tags/{name}/merge` | admin | Body `{ into }`; moves every link to `into` (created when new), drops duplicates and the old tag; `200` with `into`; `404` for an unknown tag |
+| GET | `/api/v1/tags/suggestions?status=` | read | `{ items: [{ id, conversationId, personId, personName, name, createdAt }] }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`, else `400`; `personId` is null for a conversation's tag; see [Tags](#tags) |
+| POST | `/api/v1/tags/suggestions/{id}/accept` | admin | Adds the proposed tag to its conversation: `200 { tags }`; `404` for an unknown proposal; `409` when it is no longer pending or the conversation has 20 tags |
+| POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation: `204`; `404` and `409` as accept |
 | DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
@@ -1133,6 +1150,7 @@ transcripts and your webhook secrets.
   database. A webhook secret is, as plain text, because signing needs it.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
 - [Tags](#tags) (a name, and which conversations and people hold it) stay until you remove the last link, delete the tag, or delete what held it. They are words you chose and can be sensitive, so a dump holds them.
+- Proposed tags (the name, the conversation it came from and your answer) stay until you delete that conversation; accepted and rejected ones too, which is how a rejected tag stays rejected. They hold model-chosen words about your day, so a dump holds them.
 - Name suggestions (the name, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.

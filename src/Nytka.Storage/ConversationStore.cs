@@ -142,6 +142,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await Run("update tasks set conversation_id = @survivor where conversation_id = any(@others)");
         await Run("update memories set conversation_id = @survivor where conversation_id = any(@others)");
         await TagStore.MoveConversationTagsAsync(connection, transaction, others, survivor, ct);
+        await TagSuggestionStore.MoveConversationAsync(connection, transaction, others, survivor, ct);
 
         // The merged conversation reads differently: its title stays, the AI output and the memories run again.
         await Run(

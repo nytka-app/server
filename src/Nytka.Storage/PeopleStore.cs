@@ -344,6 +344,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
         await connection.ExecuteAsync(new CommandDefinition(
             "update person_facts set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
         await TagStore.MovePersonTagsAsync(connection, transaction, id, intoId, ct);
+        await TagSuggestionStore.MovePersonAsync(connection, transaction, id, intoId, ct);
         await connection.ExecuteAsync(new CommandDefinition(
             "delete from people where id = @id", new { id }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);

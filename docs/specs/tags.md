@@ -79,8 +79,8 @@ tags with no link left. It fires for every path: removing a tag, deleting a conv
 (links cascade), merging. A pending proposal names its tag as text, so it does not keep a
 tag alive and is not lost when one goes.
 
-**Merges.** A conversation merged into another (`MergeIntoAsync`) gives its tags and pending
-proposals to the survivor; a person merged into another (`POST /people/{id}/merge`) gives theirs to
+**Merges.** A conversation merged into another (`MergeIntoAsync`) gives its tags and proposals
+(rejected ones too, so a rejected tag stays rejected) to the survivor; a person merged into another (`POST /people/{id}/merge`) gives theirs to
 the target. A duplicate is dropped, never an error.
 
 **Storage: tables, not an array.** `tags (id, name unique, created_at)` with link tables
