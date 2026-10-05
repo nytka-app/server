@@ -22,7 +22,8 @@ public static class NamePrompt
         """
         You read a transcript of a conversation and suggest names for voices that have none. Unnamed voices are labelled "Voice A", "Voice B" and so on; every line starts with its time and its segment id, as "[14:03:12] #48121 Voice A: ...". Lines labelled "Wearer" are the person wearing the pendant, and other labels are people already named.
         Suggest a name for a voice only when the transcript gives it: the voice introduces itself ("I'm Anna", "мене звати Олена", "я — Марко"), or another speaker addresses it by name in the next line or two ("Thanks, Marko"). Never take a name that is merely mentioned, never name a voice after the wearer, and never guess.
-        For each suggestion give the voice exactly as labelled, the name as the transcript spells it, the id of the segment that shows the name (without the "#") and a confidence from 0 to 1. Give at most one suggestion per voice. Return an empty list when no voice has a name.
+        A name is what a person is called: one to three words, each capitalized, as in "Anna", "Олена" or "Марко Іванович". It is never a pronoun (ти, ты, you), an answer or particle (нет, ні, так, no), an interjection, an evaluation (прикольно, cool), a term of endearment, a generic address ("girl", "малыш", "девочка", "друже") or any other common noun or phrase. When the word could be a common word, suggest it only if the transcript writes it with a capital in the middle of a sentence.
+        For each suggestion give the voice exactly as labelled, the name as the transcript spells it, the id of the segment in which the name is written or spoken (without the "#"; the line that says the name, which is not necessarily a line of that voice) and a confidence from 0 to 1. Give at most one suggestion per voice. Return an empty list when no voice has a name.
         """;
 
     /// <summary>

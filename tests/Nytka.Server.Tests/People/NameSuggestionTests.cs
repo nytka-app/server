@@ -140,6 +140,95 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task Non_names_are_not_stored_even_when_a_line_of_the_voice_carries_them()
+    {
+        var id = await Seed(Talk);
+        string[] words = ["Ти", "Нет", "Прикольно", "По ходу", "Девочка"];
+        foreach (var word in words)
+        {
+            await AddSegment(id, $"Ну, {word.ToLowerInvariant()} тут.", Now.AddMinutes(-4), "SPEAKER_4", "4");
+        }
+
+        var ids = await Db.QueryAsync<long>("select id from segments where speaker_id = '4' order by id");
+        Llm.Respond = _ => Answer(words.Select((w, i) => ("Voice A", w, ids[i], 0.9)).ToArray());
+
+        await Suggest(id);
+
+        Assert.Equal(0, await Rows());
+    }
+
+    [Fact]
+    public async Task The_evidence_is_the_nearby_line_that_says_the_name_and_a_name_no_nearby_line_says_is_dropped()
+    {
+        var id = await Seed(Talk);
+        await AddSegment(id, "Привіт.", Now.AddMinutes(-4), "SPEAKER_4", "4");
+        await AddSegment(id, "Дякую, Олено.", Now.AddMinutes(-3), null, null, true);
+        await AddSegment(id, "Розкажи.", Now.AddMinutes(-2), "SPEAKER_4", "4");
+        var ids = await Db.QueryAsync<long>("select id from segments where conversation_id = @id order by started_at, id", new { id });
+        Llm.Respond = _ => Answer(("Voice A", "Олена", ids[^1], 0.9), ("Voice A", "Марко", ids[^1], 0.95));
+
+        await Suggest(id);
+
+        var item = Assert.Single(await Pending());
+        Assert.Equal("Олена", item.GetProperty("name").GetString());
+        var evidence = item.GetProperty("evidence");
+        Assert.Equal((ids[^2], "Дякую, Олено."), (evidence.GetProperty("segmentId").GetInt64(), evidence.GetProperty("text").GetString()));
+    }
+
+    [Fact]
+    public async Task A_name_the_wearer_gave_for_themselves_and_a_voice_that_is_also_the_wearer_get_no_suggestion()
+    {
+        var id = await Seed(Talk);
+        await AddSegment(id, "Привіт, я Єгор.", Now.AddMinutes(-4), "SPEAKER_0", "0", true);
+        await AddSegment(id, "Єгоре, привіт.", Now.AddMinutes(-3), "SPEAKER_4", "4");
+        await AddSegment(id, "Я Дана.", Now.AddMinutes(-2), "SPEAKER_0", "0");
+        await AddSegment(id, "Дано, привіт.", Now.AddMinutes(-1), "SPEAKER_6", "6");
+        var ids = await Db.QueryAsync<long>("select id from segments where conversation_id = @id order by started_at, id", new { id });
+        Llm.Respond = _ => Answer(("Voice A", "Єгор", ids[2], 0.9), ("Voice B", "Дана", ids[3], 0.9), ("Voice C", "Дана", ids[4], 0.9));
+
+        await Suggest(id);
+
+        Assert.Equal("6", await Db.ScalarAsync<string>("select speaker_id from name_suggestions"));
+        Assert.Equal(1, await Rows());
+    }
+
+    [Fact]
+    public async Task The_system_prompt_defines_a_name_and_asks_for_the_segment_that_says_it()
+    {
+        var (id, _, _, _, _) = await Talked();
+        Llm.Respond = _ => Answer();
+
+        await Suggest(id);
+
+        var request = Assert.Single(Llm.Requests, r => r.SchemaName == "name_suggestions");
+        Assert.Contains("never a pronoun", request.System);
+        Assert.Contains("generic address", request.System);
+        Assert.Contains("the id of the segment in which the name is written or spoken", request.System);
+    }
+
+    [Fact]
+    public async Task Revalidating_deletes_the_pending_model_suggestions_that_fail_and_keeps_the_rest()
+    {
+        var (id, _, voice, label, _) = await Talked();
+        await Db.ExecuteAsync(
+            """
+            insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, evidence_segment_id, confidence, status, created_at)
+            values (gen_random_uuid(), @id, 'speaker', '4', '{}', 'Olena', @voice, 0.9, 'pending', now()),
+                   (gen_random_uuid(), @id, 'speaker', '4', '{}', 'Ти', @voice, 0.9, 'pending', now()),
+                   (gen_random_uuid(), @id, 'label', null, array[@label::bigint], 'Marko', @voice, 0.9, 'pending', now()),
+                   (gen_random_uuid(), @id, 'speaker', '4', '{}', 'Нет', @voice, 0.9, 'rejected', now())
+            """, new { id, voice, label });
+
+        var response = await Client.PostAsync("/api/v1/people/suggestions/revalidate", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal((3, 2, 1), (body.GetProperty("checked").GetInt32(), body.GetProperty("removed").GetInt32(), body.GetProperty("kept").GetInt32()));
+        Assert.Equal(["Olena", "Нет"], (await Db.QueryAsync<string>("select name from name_suggestions")).Order(StringComparer.Ordinal));
+        Assert.Equal(HttpStatusCode.Forbidden, (await Server.CreateClientWithScope("read").PostAsync("/api/v1/people/suggestions/revalidate", null)).StatusCode);
+    }
+
+    [Fact]
     public async Task Only_the_most_confident_suggestion_per_voice_is_kept()
     {
         var (id, _, voice, label, _) = await Talked();

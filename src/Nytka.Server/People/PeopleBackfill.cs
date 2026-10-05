@@ -24,17 +24,20 @@ public sealed class PeopleBackfill(
     NpgsqlDataSource dataSource, PeopleBackfillStore backfill, NameSuggestionStore names, PersonFactStore facts, JobQueue queue,
     SettingsService settings, TimeProvider time)
 {
-    public async Task<BackfillResult> RunAsync(int limit, CancellationToken ct)
+    public async Task<BackfillResult> RunAsync(int limit, CancellationToken ct) => await RunAsync(limit, false, ct);
+
+    /// <summary><paramref name="force"/> also queues <c>suggest-names</c> for conversations whose names run is older than <see cref="NameValidator.Version"/>.</summary>
+    public async Task<BackfillResult> RunAsync(int limit, bool force, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
 
         var skipped = 0;
         var todoNames = PeopleSettings.SuggestNames(settings)
-            ? await TodoAsync(connection, transaction, NameSuggestionStore.Names, JobKinds.SuggestNames, JobKinds.SuggestNamesKey, ct)
+            ? await TodoAsync(connection, transaction, NameSuggestionStore.Names, force ? NameValidator.Version : 0, JobKinds.SuggestNames, JobKinds.SuggestNamesKey, ct)
             : ([], 0);
         var todoFacts = PeopleSettings.FactsEnabled(settings)
-            ? await TodoAsync(connection, transaction, PersonFactStore.Facts, JobKinds.ExtractPersonFacts, JobKinds.ExtractPersonFactsKey, ct)
+            ? await TodoAsync(connection, transaction, PersonFactStore.Facts, 0, JobKinds.ExtractPersonFacts, JobKinds.ExtractPersonFactsKey, ct)
             : ([], 0);
         skipped += todoNames.Waiting + todoFacts.Waiting;
 
@@ -46,7 +49,7 @@ public sealed class PeopleBackfill(
         var suggestNames = 0;
         foreach (var id in todoNames.Todo.Where(c => window.Contains(c.Id)).Select(c => c.Id))
         {
-            if (!await names.MarkPendingAsync(connection, transaction, id, now, ct))
+            if (!await names.MarkPendingAsync(connection, transaction, id, force ? NameValidator.Version : 0, now, ct))
             {
                 skipped++;
                 continue;
@@ -79,11 +82,11 @@ public sealed class PeopleBackfill(
 
     /// <summary>The eligible conversations of a kind with no job waiting for them, and the number that have one.</summary>
     private async Task<(IReadOnlyList<BackfillCandidate> Todo, int Waiting)> TodoAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, string runKind, string jobKind, Func<Guid, string> key,
-        CancellationToken ct)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string runKind, int minValidator, string jobKind,
+        Func<Guid, string> key, CancellationToken ct)
     {
         var queued = await backfill.QueuedKeysAsync(connection, transaction, jobKind, ct);
-        var eligible = await backfill.EligibleAsync(connection, transaction, runKind, ct);
+        var eligible = await backfill.EligibleAsync(connection, transaction, runKind, minValidator, ct);
         var todo = eligible.Where(c => !queued.Contains(key(c.Id))).ToList();
         return (todo, eligible.Count - todo.Count);
     }
