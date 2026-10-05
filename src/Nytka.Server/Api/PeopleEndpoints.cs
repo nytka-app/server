@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Npgsql;
+using Nytka.Server.Ai;
 using Nytka.Server.Auth;
 using Nytka.Server.Events;
+using Nytka.Server.People;
 using Nytka.Server.Transcription;
 using Nytka.Storage;
 
@@ -28,6 +30,7 @@ public static class PeopleEndpoints
         people.MapDelete("/{id:guid}", DeleteAsync);
         people.MapPost("/{id:guid}/merge", MergeAsync);
         people.MapGet("/suggestions", SuggestionsAsync).AllowRead();
+        people.MapPost("/backfill", BackfillAsync);
         people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
         people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
@@ -39,10 +42,29 @@ public static class PeopleEndpoints
         return api;
     }
 
+    public const int DefaultBackfillLimit = 200;
+    public const int MaxBackfillLimit = 1000;
     public const int MaxVoices = 50;
     public const int MaxSuggestions = 200;
     public const int DefaultFactLimit = 50;
     public const int MaxFactLimit = 200;
+
+    /// <summary>
+    /// Queues name suggestions and fact extraction for summarized conversations the People features have not read, newest first,
+    /// at most <c>limit</c> (default 200, up to 1000). 200 with <c>{ queued: { suggestNames, facts }, skipped, remaining }</c>;
+    /// 409 without a language model. Enrichment does not run again.
+    /// </summary>
+    private static async Task<IResult> BackfillAsync(int? limit, PeopleBackfill backfill, ILlmClient llm, CancellationToken ct)
+    {
+        if (limit is < 1 or > MaxBackfillLimit)
+        {
+            return Invalid("limit", $"Must be 1 to {MaxBackfillLimit}.");
+        }
+
+        return llm.IsConfigured
+            ? Results.Ok(await backfill.RunAsync(limit ?? DefaultBackfillLimit, ct))
+            : Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "No language model is configured.");
+    }
 
     private static async Task<IResult> FactsAsync(Guid id, Guid? before, int? limit, PersonFactStore facts, CancellationToken ct) =>
         await facts.ListAsync(id, before, Math.Clamp(limit ?? DefaultFactLimit, 1, MaxFactLimit), ct) is { } page
