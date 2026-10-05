@@ -10,6 +10,7 @@ public class JobKindsTests
     [InlineData(JobKinds.CloseConversations, JobLane.Audio)]
     [InlineData(JobKinds.Retention, JobLane.Audio)]
     [InlineData(JobKinds.ApplySpeech, JobLane.Audio)]
+    [InlineData(JobKinds.ClassifySpeech, JobLane.Audio)]
     [InlineData(JobKinds.EnrichConversation, JobLane.Ai)]
     [InlineData(JobKinds.ExtractMemories, JobLane.Ai)]
     [InlineData(JobKinds.MakeDigest, JobLane.Ai)]
@@ -26,6 +27,7 @@ public class JobKindsTests
         Assert.Equal("extract-memories", JobKinds.ExtractMemories);
         Assert.Equal("deliver-webhook", JobKinds.DeliverWebhook);
         Assert.Equal("apply-speech", JobKinds.ApplySpeech);
+        Assert.Equal("classify-speech", JobKinds.ClassifySpeech);
     }
 
     [Fact]
@@ -36,6 +38,7 @@ public class JobKindsTests
         Assert.Equal($"enrich-conversation:{id}", JobKinds.EnrichConversationKey(id));
         Assert.Equal($"extract-memories:{id}", JobKinds.ExtractMemoriesKey(id));
         Assert.Equal($"deliver-webhook:{id}", JobKinds.DeliverWebhookKey(id));
+        Assert.Equal($"classify-speech:{id}", JobKinds.ClassifySpeechKey(id));
         Assert.Equal("make-brief:abc@example.test:1790935200", JobKinds.MakeBriefKey("abc@example.test", new DateTimeOffset(2026, 10, 2, 10, 0, 0, TimeSpan.Zero)));
     }
 

@@ -24,6 +24,8 @@ jobs:
       # Before the build, which copies TitaNet-small beside the test binaries; NYTKA_REQUIRE_SPEAKER_MODEL
       # makes a missing file fail the voice tests instead of skipping them.
       - run: scripts/fetch-speaker-model.sh
+      # Likewise YAMNet; NYTKA_REQUIRE_AUDIO_TAGGER makes a missing file fail its test instead of skipping it.
+      - run: scripts/fetch-audio-tagger.sh
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
       # The search tests mount the Ukrainian dictionary into their Postgres; NYTKA_REQUIRE_DICTIONARY makes
@@ -34,6 +36,7 @@ jobs:
         env:
           NYTKA_REQUIRE_DICTIONARY: "1"
           NYTKA_REQUIRE_SPEAKER_MODEL: "1"
+          NYTKA_REQUIRE_AUDIO_TAGGER: "1"
 
   secrets:
     runs-on: ubuntu-latest

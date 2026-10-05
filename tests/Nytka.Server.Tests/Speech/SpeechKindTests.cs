@@ -175,8 +175,8 @@ public sealed class SpeechKindTests(PostgresFixture db) : AiTestBase(db)
     [Fact]
     public async Task Apply_records_what_the_stored_guesses_follow()
     {
-        Assert.False(await Store.NeedsApplyAsync(SpeechKinds.Shadow, 0.8f, default));
-        Assert.True(await Store.NeedsApplyAsync(SpeechKinds.On, 0.8f, default));
+        Assert.False(await Store.NeedsApplyAsync(SpeechKinds.Shadow, 0.94f, default));
+        Assert.True(await Store.NeedsApplyAsync(SpeechKinds.On, 0.94f, default));
         Assert.True(await Store.NeedsApplyAsync(SpeechKinds.Shadow, 0.7f, default));
 
         await Store.ApplyAsync(SpeechKinds.On, 0.7f, default);
@@ -193,8 +193,8 @@ public sealed class SpeechKindTests(PostgresFixture db) : AiTestBase(db)
     public async Task A_changed_setting_reaches_the_stored_scores_through_the_scheduler()
     {
         var id = await Seed("on the tv", "marked");
-        await Guess("on the tv", null, 0.75f);
-        await Guess("marked", null, 0.75f);
+        await Guess("on the tv", null, 0.85f);
+        await Guess("marked", null, 0.85f);
         await Store.MarkAsync(await SegmentId("marked"), SpeechKinds.Person, default);
 
         await Change("speech.mode", "on");

@@ -136,7 +136,7 @@ from your own recordings ([spec](../../docs/specs/your-voice.md#how-we-measure-i
 | Variable | Default | App | Meaning |
 |---|---|---|---|
 | `Nytka__Speech__Mode` | `shadow` | edit | `off`, `shadow` or `on`: whether a line is guessed to be media or a call, only shown, or applied |
-| `Nytka__Speech__MediaThreshold` | `0.8` | edit | Score, 0.5 to 0.99, at or above which a guess is media |
+| `Nytka__Speech__MediaThreshold` | `0.94` | edit | Score, 0.5 to 0.99, at or above which a guess is media |
 
 Your own marks on lines apply in every mode. A change of either setting works the stored guesses out
 again in the background ([README](../../README.md#speech-kind)).
