@@ -19,7 +19,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
 
     /// <summary>The types a webhook can ask for, <c>ping</c> (the test call's own) aside.</summary>
     public static readonly IReadOnlyList<string> Types =
-        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated];
+        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated, NytkaEvent.BriefReady];
 
     public const string Ping = "ping";
 
@@ -135,6 +135,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                     where f.id = @id and f.deleted_at is null
                     """,
                     new { id = e.SubjectId }, transaction, cancellationToken: ct));
+            case NytkaEvent.BriefReady:
+                return await BriefAsync(e.SubjectId, connection, transaction, ct);
             case NytkaEvent.DigestReady:
                 return await connection.QuerySingleOrDefaultAsync<DigestData>(new CommandDefinition(
                     "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview from digests where id = @id",
@@ -142,6 +144,27 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             default:
                 return null;
         }
+    }
+
+    /// <summary>The brief with the people it names; one deleted since is left out. Never a transcript.</summary>
+    private static async Task<BriefData?> BriefAsync(Guid id, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
+    {
+        var brief = await connection.QuerySingleOrDefaultAsync<BriefHead>(new CommandDefinition(
+            """
+            select b.id as Id, e.title as Title, b.event_starts_at as StartsAt, b.text as Text, b.person_ids as PersonIds
+            from briefs b join calendar_events e on e.uid = b.event_uid and e.starts_at = b.event_starts_at
+            where b.id = @id
+            """,
+            new { id }, transaction, cancellationToken: ct));
+        if (brief is null)
+        {
+            return null;
+        }
+
+        var people = (await connection.QueryAsync<BriefPersonRef>(new CommandDefinition(
+            "select id as Id, name as Name from people where id = any (@ids) order by lower(name), id",
+            new { ids = brief.PersonIds }, transaction, cancellationToken: ct))).ToList();
+        return new BriefData(brief.Id, brief.Title, brief.StartsAt, people, brief.Text);
     }
 
     private static async Task<ConversationData?> ConversationAsync(
@@ -182,6 +205,24 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private sealed record BookmarkData(Guid Id, DateTime At, string? Note, string Source);
 
     private sealed record PersonFactData(Guid Id, Guid PersonId, string PersonName, string Text, string? Basis, Guid? ConversationId);
+
+    // A class, not a record: Npgsql reports a uuid[] column as System.Array, which a constructor parameter of Guid[] does not match.
+    private sealed class BriefHead
+    {
+        public Guid Id { get; init; }
+
+        public string Title { get; init; } = "";
+
+        public DateTime StartsAt { get; init; }
+
+        public string Text { get; init; } = "";
+
+        public Guid[] PersonIds { get; init; } = [];
+    }
+
+    private sealed record BriefPersonRef(Guid Id, string Name);
+
+    private sealed record BriefData(Guid Id, string Title, DateTime StartsAt, IReadOnlyList<BriefPersonRef> People, string Text);
 
     private sealed record DigestData(Guid Id, string LocalDate, string Headline, string Overview);
 }

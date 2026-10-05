@@ -187,6 +187,8 @@ you copy without thinking would lock its setting.
 | `Nytka__Voice__MinSegmentSeconds` | no | `1.0` | editable | Shortest segment, 1.0 to 5.0 seconds, that is fingerprinted; a shorter one gets no label from Nytka |
 | `Nytka__People__VoiceMatching` | no | `false` | editable | Group the voices of other people across conversations and match them to the voiceprints of people you named ([voice grouping](#voice-grouping)); `true` is refused (`400`) until your own voice is enrolled |
 | `Nytka__People__VoiceThreshold` | no | `0.7` | editable | Similarity, 0.5 to 0.95, at or above which a voice joins a group or matches a person's voiceprint |
+| `Nytka__Calendar__IcsUrl` | no | | env only | `http` or `https` address of a read-only ICS feed; with it set, meetings of the next 48 hours with someone you named get a [calendar brief](#calendar-briefs). The address usually carries a token, so `GET /api/v1/settings` shows only `isSet`, and no log or error repeats it |
+| `Nytka__Calendar__BriefMinutes` | no | `30` | editable | How long before a meeting its brief is made, 5 to 240 minutes |
 | `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
@@ -196,12 +198,12 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
 `db` or `default`) and `locked`.
 
 - **Environment only.** The admin token, the transcription URL, the API keys and the four
-  `Nytka__Llm__` tuning values cannot be changed from the app or the API. `GET /api/v1/settings`
+  `Nytka__Llm__` tuning values cannot be changed from the app or the API; the calendar feed's address is one too. `GET /api/v1/settings`
   shows the URL without any `user:password@`, and shows an API key as `isSet: true` or `false`,
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Digest__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
+  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Search__Dictionary` and `Nytka__Voice__*` are checked when first used, so type them as
   the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
   `Nytka__Search__Dictionary` stops indexing.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
@@ -625,6 +627,33 @@ needs the language model.
 - **When it fails.** A run makes three attempts; after the third it is tried again an hour later while
   the date is today or yesterday. Logs and errors say only what failed, never the digest or its input.
 
+## Calendar briefs
+
+Before a meeting with someone you named, the server writes a short brief: who they are to you, what to
+remember and what is still open. It needs the language model and a calendar feed: set
+`Nytka__Calendar__IcsUrl` to the secret ICS address your calendar offers (read-only; Google, Outlook,
+Nextcloud and most others have one). Nothing is fetched while it is empty.
+
+- **The feed.** Every 15 minutes the server fetches it (`http` or `https`, no redirect, a 3xx fails the
+  fetch, 10 seconds for the whole read, at most 5 MB) and stores the occurrences that run after now and start
+  within 48 hours, recurring events expanded in their own time zone (an event with no zone is read in
+  `Nytka__User__TimeZone`). All-day and cancelled events are left out. The address may be a private one, as for
+  webhooks: only you set it. An event keeps its title and its attendees' display names (`CN`), not their
+  addresses or anything else. A fetch that fails keeps what is stored, and the log says only that it failed and why in
+  a fixed sentence (such as "HTTP 302"), never the address or the feed. An event goes a day after it ended.
+- **Who counts.** An attendee is a person you named when the display name equals the person's name, ignoring
+  case. Only events with such a person get a brief, once the event starts within `Nytka__Calendar__BriefMinutes`
+  (30 by default).
+- **What goes to the model.** One request per brief with the event's title and start, and for each matched
+  person their name, your note, up to 20 facts, up to 10 open tasks owed to them and the title and summary of
+  their last 5 conversations, never a transcript. Other attendees' names are not sent. The calendar address is
+  not sent. A failed run is tried three times and again ten minutes later until the meeting starts.
+- **Read it.** `GET /api/v1/briefs/upcoming?minutes=` lists the events not over yet that start within
+  `minutes` (1 to 1440, 60 by default, clamped), each with its attendees and the matched person's id and its
+  `brief` (`{ id, text, createdAt }`), or null before it is made or when nobody matches. The `brief.ready` webhook
+  carries `{ id, title, startsAt, people: [{ id, name }], text }`. A brief goes with its event, and with a
+  person you delete.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries, memories, and
@@ -772,6 +801,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
 | `person.fact.created` | A fact about a person was added, by extraction or by hand | `{ id, personId, personName, text, basis, conversationId }`; `basis` and `conversationId` are null for a fact you added |
+| `brief.ready` | A [calendar brief](#calendar-briefs) was made for a meeting | `{ id, title, startsAt, people: [{ id, name }], text }` |
 | `digest.ready` | A daily digest was made, by the schedule or on demand | `{ id, localDate, headline, overview }` |
 | `ping` | You called `test` | `{}` |
 
@@ -1033,6 +1063,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people/{id}/facts?before=&limit=` | read | `{ items, nextBefore }`, newest first; a fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }`, `source` is `ai` or `user`, `basis` is `said`, `about`, `mentioned` or null; `limit` defaults to 50, caps at 200; `404` for an unknown person |
 | POST | `/api/v1/people/{id}/facts` | admin | Body `{ text }`, 1 to 300 characters; `201` with the fact (`source: user`); `409` when a live fact of the person holds it; `404` for an unknown person |
 | PATCH, DELETE | `/api/v1/people/{id}/facts/{factId}` | admin | PATCH body `{ text }`, `200` with the fact; DELETE answers `204`; `404` for an unknown fact |
+| GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
@@ -1062,6 +1093,7 @@ transcripts and your webhook secrets.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
 - Name suggestions (the name, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
+- With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.
 - A webhook's delivery log keeps statuses only: no response body, and no payload once a delivery ends.
 - Once you enroll [your voice](#your-voice): your voiceprint (192 numbers, plus the enrolled mean it
   resets to) until you delete it, and a fingerprint of each checked segment for as long as its speech

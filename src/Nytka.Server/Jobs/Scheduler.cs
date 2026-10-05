@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
+using Nytka.Server.Calendar;
 using Nytka.Server.Digests;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
@@ -12,12 +13,13 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle), the conversations that need a run of the model, the day's digest, a voice rescore and the grouping of other people's voices. Dedupe keys make every call
+/// to go idle), the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices and the calendar's sync and briefs. Dedupe keys make every call
 /// safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
+    CalendarQueue calendar,
     SpeakerModel speaker, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
@@ -43,6 +45,7 @@ public sealed class Scheduler(
         await QueueDigestAsync(now, ct);
         await QueueRescoreAsync(now, ct);
         await QueueGroupVoicesAsync(now, ct);
+        await calendar.QueueAsync(now, ct);
     }
 
     /// <summary>Queues the grouping of other people's voices while <c>people.voiceMatching</c> is on, the model is loaded and a fingerprint waits.</summary>

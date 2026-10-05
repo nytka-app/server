@@ -5,6 +5,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Api;
 using Nytka.Server.Ask;
 using Nytka.Server.Auth;
+using Nytka.Server.Calendar;
 using Nytka.Server.Digests;
 using Nytka.Server.Events;
 using Nytka.Server.Import;
@@ -72,6 +73,7 @@ builder.Services.AddNytkaDigests();
 builder.Services.AddNytkaWebhooks();
 builder.Services.AddNytkaVoice();
 builder.Services.AddNytkaPeople();
+builder.Services.AddNytkaCalendar();
 
 var app = builder.Build();
 
@@ -112,6 +114,7 @@ api.MapExport();
 api.MapVoice();
 api.MapVoiceGroups();
 api.MapReview();
+api.MapBriefs();
 app.MapNytkaMcp();
 
 app.Run();

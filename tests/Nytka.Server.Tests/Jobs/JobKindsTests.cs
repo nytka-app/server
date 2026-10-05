@@ -34,6 +34,7 @@ public class JobKindsTests
         Assert.Equal($"enrich-conversation:{id}", JobKinds.EnrichConversationKey(id));
         Assert.Equal($"extract-memories:{id}", JobKinds.ExtractMemoriesKey(id));
         Assert.Equal($"deliver-webhook:{id}", JobKinds.DeliverWebhookKey(id));
+        Assert.Equal("make-brief:abc@example.test:1790935200", JobKinds.MakeBriefKey("abc@example.test", new DateTimeOffset(2026, 10, 2, 10, 0, 0, TimeSpan.Zero)));
     }
 
     [Fact]
@@ -44,12 +45,12 @@ public class JobKindsTests
         var audio = JobKinds.FilterOf(JobLane.Audio);
 
         Assert.False(ai.Exclude);
-        Assert.Equal(["enrich-conversation", "extract-memories", "extract-person-facts", "make-digest", "suggest-names"], ai.Kinds.Order());
+        Assert.Equal(["enrich-conversation", "extract-memories", "extract-person-facts", "make-brief", "make-digest", "suggest-names"], ai.Kinds.Order());
         Assert.False(hooks.Exclude);
-        Assert.Equal(["deliver-webhook"], hooks.Kinds);
+        Assert.Equal(["deliver-webhook", "sync-calendar"], hooks.Kinds.Order());
         Assert.True(audio.Exclude);
         Assert.Equal(
-            ["deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "make-digest", "suggest-names"],
+            ["deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "make-brief", "make-digest", "suggest-names", "sync-calendar"],
             audio.Kinds.Order());
     }
 }

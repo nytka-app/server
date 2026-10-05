@@ -44,6 +44,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await using var command = new NpgsqlCommand(
             """
             truncate voice_groups cascade;
+            truncate calendar_events cascade;
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
                      segments, speech_audio, jobs, diagnostics, api_tokens, settings,
                      webhooks, webhook_deliveries, people, bookmarks, digests, voice_profile restart identity cascade

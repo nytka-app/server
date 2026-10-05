@@ -244,7 +244,8 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
-            "delete from people where id = @id", new { id }, cancellationToken: ct)) == 1;
+            // A brief holds the person's facts and note in its text, so it goes with them.
+            "with b as (delete from briefs where @id = any (person_ids)) delete from people where id = @id", new { id }, cancellationToken: ct)) == 1;
     }
 
     public async Task<bool> UnlinkVoiceAsync(Guid id, string speakerId, CancellationToken ct)
