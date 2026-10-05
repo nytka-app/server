@@ -302,7 +302,7 @@ public sealed class PersonFactStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>Whether the person exists, locking the row until the transaction ends so it cannot be deleted before the insert.</summary>
-    private static async Task<bool> LockPersonAsync(
+    public static async Task<bool> LockPersonAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid personId, CancellationToken ct) =>
         await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
             "select id from people where id = @personId for share", new { personId }, transaction, cancellationToken: ct)) is not null;

@@ -176,6 +176,11 @@ the two do not match. The spec files keep their `v0.x` names.
   other people's voices with "Who is this?" cards, facts and a page for each person, tasks owed to a
   person, a brief before a calendar meeting, and one review inbox. Details:
   [specs/people.md](specs/people.md).
+- **Tags and roles (shipped on the server).** Short tags on conversations and people that filter lists
+  and search and are in MCP and the export; roles for someone known by what they do before you know
+  their name (the repairman), proposed with name suggestions; and tags the model proposes for a
+  conversation and for each person in it, applied only when you accept them. Details:
+  [specs/tags.md](specs/tags.md). The app side is not shipped.
 - **After 1.0.** Firmware updates from the app, live transcripts, a local model or stripping
   personal data before text reaches a cloud model, opt-in location tags, a home-screen widget,
   vector search, an optional supporter key that unlocks nothing, and web, desktop or iOS clients.
@@ -199,7 +204,9 @@ when you create it.
 
 Your data leaves the server in three ways, each to an address you choose: speech audio goes to the
 transcription endpoint, transcript text to the language model endpoint, and titles, summaries, tasks
-and memories, never transcripts, to the webhooks you register. The server keeps a webhook's secret
+and memories, never transcripts, to the webhooks you register. With tag proposals on (`tags.suggest`),
+the names of up to 100 tags in use go to the language model with each summary and each facts request;
+turn them off to send none. The server keeps a webhook's secret
 in plain text, because it needs it to sign each delivery, and shows it once.
 
 The app requires HTTPS. A private-network switch allows plain HTTP for a server you reach over a VPN

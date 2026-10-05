@@ -181,6 +181,14 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
             values (@id, @conversation, @person, array[@segment], 0.87654, @Now)
             """,
             new { id = Guid.CreateVersion7(Now), conversation, person, segment, Now });
+        await Db.ExecuteAsync(
+            """
+            insert into tag_suggestions (id, conversation_id, person_id, name, status, created_at)
+            values (gen_random_uuid(), @conversation, null, 'proposedconversationtag', 'pending', @Now),
+                   (gen_random_uuid(), @conversation, @person, 'proposedpersontag', 'pending', @Now),
+                   (gen_random_uuid(), @conversation, @person, 'rejectedpersontag', 'rejected', @Now)
+            """,
+            new { conversation, person, Now });
         if (await Db.ScalarAsync<string?>("select to_regclass('calendar_events')::text") is not null)
         {
             await Db.ExecuteAsync("insert into calendar_events (uid, starts_at, ends_at, title, attendees, fetched_at) values ('u1', @Now, @Now, 'Standup with Bob', '{Bob}', @Now)", new { Now });
@@ -194,15 +202,15 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.All(
             lines.Select(l => l.GetProperty("type").GetString()),
             type => Assert.Contains(type, new[] { "header", "setting", "person", "conversation", "task", "memory", "person_fact", "bookmark", "digest", "end" }));
-        // T-4 adds tag proposals (tag_suggestions): they are the model's guesses, so no line type or field for them
-        // may appear. This test seeds none yet; when T-4 lands, insert one and keep the checks below.
+        // Tag proposals (tag_suggestions, for conversations and for people) are the model's guesses: no line type, field or
+        // content for them may appear.
         var names = lines.SelectMany(AllNames).ToHashSet();
         foreach (var forbidden in new[] { "group", "groupId", "centroid", "suggestion", "match", "similarity", "calendar", "brief", "attendees", "fingerprint", "embedding", "proposal", "proposed" })
         {
             Assert.DoesNotContain(names, n => n.Contains(forbidden, StringComparison.OrdinalIgnoreCase));
         }
 
-        foreach (var content in new[] { "Suggested Sue", "0.87654", "Standup with Bob", "Brief text for Bob", "deadbeef", "cafebabe" })
+        foreach (var content in new[] { "Suggested Sue", "0.87654", "Standup with Bob", "Brief text for Bob", "deadbeef", "cafebabe", "proposedconversationtag", "proposedpersontag", "rejectedpersontag" })
         {
             Assert.DoesNotContain(content, body);
         }
