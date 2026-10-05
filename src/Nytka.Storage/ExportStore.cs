@@ -13,7 +13,7 @@ public abstract record ExportLine
     public abstract string Type { get; }
 }
 
-public sealed record ExportPerson(Guid Id, string Name, string? Note, bool Voiceprint, IReadOnlyList<string> Voices, DateTime CreatedAt) : ExportLine
+public sealed record ExportPerson(Guid Id, string Name, string? Note, bool Voiceprint, IReadOnlyList<string> Voices, IReadOnlyList<string> Tags, DateTime CreatedAt) : ExportLine
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "person";
@@ -23,7 +23,7 @@ public sealed record ExportSegment(DateTime StartedAt, DateTime EndedAt, string 
 
 public sealed record ExportConversation(
     Guid Id, string Source, string? ExternalId, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited,
-    string? Summary, IReadOnlyList<ExportSegment> Segments) : ExportLine
+    string? Summary, IReadOnlyList<string> Tags, IReadOnlyList<ExportSegment> Segments) : ExportLine
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "conversation";
@@ -102,9 +102,11 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
                    created_at as CreatedAt
             from people order by lower(name), id
             """, transaction: transaction, cancellationToken: ct))).ToList();
+        var personTags = await TagStore.OfPeopleAsync(connection, transaction, people.Select(p => p.Id).ToArray(), ct);
         foreach (var person in people)
         {
-            yield return new ExportPerson(person.Id, person.Name, person.Note, person.Voiceprint, voices[person.Id].ToList(), person.CreatedAt);
+            yield return new ExportPerson(
+                person.Id, person.Name, person.Note, person.Voiceprint, voices[person.Id].ToList(), personTags.GetValueOrDefault(person.Id) ?? [], person.CreatedAt);
         }
 
         DateTime? afterAt = null;
@@ -136,10 +138,12 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
                 order by s.started_at, s.id
                 """,
                 new { ids }, transaction, cancellationToken: ct))).ToLookup(s => s.ConversationId);
+            var tags = await TagStore.OfConversationsAsync(connection, transaction, ids, ct);
             foreach (var c in page)
             {
                 yield return new ExportConversation(
                     c.Id, c.Source, c.ExternalId, c.StartedAt, c.EndedAt, c.Status, c.Title, c.TitleEdited, c.Summary,
+                    tags.GetValueOrDefault(c.Id) ?? [],
                     segments[c.Id].Select(s => new ExportSegment(s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, s.IsUser, s.Person)).ToList());
             }
 
