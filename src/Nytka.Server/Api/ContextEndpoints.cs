@@ -43,7 +43,7 @@ public static class ContextEndpoints
     /// <summary>
     /// Body <c>{ items: [{ id, kind, route, startedAt, endedAt }] }</c>, 1 to 500 items. Every item is checked before any is
     /// stored, so a bad one makes the upload a 400 that names the field and the index (<c>items[3].kind</c>), never the
-    /// value. Answers <c>{ accepted, skipped }</c>; <c>skipped</c> counts the ids the server already held.
+    /// value. Answers <c>{ accepted, skipped }</c>; <c>skipped</c> counts the ranges whose id is already stored, a repeat inside the batch included.
     /// </summary>
     private static async Task<IResult> PostAsync(HttpRequest http, ContextRangeStore ranges, TimeProvider time, CancellationToken ct)
     {
@@ -52,22 +52,30 @@ public static class ContextEndpoints
             return PeopleEndpoints.Invalid("body", "Must be a JSON object.");
         }
 
-        if (!body.TryGetProperty("items", out var list) || list.ValueKind != JsonValueKind.Array
-            || list.GetArrayLength() is < 1 or > MaxItems)
-        {
-            return PeopleEndpoints.Invalid("items", $"Must be a list of 1 to {MaxItems} ranges.");
-        }
-
         var now = time.GetUtcNow();
         var errors = new Dictionary<string, string[]>();
-        var items = new List<NewContextRange>(list.GetArrayLength());
-        var index = 0;
-        foreach (var item in list.EnumerateArray())
+        var items = new List<NewContextRange>();
+        try
         {
-            if (Read(item, index++, now, errors) is { } range)
+            if (!body.TryGetProperty("items", out var list) || list.ValueKind != JsonValueKind.Array
+                || list.GetArrayLength() is < 1 or > MaxItems)
             {
-                items.Add(range);
+                return PeopleEndpoints.Invalid("items", $"Must be a list of 1 to {MaxItems} ranges.");
             }
+
+            var index = 0;
+            foreach (var item in list.EnumerateArray())
+            {
+                if (Read(item, index++, now, errors) is { } range)
+                {
+                    items.Add(range);
+                }
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Valid JSON that no text can hold, such as a lone surrogate escape in a name or a value: reading it throws.
+            return PeopleEndpoints.Invalid("body", "Must be valid JSON text.");
         }
 
         return errors.Count > 0 ? Results.ValidationProblem(errors) : Results.Ok(await ranges.InsertAsync(items, now, ct));

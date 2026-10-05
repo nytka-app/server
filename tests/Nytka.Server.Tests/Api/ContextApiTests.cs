@@ -313,6 +313,20 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(["items[0].id", "items[0].kind", "items[0].route", "items[0].startedAt", "items[0].endedAt"], await ErrorKeys(response));
     }
 
+    [Theory]
+    [InlineData("""{"items":[{"id":"\ud800","kind":"\udc00","route":"\ud800x","startedAt":"\ud800","endedAt":"2026-09-29T09:05:07Z"}]}""")]
+    [InlineData("""{"items":[{"id":"018f0000-0000-7000-8000-0000000000aa","\udc00":2}]}""")]
+    [InlineData("""{"items":[{"id":"018f0000-0000-7000-8000-0000000000aa"}],"\udc00":2}""")]
+    public async Task Post_rejects_text_that_no_string_can_hold_as_a_bad_body(string json)
+    {
+        // A lone surrogate escape is valid JSON, but reading it throws.
+        var response = await PostRaw(json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(["body"], await ErrorKeys(response));
+        Assert.Equal(0, await Count());
+    }
+
     [Fact]
     public async Task Post_ignores_a_field_it_does_not_know_and_stores_nothing_of_it()
     {
