@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/nytka-app/server/compare/v0.16.0...v0.17.0) (2026-10-05)
+
+
+### Features
+
+* tags in the export (T-3) ([#89](https://github.com/nytka-app/server/issues/89)) ([9444f6a](https://github.com/nytka-app/server/commit/9444f6a4d297b4efd4f285e14dbd42a84188bea1))
+* tags on conversations and people with filters (T-1) ([#87](https://github.com/nytka-app/server/issues/87)) ([59fa1b0](https://github.com/nytka-app/server/commit/59fa1b02ca17bef06436c764f3f7f759e3acf5bc))
+
+
+### Bug Fixes
+
+* reject non-names and require the name in the evidence line when suggesting names ([#90](https://github.com/nytka-app/server/issues/90)) ([543bd16](https://github.com/nytka-app/server/commit/543bd1676a5c7f969a52e19f32104fd4971fa64f))
+
 ## [0.16.0](https://github.com/nytka-app/server/compare/v0.15.0...v0.16.0) (2026-10-05)
 
 
