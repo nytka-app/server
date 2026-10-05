@@ -96,7 +96,7 @@ public sealed class SuggestNamesHandler(
     /// <summary>
     /// The drop rules: a suggestion goes when its voice is not one sent or is the wearer's, or its confidence is under 0.5. Its
     /// name is kept when it passes <see cref="NameValidator.IsName"/>, is not the wearer's (<paramref name="userName"/> or a
-    /// name the wearer gave for themselves) and occurs in a segment near the one named (<see cref="NameValidator.Evidence"/>).
+    /// name the wearer gave for themselves) and occurs in a segment of two words or more near the one named (<see cref="NameValidator.Evidence"/>).
     /// Its role (docs/specs/tags.md, Roles) is kept when, as a tag name, it passes <see cref="NameValidator.IsRole"/>, is not
     /// one the wearer gave for themselves and occurs in a segment near the one named; a person known only by role gets no role.
     /// With neither the suggestion goes; with a role only it is a role-only candidate (the role's display form as the name,
@@ -139,7 +139,7 @@ public sealed class SuggestNamesHandler(
             var roleLine = tag is not null
                 && NameValidator.IsRole(tag)
                 && !NameValidator.IsWearerRole(tag, segments)
-                    ? NameValidator.Evidence(NameValidator.RoleWords(tag), suggestion.SegmentId, segments)
+                    ? NameValidator.Evidence(NameValidator.RoleWords(tag), suggestion.SegmentId, segments, minWords: 1)
                     : null;
             if (nameLine is null && roleLine is null)
             {

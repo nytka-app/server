@@ -102,6 +102,98 @@ public sealed class NameValidatorTests
     }
 
     [Fact]
+    public void A_name_alone_as_a_whole_line_is_no_evidence_but_a_longer_neighbouring_line_is()
+    {
+        var alone = new[] { Line(1, "Пока."), Line(2, "Клас."), Line(3, "Олена.") };
+        Assert.Null(NameValidator.Evidence("Олена", 3, alone));
+        Assert.Null(NameValidator.Evidence("Пока", 1, alone));
+
+        var near = new[] { Line(1, "Привіт."), Line(2, "Олена."), Line(3, "Дякую, Олено, що прийшла.") };
+        Assert.Equal(3, NameValidator.Evidence("Олена", 2, near)?.Id);
+        Assert.Equal(3, NameValidator.Evidence("Олена", 3, near)?.Id);
+
+        Assert.False(NameValidator.IsEvidenceFor("Олена", "Олена."));
+        Assert.True(NameValidator.IsEvidenceFor("Олена", "Дякую, Олено."));
+    }
+
+    [Fact]
+    public void A_role_in_a_one_word_line_is_still_evidence_for_the_role()
+    {
+        var segments = new[] { Line(1, "Hello.", speakerId: "4"), Line(2, "Майстре.", wearer: true, speakerId: "0") };
+
+        var result = SuggestNamesHandler.Apply(
+            [new("Voice A", null, 2, 0.9, "майстер")], [new NameTarget('A', "speaker", "4", [1])], segments, null, new Dictionary<string, PersonName>());
+
+        Assert.Equal(2, Assert.Single(result).EvidenceSegmentId);
+    }
+
+    [Fact]
+    public void Apply_drops_a_name_whose_only_evidence_is_a_one_word_line()
+    {
+        var segments = new[] { Line(1, "Пока.", speakerId: "4"), Line(2, "Дякую.", speakerId: "4"), Line(3, "Привіт, Оля!", speakerId: "5") };
+        var targets = new[] { new NameTarget('A', "speaker", "4", [1, 2]), new NameTarget('B', "speaker", "5", [3]) };
+        SuggestNamesHandler.Suggestion S(string voice, string name, long id) => new(voice, name, id, 0.9, null);
+
+        var result = SuggestNamesHandler.Apply(
+            [S("Voice A", "Пока", 1), S("Voice B", "Оля", 3)], targets, segments, null, new Dictionary<string, PersonName>());
+
+        Assert.Equal(["Оля"], result.Select(c => c.Name));
+    }
+
+    [Fact]
+    public void The_version_is_3()
+    {
+        Assert.Equal(3, NameValidator.Version);
+    }
+
+    [Theory]
+    [InlineData("Should")]
+    [InlineData("Клас")]
+    [InlineData("Пока")]
+    [InlineData("Скепсис")]
+    [InlineData("Хулі")]
+    [InlineData("Цин")]
+    [InlineData("Спокійно")]
+    [InlineData("Єсть")]
+    [InlineData("Леді")]
+    [InlineData("Нэ")]
+    [InlineData("Привет")]
+    [InlineData("Привіт")]
+    [InlineData("Ок")]
+    [InlineData("Ну")]
+    [InlineData("Ага")]
+    [InlineData("Угу")]
+    [InlineData("Слушай")]
+    [InlineData("Слухай")]
+    [InlineData("Давай")]
+    [InlineData("Дякую")]
+    [InlineData("Спасибо")]
+    [InlineData("Thanks")]
+    [InlineData("Hello")]
+    [InlineData("ПОКА")]
+    [InlineData("should")]
+    public void An_observed_non_name_is_on_the_stoplist_in_any_case(string word)
+    {
+        Assert.True(NameValidator.IsStoplisted(word));
+        Assert.False(NameValidator.IsName(word, "Це слово не є ім'ям."));
+    }
+
+    [Theory]
+    [InlineData("Аня")]
+    [InlineData("Оля")]
+    [InlineData("Діма")]
+    [InlineData("Денис")]
+    [InlineData("Катя")]
+    [InlineData("Єва")]
+    [InlineData("Петро")]
+    [InlineData("Алёна")]
+    public void A_common_first_name_is_not_on_the_stoplist(string name)
+    {
+        Assert.False(NameValidator.IsStoplisted(name));
+        Assert.True(NameValidator.IsName(name, "x"));
+    }
+
+    [Fact]
     public void Names_a_wearer_gives_for_themselves_are_read_from_the_wearers_segments_only()
     {
         var segments = new[]

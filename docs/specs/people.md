@@ -82,6 +82,14 @@ no person yet belongs to one target:
 
 A segment with none of the three (no label, no group) cannot be suggested for.
 
+**Accept by name.** One person is often heard as many voices (the provider splits one speaker into
+several `speaker_id`s), so the same name is suggested once per voice. `POST
+/api/v1/people/suggestions/accept-by-name { name }` accepts all of them in one transaction, each
+through the code of the single accept (`NameSuggestionStore.AcceptAsync`), so the person is found or
+created by name once. A suggestion that cannot apply any more is skipped, with no effect: a `speaker`
+whose voice belongs to a person with another name, a `label` whose segments all have a person, a
+`group` that is gone. `GET /api/v1/people/suggestions` adds `sameName` to each item. No migration.
+
 **The call.** The transcript is rendered as today, except that each unnamed target shows as
 `Voice A`, `Voice B` and so on, and each line carries its segment id: `[14:03:12] #48121 Voice A:
 ...`. The user message lists the known people's names and `memories.userName`. The system message
@@ -104,7 +112,8 @@ highest confidence. Rows are unique on (target, lower(name)), rejected ones incl
 name is never offered again for that voice.
 
 **Validation.** The model is not trusted; `NameValidator` checks every answer, and its `Version`
-(1) is stored in `people_runs.validator`.
+(3) is stored in `people_runs.validator`. Version 1 added these rules, 2 the roles, 3 the two-word evidence line and the
+longer stoplist.
 
 1. *Shape.* One to three words, each of letters (hyphen and apostrophe allowed, at least two
    letters), each starting with a capital, at most 40 characters in all, no digit and no `?`, `!`
@@ -113,13 +122,18 @@ name is never offered again for that voice.
    English pronouns, particles, answers, interjections, greetings, evaluations, commands and generic
    address terms (`Ти`, `Нет`, `Прикольно`, `По ходу`, `Девочка`, `Малыш`, `girl`). A real name that is
    also such a word passes only when the evidence line writes it with a capital in the middle of a
-   sentence.
+   sentence. Version 3 added the observed non-names `Should`, `Клас`, `Пока`, `Скепсис`, `Хулі`,
+   `Цин`, `Спокійно`, `Єсть`, `Леді` and `Давай`; `Нэ`, `Привет`, `Привіт`, `Ок`, `Ну`, `Ага`, `Угу`,
+   `Слушай`, `Слухай`, `Дякую`, `Спасибо`, `Thanks` and `Hello` were already there. Common first names
+   (`Аня`, `Оля`, `Діма`, `Денис`, `Катя`, `Єва`, `Петро`, `Алёна`) are tested to stay off it.
 3. *Evidence carries the name.* Every word of the name must occur in the evidence segment's text,
    compared without case and with any case ending: the same first three letters (`Діма`, `Діму`,
    `Дімі`; a word of under three letters must match the other word, or begin it and differ by at
    most two letters). The evidence is the model's segment when it says the name; otherwise the
    nearest of the three segments before and after it that does (the earlier on a tie). When none
-   does, the suggestion is dropped.
+   does, the suggestion is dropped. The evidence segment has at least two words (version 3): a name
+   alone as a whole line (`Пока.`, `Єва.`) is no evidence, while a longer line nearby that says it
+   still is. A role's evidence has no such minimum.
 4. *The wearer.* A name is dropped when a word of it has the stem of a word of `memories.userName`,
    or of a name the wearer's own segments gave for themselves (`I am X`, `I'm X`, `my name is X`,
    `я X`, `я — X`, `мене звати X`, `меня зовут X`; the wearer is the label rule's verdict, so
@@ -330,8 +344,9 @@ UNKNOWN until the evaluation runs.
 | `GET /api/v1/people/{id}/facts?before&limit` | read | `{ items: [Fact], nextBefore }`; Fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }` |
 | `POST /api/v1/people/{id}/facts` `{ text }` | admin | 201 with the fact (`source: user`); 409 when a live fact holds it |
 | `PATCH`, `DELETE /api/v1/people/{id}/facts/{factId}` | admin | edit (200) or tombstone (204) |
-| `GET /api/v1/people/suggestions?status=pending` | read | `{ items: [{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }] }` |
+| `GET /api/v1/people/suggestions?status=pending` | read | `{ items: [{ id, conversationId, target, speakerId, groupId, name, personId, confidence, sameName, evidence: { segmentId, startedAt, text } }] }` |
 | `POST /api/v1/people/suggestions/{id}/accept`, `/reject` | admin | 200 with the person, or 204; 409 when no longer pending |
+| `POST /api/v1/people/suggestions/accept-by-name` `{ name }` | admin | accepts every pending `speaker`, `label` and `group` suggestion of the name (any case; not role-only, not `person`) through the code of the single accept, in one transaction: `200 { person, accepted, skipped }` (`skipped`: it can no longer apply, as a voice that belongs to another person, segments that all have a person, a group that is gone); `404` when none is pending; `400` for a blank name; `409` when the pending ones carry different people or the name is a role-only person's |
 | `POST /api/v1/people/suggestions/revalidate` | admin | deletes pending model suggestions that fail the name rules; `{ checked, removed, kept }` |
 | `POST /api/v1/people/backfill?limit&force` | admin | `force=true` also re-queues names runs made under an older rule version |
 | `GET /api/v1/people/cards` | admin | `{ items: [{ kind: group\|match, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }] }`, at most 4; empty when voice matching is off |
