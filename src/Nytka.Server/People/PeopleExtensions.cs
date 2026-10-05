@@ -15,6 +15,7 @@ public static class PeopleExtensions
         services.AddScoped<IJobHandler, GroupVoicesHandler>();
         services.AddSingleton<IEventSubscriber, FactTrigger>();
         services.AddScoped<IJobHandler, ExtractPersonFactsHandler>();
+        services.AddSingleton<PeopleBackfill>();
         return services;
     }
 }

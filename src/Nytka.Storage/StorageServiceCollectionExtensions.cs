@@ -29,6 +29,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<WebhookStore>();
         services.AddSingleton<PeopleStore>();
         services.AddSingleton<PersonFactStore>();
+        services.AddSingleton<PeopleBackfillStore>();
         services.AddSingleton<ImportStore>();
         services.AddSingleton<BookmarkStore>();
         services.AddSingleton<DigestStore>();

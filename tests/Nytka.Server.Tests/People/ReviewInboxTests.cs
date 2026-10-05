@@ -128,6 +128,29 @@ public sealed class ReviewInboxTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_conversation_without_a_manual_title_shows_its_AI_title_in_every_kind()
+    {
+        await Seeded();
+        await db.ExecuteAsync("update conversations set title = null, ai_title = 'Chat with Olena'");
+
+        var items = await Inbox();
+
+        Assert.Equal(3, items.Length);
+        Assert.All(items, i => Assert.Equal("Chat with Olena", i.GetProperty("conversationTitle").GetString()));
+    }
+
+    [Fact]
+    public async Task A_manual_title_wins_over_the_AI_title()
+    {
+        await Seeded();
+        await db.ExecuteAsync("update conversations set ai_title = 'Chat with Olena'");
+
+        var items = await Inbox();
+
+        Assert.All(items, i => Assert.Equal("A talk", i.GetProperty("conversationTitle").GetString()));
+    }
+
+    [Fact]
     public async Task A_label_is_offered_only_near_the_threshold_without_a_mark_and_within_14_days()
     {
         var c = await Conversation();

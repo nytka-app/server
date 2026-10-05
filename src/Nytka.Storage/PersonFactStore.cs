@@ -37,6 +37,7 @@ public sealed record PersonFactRun(string Status, long? ThroughSegmentId, int Fa
 /// <summary>Facts about people (<c>person_facts</c>, and <c>people_runs</c> of kind <c>facts</c>).</summary>
 public sealed class PersonFactStore(NpgsqlDataSource dataSource)
 {
+    public const string Facts = "facts";
     public const int KnownPerPerson = 30;
 
     /// <summary>

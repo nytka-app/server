@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/nytka-app/server/compare/v0.15.0...v0.16.0) (2026-10-05)
+
+
+### Features
+
+* backfill name suggestions and facts for conversations summarized before People ([#84](https://github.com/nytka-app/server/issues/84)) ([7b20a7f](https://github.com/nytka-app/server/commit/7b20a7f906f649d6a027313557f8fb7b7ac91bc2))
+
+
+### Bug Fixes
+
+* show the AI title in the review inbox when a conversation has no manual title ([#85](https://github.com/nytka-app/server/issues/85)) ([5f1115d](https://github.com/nytka-app/server/commit/5f1115d088d656e243b0d3b4858cb1a7f2b55bc2))
+
 ## [0.15.0](https://github.com/nytka-app/server/compare/v0.14.0...v0.15.0) (2026-10-05)
 
 
