@@ -10,6 +10,8 @@ and changes the README sections of what it touches (endpoints, variables, MCP to
 PR. Nothing in this plan changes what a people feature produces while `speech.mode` is `shadow` or `off`; every task
 that touches a people feature has a test that says so.
 
+**Status.** S-1 ([#103](https://github.com/nytka-app/server/pull/103)) and S-2 ([#104](https://github.com/nytka-app/server/pull/104)) are merged; S-3 to S-6 follow this PR.
+
 ## Migrations, allocated up front
 
 | Migration | Task | Needs |
