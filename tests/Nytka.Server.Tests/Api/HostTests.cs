@@ -53,8 +53,20 @@ public class HostTests(PostgresFixture db)
         Assert.Equal("admin", info.GetProperty("scope").GetString());
         // The build copies the speaker model beside the binaries when scripts/fetch-speaker-model.sh fetched it.
         Assert.Equal(
-            File.Exists(SpeakerEmbedder.DefaultPath) ? ["offline-sync", "voice", "people"] : ["offline-sync", "people"],
+            File.Exists(SpeakerEmbedder.DefaultPath) ? ["offline-sync", "voice", "people", "review", "briefs"] : ["offline-sync", "people", "review", "briefs"],
             info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+    }
+
+    [Fact]
+    public async Task Info_lists_review_and_briefs_with_no_calendar_feed()
+    {
+        using var factory = new NytkaApiFactory(db);
+
+        var info = await factory.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>("/api/v1/info");
+
+        var features = info.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToList();
+        Assert.Contains("review", features);
+        Assert.Contains("briefs", features);
     }
 
     [Theory]

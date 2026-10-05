@@ -112,6 +112,29 @@ public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_list_carries_last_seen_and_live_fact_count_and_stays_by_name()
+    {
+        var anna = await Person("Anna", "4");
+        var olena = await Person("Olena");
+        var older = await SearchSeed.ConversationAsync(db.DataSource, T0);
+        await Segment(older, "early", T0.AddMinutes(1), speakerId: "4");
+        await Segment(older, "late", T0.AddMinutes(7), personId: anna);
+        await Segment(older, "the wearer", T0.AddMinutes(30), isUser: true, personId: anna);
+        await Fact(anna, "Sells honey");
+        await Fact(anna, "Used to sell eggs", deleted: true);
+
+        var items = (await Client.GetFromJsonAsync<JsonElement>("/api/v1/people")).GetProperty("items").EnumerateArray().ToList();
+
+        Assert.Equal([anna, olena], items.Select(i => i.GetProperty("id").GetGuid()));
+        Assert.Equal(T0.AddMinutes(7), items[0].GetProperty("lastSeenAt").GetDateTime().ToUniversalTime());
+        Assert.Equal((await View(anna)).GetProperty("lastSeenAt").GetDateTime(), items[0].GetProperty("lastSeenAt").GetDateTime());
+        Assert.Equal(1, items[0].GetProperty("factCount").GetInt32());
+        Assert.Equal(2, items[0].GetProperty("segments").GetInt32());
+        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("lastSeenAt").ValueKind);
+        Assert.Equal(0, items[1].GetProperty("factCount").GetInt32());
+    }
+
+    [Fact]
     public async Task The_page_lists_the_newest_ten_conversations_and_fifty_facts_and_needs_a_known_person()
     {
         var anna = await Person("Anna");

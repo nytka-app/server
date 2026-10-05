@@ -231,7 +231,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await Enroll(Frames(Tone(30)))).StatusCode);
         var info = await Json(await Client.GetAsync("/api/v1/info"));
-        Assert.Equal(["offline-sync", "people"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+        Assert.Equal(["offline-sync", "people", "review", "briefs"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
         Assert.False((await Json(await Client.GetAsync("/api/v1/voice"))).GetProperty("modelAvailable").GetBoolean());
         Assert.Equal(HttpStatusCode.NoContent, (await Client.DeleteAsync("/api/v1/voice")).StatusCode);
     }
@@ -241,7 +241,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
     {
         var info = await Json(await Client.GetAsync("/api/v1/info"));
 
-        Assert.Equal(["offline-sync", "voice", "people"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+        Assert.Equal(["offline-sync", "voice", "people", "review", "briefs"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
     }
 
     [Fact]

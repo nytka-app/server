@@ -42,7 +42,9 @@ public static class SpeakerLabel
         + "left join people sp on sp.id = s.person_id";
 }
 
-public sealed record PersonRow(Guid Id, string Name, string? Note, DateTime CreatedAt, string[] Voices, int Segments);
+/// <summary><see cref="LastSeenAt"/> and <see cref="FactCount"/> are those of <see cref="PeopleStore.SummariesAsync"/>.</summary>
+public sealed record PersonRow(
+    Guid Id, string Name, string? Note, DateTime CreatedAt, string[] Voices, int Segments, DateTime? LastSeenAt, int FactCount);
 
 /// <summary>A conversation the person spoke in.</summary>
 public sealed record PersonConversation(Guid Id, string? Title, DateTime StartedAt);
@@ -99,11 +101,13 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
             where {SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is not null
             group by {SpeakerLabel.PersonId}
             """, cancellationToken: ct))).ToDictionary(c => c.PersonId, c => c.Segments);
+        var summaries = (await SummariesAsync(ct)).ToDictionary(x => x.Id);
         return people
             .Select(p => new PersonRow(
                 p.Id, p.Name, p.Note, p.CreatedAt,
                 voices.Where(v => v.PersonId == p.Id).Select(v => v.SpeakerId).ToArray(),
-                counts.GetValueOrDefault(p.Id)))
+                counts.GetValueOrDefault(p.Id),
+                summaries.GetValueOrDefault(p.Id)?.LastSeenAt, summaries.GetValueOrDefault(p.Id)?.Facts ?? 0))
             .ToList();
     }
 
