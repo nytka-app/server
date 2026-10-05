@@ -134,6 +134,25 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task List_conversations_items_carry_the_media_share_as_REST_does()
+    {
+        await db.ExecuteAsync(
+            """
+            update segments set ended_at = started_at + interval '4 seconds' where conversation_id = @a;
+            update segments set speech_kind = 'media' where text = 'Hello there'
+            """,
+            new { a = Conversation });
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+        var rest = JsonDocument.Parse(await (await _server.CreateAuthorizedClient().GetAsync("/api/v1/conversations")).Content.ReadAsStringAsync())
+            .RootElement.GetProperty("items");
+
+        var items = Structured(await client.CallToolAsync("list_conversations")).GetProperty("items");
+
+        Assert.Equal([0.0, 0.5], items.EnumerateArray().Select(i => i.GetProperty("mediaShare").GetDouble()));
+        Assert.Equal(rest.EnumerateArray().Select(i => i.GetProperty("mediaShare").GetDouble()), items.EnumerateArray().Select(i => i.GetProperty("mediaShare").GetDouble()));
+    }
+
+    [Fact]
     public async Task List_conversations_pages_and_filters()
     {
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
@@ -165,6 +184,21 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(["Open one", "Done one"], tasks.Select(t => t.GetProperty("text").GetString()));
         Assert.Equal([false, true], tasks.Select(t => t.GetProperty("done").GetBoolean()));
         Assert.Equal(["Olena", null], tasks.Select(t => t.GetProperty("personName").GetString()));
+    }
+
+    [Fact]
+    public async Task Get_conversation_labels_a_media_line_Media_and_a_call_line_as_a_call()
+    {
+        await db.ExecuteAsync(
+            """
+            update segments set speech_kind = 'media' where text = 'Hello there';
+            update segments set speech_kind = 'call' where text = 'Hi'
+            """);
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var result = Structured(await client.CallToolAsync("get_conversation", new Dictionary<string, object?> { ["id"] = Conversation }));
+
+        Assert.Equal("[09:00:00] Media: Hello there\n[09:00:05] (call): Hi", result.GetProperty("transcript").GetString());
     }
 
     [Fact]

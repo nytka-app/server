@@ -65,6 +65,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
                 "people.facts",
                 "tags.suggest",
                 "calendar.icsUrl", "calendar.briefMinutes",
+                "speech.mode", "speech.mediaThreshold",
             ],
             items.EnumerateArray().Select(i => i.GetProperty("key").GetString()));
         Assert.All(
@@ -85,6 +86,41 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("number", Item(await List(), "voice.userThreshold").GetProperty("type").GetString());
+    }
+
+    [Theory]
+    [InlineData("off", true)]
+    [InlineData("shadow", true)]
+    [InlineData("on", true)]
+    [InlineData("On", false)]
+    [InlineData("maybe", false)]
+    public async Task The_speech_mode_is_off_shadow_or_on(string value, bool accepted)
+    {
+        var response = await Patch(new Dictionary<string, string> { ["speech.mode"] = value });
+
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
+        var mode = Item(await List(), "speech.mode");
+        Assert.Equal("string", mode.GetProperty("type").GetString());
+        Assert.Equal("shadow", mode.GetProperty("default").GetString());
+        Assert.Equal(accepted ? value : "shadow", mode.GetProperty("value").GetString());
+    }
+
+    [Theory]
+    [InlineData("0.5", true)]
+    [InlineData("0.8", true)]
+    [InlineData("0.99", true)]
+    [InlineData("0.49", false)]
+    [InlineData("1", false)]
+    [InlineData("0,8", false)]
+    [InlineData("NaN", false)]
+    public async Task The_media_threshold_is_a_number_in_range(string value, bool accepted)
+    {
+        var response = await Patch(new Dictionary<string, string> { ["speech.mediaThreshold"] = value });
+
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
+        var threshold = Item(await List(), "speech.mediaThreshold");
+        Assert.Equal("number", threshold.GetProperty("type").GetString());
+        Assert.Equal("0.8", threshold.GetProperty("default").GetString());
     }
 
     [Theory]

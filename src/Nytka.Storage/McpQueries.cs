@@ -3,8 +3,9 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
+/// <summary><paramref name="MediaShare"/> is the share of the speech time whose speech kind is media; only the list reads it, the single read leaves 0.</summary>
 public sealed record McpConversationRow(
-    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview)
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview, double MediaShare)
 {
     /// <summary>Not a column: the queries read the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -35,9 +36,10 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpConversationRow>(new CommandDefinition(
-            """
+            $"""
             select c.id as Id, c.started_at as StartedAt, c.ended_at as EndedAt,
-                   coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary, coalesce(p.text, '') as Preview
+                   coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary, coalesce(p.text, '') as Preview,
+                   m.share as MediaShare
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -45,6 +47,7 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
                       where s.conversation_id = c.id
                       order by s.started_at limit 20) f
             ) p on true
+            {SpeechKinds.MediaShareJoin}
             where (cast(@since as timestamptz) is null or c.started_at >= cast(@since as timestamptz))
               and (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
               and (cast(@tag as text) is null or exists (
@@ -65,7 +68,7 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
         var row = await connection.QuerySingleOrDefaultAsync<McpConversationRow>(new CommandDefinition(
             """
             select id as Id, started_at as StartedAt, ended_at as EndedAt,
-                   coalesce(title, ai_title) as Title, ai_summary as Summary, '' as Preview
+                   coalesce(title, ai_title) as Title, ai_summary as Summary, '' as Preview, 0::float8 as MediaShare
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -99,7 +102,7 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
         var rows = await connection.QueryAsync<McpSegmentRow>(new CommandDefinition(
             $"""
             select StartedAt, Speaker, Text from (
-                select s.started_at as StartedAt, {SpeakerLabel.Column} as Speaker, s.text as Text, s.id,
+                select s.started_at as StartedAt, {SpeechKinds.Speaker} as Speaker, s.text as Text, s.id,
                        coalesce(sum(length(s.text)) over (order by s.started_at, s.id
                                 rows between unbounded preceding and 1 preceding), 0) as before_chars
                 from segments s {SpeakerLabel.Joins}

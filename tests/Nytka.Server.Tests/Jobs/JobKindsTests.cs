@@ -9,6 +9,7 @@ public class JobKindsTests
     [InlineData(JobKinds.Transcribe, JobLane.Audio)]
     [InlineData(JobKinds.CloseConversations, JobLane.Audio)]
     [InlineData(JobKinds.Retention, JobLane.Audio)]
+    [InlineData(JobKinds.ApplySpeech, JobLane.Audio)]
     [InlineData(JobKinds.EnrichConversation, JobLane.Ai)]
     [InlineData(JobKinds.ExtractMemories, JobLane.Ai)]
     [InlineData(JobKinds.MakeDigest, JobLane.Ai)]
@@ -24,6 +25,7 @@ public class JobKindsTests
         Assert.Equal("enrich-conversation", JobKinds.EnrichConversation);
         Assert.Equal("extract-memories", JobKinds.ExtractMemories);
         Assert.Equal("deliver-webhook", JobKinds.DeliverWebhook);
+        Assert.Equal("apply-speech", JobKinds.ApplySpeech);
     }
 
     [Fact]

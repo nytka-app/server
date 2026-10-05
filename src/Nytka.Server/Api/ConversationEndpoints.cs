@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Nytka.Server.Ai;
 using Nytka.Server.Auth;
+using Nytka.Server.Speech;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -19,6 +20,7 @@ public static class ConversationEndpoints
         conversations.MapGet("/{id:guid}", GetAsync).AllowRead();
         conversations.MapPatch("/{id:guid}", PatchAsync);
         conversations.MapPost("/{id:guid}/enrich", EnrichAsync);
+        conversations.MapPost("/{id:guid}/speech", MarkSpeechAsync);
         conversations.MapDelete("/{id:guid}", DeleteAsync);
         conversations.MapPut("/{id:guid}/tags/{name}", AddTagAsync);
         conversations.MapDelete("/{id:guid}/tags/{name}", RemoveTagAsync);
@@ -35,11 +37,14 @@ public static class ConversationEndpoints
 
     public sealed record EnrichResponse(string AiStatus);
 
+    public sealed record SpeechMarked(int Marked);
+
     public sealed record TranscriptionView(
         long Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Error, JsonElement? Response);
 
+    /// <summary><c>media</c> is <c>hide</c> (leave out conversations that are mostly media) or <c>only</c> (keep just those), else <c>400</c>.</summary>
     private static async Task<IResult> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, ConversationStore conversations, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, string? media, ConversationStore conversations, CancellationToken ct)
     {
         var normalized = TagName.Normalize(tag);
         if (tag is not null && normalized is null)
@@ -47,9 +52,14 @@ public static class ConversationEndpoints
             return TagEndpoints.Invalid("tag");
         }
 
+        if (media is not (null or "hide" or "only"))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["media"] = ["Must be hide or only, or left out."] });
+        }
+
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         // Npgsql takes only UTC offsets for timestamptz.
-        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, ct))
+        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, media, ct))
             .Select(c => c.Preview.Length > PreviewLength ? c with { Preview = c.Preview[..(char.IsHighSurrogate(c.Preview[PreviewLength - 1]) ? PreviewLength - 1 : PreviewLength)] } : c)
             .ToList();
         return Results.Ok(new ConversationPage(items, items.Count == take ? items[^1].StartedAt : null));
@@ -126,6 +136,24 @@ public static class ConversationEndpoints
         return await enrichments.QueueAsync(id, force: true, ct)
             ? Results.Accepted(value: new EnrichResponse("pending"))
             : NotFound();
+    }
+
+    /// <summary>
+    /// Body <c>{ kind }</c>: <c>person</c>, <c>media</c>, <c>call</c>, or null to clear. Marks every line of the conversation that is not
+    /// the wearer's, in every mode; <c>200 { marked }</c> counts them.
+    /// </summary>
+    private static async Task<IResult> MarkSpeechAsync(
+        Guid id, HttpRequest http, ConversationStore conversations, SpeechStore speech, CancellationToken ct)
+    {
+        if (await PeopleEndpoints.ReadObjectAsync(http, ct) is not { } body || !body.TryGetProperty("kind", out var value)
+            || !SpeechBody.TryKind(value, out var kind))
+        {
+            return PeopleEndpoints.Invalid("kind", SpeechBody.BadKind);
+        }
+
+        return await conversations.GetAsync(id, ct) is null
+            ? NotFound()
+            : Results.Ok(new SpeechMarked(await speech.MarkConversationAsync(id, kind, ct)));
     }
 
     private static IResult Invalid(string message) =>

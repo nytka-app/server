@@ -19,7 +19,9 @@ public sealed record ExportPerson(Guid Id, string Name, string? Note, bool Voice
     public override string Type => "person";
 }
 
-public sealed record ExportSegment(DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, string? Person);
+public sealed record ExportSegment(
+    DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, string? Person, string? SpeechKind,
+    bool SpeechMarked);
 
 public sealed record ExportConversation(
     Guid Id, string Source, string? ExternalId, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited,
@@ -79,7 +81,9 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
     private sealed record ConversationRow(
         Guid Id, string Source, string? ExternalId, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary);
 
-    private sealed record SegmentRow(Guid ConversationId, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, string? Person);
+    private sealed record SegmentRow(
+        Guid ConversationId, DateTime StartedAt, DateTime EndedAt, string Text, string? Speaker, string? SpeakerId, bool? IsUser, string? Person,
+        string? SpeechKind, bool SpeechMarked);
 
     private sealed record VoiceRow(Guid PersonId, string SpeakerId);
 
@@ -132,7 +136,8 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
             var segments = (await connection.QueryAsync<SegmentRow>(new CommandDefinition(
                 $"""
                 select s.conversation_id as ConversationId, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text,
-                       s.speaker as Speaker, s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, {SpeakerLabel.PersonName} as Person
+                       s.speaker as Speaker, s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser, {SpeakerLabel.PersonName} as Person,
+                       s.speech_kind as SpeechKind, s.speech_manual is not null as SpeechMarked
                 from segments s {SpeakerLabel.Joins}
                 where s.conversation_id = any(@ids)
                 order by s.started_at, s.id
@@ -144,7 +149,7 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
                 yield return new ExportConversation(
                     c.Id, c.Source, c.ExternalId, c.StartedAt, c.EndedAt, c.Status, c.Title, c.TitleEdited, c.Summary,
                     tags.GetValueOrDefault(c.Id) ?? [],
-                    segments[c.Id].Select(s => new ExportSegment(s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, s.IsUser, s.Person)).ToList());
+                    segments[c.Id].Select(s => new ExportSegment(s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, s.IsUser, s.Person, s.SpeechKind, s.SpeechMarked)).ToList());
             }
 
             (afterAt, afterId) = (page[^1].StartedAt, page[^1].Id);

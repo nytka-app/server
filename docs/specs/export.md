@@ -56,7 +56,9 @@ as the download.
 A segment, inside `conversation.segments`, oldest first: `startedAt`, `endedAt` (capture times),
 `text`, `speaker` (the provider's label, null if none), `speakerId` (the provider's voice id, null for
 imported segments), `isUser` (true for the wearer by the rule in [your-voice.md](your-voice.md#which-label-wins), null when nobody says), `person` (the
-name given to that voice, else null). A bookmark carries no conversation: as in the API, the one it
+name given to that voice, else null), `speechKind` (the speech kind that applies, `person`, `media` or `call`, else null: the owner's mark, else with
+`speech.mode` at `on` the guess, see [speech-kind.md](speech-kind.md#which-kind-wins)) and `speechMarked` (true when the owner's mark decides it). The
+format `version` stays `1`: the two keys are added and no other changes. A bookmark carries no conversation: as in the API, the one it
 belongs to is found by time (30 seconds around the span).
 
 Only live rows are written: a task, memory or person fact the user deleted is not. A conversation deleted by the

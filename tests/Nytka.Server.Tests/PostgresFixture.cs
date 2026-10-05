@@ -37,7 +37,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await _container.DisposeAsync();
     }
 
-    /// <summary>Empties every table between tests. The migration journal stays.</summary>
+    /// <summary>Empties every table between tests. The migration journal stays, and <c>speech_state</c> returns to its one default row.</summary>
     public async Task ResetAsync()
     {
         await using var connection = await DataSource.OpenConnectionAsync();
@@ -48,7 +48,9 @@ public sealed class PostgresFixture : IAsyncLifetime
             truncate tags cascade;
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
                      segments, speech_audio, jobs, diagnostics, api_tokens, settings,
-                     webhooks, webhook_deliveries, people, bookmarks, digests, voice_profile restart identity cascade
+                     webhooks, webhook_deliveries, people, bookmarks, digests, voice_profile restart identity cascade;
+            insert into speech_state (id, applied_mode, applied_threshold, updated_at) values (1, 'shadow', 0.8, now())
+            on conflict (id) do update set applied_mode = 'shadow', applied_threshold = 0.8, updated_at = now()
             """,
             connection);
         await command.ExecuteNonQueryAsync();

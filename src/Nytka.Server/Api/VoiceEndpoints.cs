@@ -5,6 +5,7 @@ using Nytka.Audio.Frames;
 using Nytka.Audio.Wav;
 using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
+using Nytka.Server.Speech;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
@@ -183,11 +184,13 @@ public static class VoiceEndpoints
     }
 
     /// <summary>
-    /// Body <c>{ isUser?, personId? }</c>, at least one. <c>isUser</c> is true, false, or null to clear the mark;
-    /// <c>personId</c> a person, or null to clear the segment's own person. Answers the segment as a conversation shows it.
+    /// Body <c>{ isUser?, personId?, speechKind? }</c>, at least one. <c>isUser</c> is true, false, or null to clear the mark;
+    /// <c>personId</c> a person, or null to clear the segment's own person; <c>speechKind</c> <c>person</c>, <c>media</c>, <c>call</c>
+    /// or null to clear the mark. A wearer's line cannot be media: the <c>isUser</c> and <c>personId</c> of the same body apply first.
+    /// Answers the segment as a conversation shows it.
     /// </summary>
     private static async Task<IResult> MarkAsync(
-        long id, HttpRequest http, VoiceStore voices, PeopleStore people, ConversationStore conversations,
+        long id, HttpRequest http, VoiceStore voices, PeopleStore people, ConversationStore conversations, SpeechStore speech,
         SettingsService settings, CancellationToken ct)
     {
         JsonElement body;
@@ -202,6 +205,7 @@ public static class VoiceEndpoints
 
         var hasUser = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("isUser", out _);
         var hasPerson = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("personId", out _);
+        var hasKind = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("speechKind", out _);
         var errors = new Dictionary<string, string[]>();
         var isUser = (bool?)null;
         if (hasUser)
@@ -231,14 +235,26 @@ public static class VoiceEndpoints
             }
         }
 
-        if (!hasUser && !hasPerson)
+        var kind = (string?)null;
+        if (hasKind && !SpeechBody.TryKind(body.GetProperty("speechKind"), out kind))
         {
-            errors["isUser"] = ["Give isUser, personId or both."];
+            errors["speechKind"] = [SpeechBody.BadKind];
+        }
+
+        if (!hasUser && !hasPerson && !hasKind)
+        {
+            errors["isUser"] = ["Give isUser, personId, speechKind or any of them."];
         }
 
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);
+        }
+
+        // Refused before anything is written, so a voiceprint does not learn from a line the same body calls media.
+        if (kind == SpeechKinds.Media && isUser == true)
+        {
+            return WearerMedia();
         }
 
         if (hasPerson)
@@ -257,10 +273,26 @@ public static class VoiceEndpoints
             return NoSegment();
         }
 
+        if (hasKind)
+        {
+            if (kind == SpeechKinds.Media && await conversations.SegmentAsync(id, ct) is { IsUser: true })
+            {
+                return WearerMedia();
+            }
+
+            if (!await speech.MarkAsync(id, kind, ct))
+            {
+                return NoSegment();
+            }
+        }
+
         return await conversations.SegmentAsync(id, ct) is { } segment ? Results.Ok(segment) : NoSegment();
     }
 
     private static IResult NoSegment() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such segment.");
+
+    private static IResult WearerMedia() =>
+        Results.ValidationProblem(new Dictionary<string, string[]> { ["speechKind"] = ["A line of the wearer cannot be media."] });
 
     private static IResult TooLong() => Results.Problem(
         statusCode: StatusCodes.Status413PayloadTooLarge, title: $"An enrollment may not exceed {VoiceEnrollment.MaxSeconds} seconds.");
