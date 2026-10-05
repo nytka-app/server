@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Nytka.Server.Ai;
 using Nytka.Server.Events;
 using Nytka.Server.Tests.Ai;
@@ -13,6 +15,11 @@ namespace Nytka.Server.Tests.People;
 public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool PeopleFacts => true;
+
+    private readonly LogCapture _logs = new();
+
+    protected override void ConfigureServices(IServiceCollection services) =>
+        services.AddSingleton<ILoggerFactory>(new LoggerFactory([_logs], new LoggerFilterOptions { MinLevel = LogLevel.Information }));
 
     private HttpClient Client => Server.CreateAuthorizedClient();
 
@@ -41,8 +48,27 @@ public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
         return new Lines(id, ids[0], ids[1], ids[2], ids[3]);
     }
 
-    private static string Answer(params (Guid Person, string Text, long Segment)[] facts) =>
-        JsonSerializer.Serialize(new { facts = facts.Select(f => new { personId = f.Person, text = f.Text, segmentId = f.Segment }) });
+    private static string Answer(params (Guid Person, string Text, long Segment)[] facts) => Answer(facts, []);
+
+    private static string Answer((Guid Person, string Text, long Segment)[] facts, (Guid Person, string Tag)[] tags) =>
+        JsonSerializer.Serialize(new
+        {
+            facts = facts.Select(f => new { personId = f.Person, text = f.Text, segmentId = f.Segment }),
+            tags = tags.Select(t => new { personId = t.Person, tag = t.Tag }),
+        });
+
+    private static string Tags(params (Guid Person, string Tag)[] tags) => Answer([], tags);
+
+    private sealed record Proposal(string Name, string Status, Guid? Person, Guid Conversation);
+
+    private Task<List<Proposal>> Proposals(Guid person) =>
+        Db.QueryAsync<Proposal>(
+            "select name as Name, status as Status, person_id as Person, conversation_id as Conversation from tag_suggestions where person_id = @person order by name",
+            new { person });
+
+    private Task<List<string>> PersonTags(Guid person) =>
+        Db.QueryAsync<string>(
+            "select t.name from person_tags l join tags t on t.id = l.tag_id where l.person_id = @person order by t.name", new { person });
 
     private async Task Extract(Guid conversation)
     {
@@ -67,6 +93,179 @@ public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
             select text as Text, source as Source, basis as Basis, segment_id as SegmentId, edited as Edited, deleted_at is not null as Deleted
             from person_facts where {where} order by text
             """);
+
+    [Fact]
+    public async Task A_tag_for_a_sent_person_is_a_pending_proposal_with_the_person_and_the_source_conversation()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        Llm.Respond = _ => Tags((olena, "Neighbour"), (olena, "#neighbour"), (olena, "Honey seller"));
+
+        await Extract(lines.Conversation);
+
+        Assert.Equal(
+            [new Proposal("honey-seller", "pending", olena, lines.Conversation), new Proposal("neighbour", "pending", olena, lines.Conversation)],
+            await Proposals(olena));
+        Assert.Empty(await PersonTags(olena));
+        Assert.Empty(await Db.QueryAsync<Guid>("select conversation_id from conversation_tags"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from tags"));
+        Assert.Equal("done", await Db.ScalarAsync<string>("select status from people_runs where kind = 'facts'"));
+    }
+
+    [Fact]
+    public async Task A_tag_for_a_person_not_sent_an_invalid_name_a_held_tag_and_a_listed_name_are_dropped_and_3_is_the_most()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        var bob = await Person("Bob");
+        Assert.Equal(HttpStatusCode.OK, (await Client.PutAsync($"/api/v1/people/{olena}/tags/colleague", null)).StatusCode);
+        Llm.Respond = _ => Tags(
+            (bob, "friend"), (Guid.NewGuid(), "stranger"), (olena, "a/b"), (olena, "Colleague"), (olena, "olena"), (olena, "#Olena"),
+            (olena, "one"), (olena, "two"), (olena, "three"), (olena, "four"));
+
+        await Extract(lines.Conversation);
+
+        Assert.Equal(["one", "three", "two"], (await Proposals(olena)).Select(p => p.Name));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from tag_suggestions where person_id <> @olena", new { olena }));
+        Assert.Equal(["colleague"], await PersonTags(olena));
+    }
+
+    [Fact]
+    public async Task A_rejected_or_removed_tag_is_not_proposed_again_for_that_person()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        Llm.Respond = _ => Tags((olena, "neighbour"), (olena, "seller"), (olena, "friend"));
+        await Extract(lines.Conversation);
+        var ids = await Db.QueryAsync<Guid>("select id from tag_suggestions order by name");
+        Assert.Equal(HttpStatusCode.NoContent, (await Client.PostAsync($"/api/v1/review/tag/{ids[1]}/reject", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Client.PostAsync($"/api/v1/review/tag/{ids[2]}/accept", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Client.DeleteAsync($"/api/v1/people/{olena}/tags/seller")).StatusCode);
+
+        await AddSegment(lines.Conversation, "One more thing.", Now.AddMinutes(-1));
+        await Extract(lines.Conversation);
+
+        Assert.Equal(2, Llm.Requests.Count);
+        Assert.Equal(
+            [("friend", "pending"), ("neighbour", "rejected"), ("seller", "accepted")], (await Proposals(olena)).Select(p => (p.Name, p.Status)));
+        Assert.Empty(await PersonTags(olena));
+    }
+
+    [Fact]
+    public async Task The_inbox_names_the_person_and_accept_tags_the_person_not_the_conversation()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        Llm.Respond = _ => Tags((olena, "neighbour"));
+        await Extract(lines.Conversation);
+
+        var item = Assert.Single(
+            (await Client.GetFromJsonAsync<JsonElement>("/api/v1/review")).GetProperty("items").EnumerateArray(),
+            i => i.GetProperty("kind").GetString() == "tag");
+        var listed = Assert.Single((await Client.GetFromJsonAsync<JsonElement>("/api/v1/tags/suggestions?status=pending")).GetProperty("items").EnumerateArray());
+        var accept = await Client.PostAsync($"/api/v1/review/tag/{item.GetProperty("id").GetString()}/accept", null);
+
+        Assert.Equal(olena, item.GetProperty("proposal").GetProperty("personId").GetGuid());
+        Assert.Equal("neighbour", item.GetProperty("proposal").GetProperty("tag").GetString());
+        Assert.Equal(lines.Conversation, item.GetProperty("conversationId").GetGuid());
+        Assert.Equal("Olena", listed.GetProperty("personName").GetString());
+        Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
+        Assert.Equal(["neighbour"], (await accept.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("tags").EnumerateArray().Select(t => t.GetString()));
+        Assert.Equal(["neighbour"], await PersonTags(olena));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from conversation_tags"));
+    }
+
+    [Fact]
+    public async Task The_request_lists_the_tags_in_use_and_asks_for_at_most_3_without_the_excluded_subjects()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        Assert.Equal(HttpStatusCode.OK, (await Client.PutAsync($"/api/v1/people/{olena}/tags/colleague", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Client.PutAsync($"/api/v1/conversations/{lines.Conversation}/tags/trip", null)).StatusCode);
+
+        await Extract(lines.Conversation);
+
+        var request = Assert.Single(Llm.Requests);
+        Assert.Contains("\nTags: colleague, trip\n", request.User, StringComparison.Ordinal);
+        Assert.Contains("at most 3 short lowercase tags", request.System, StringComparison.Ordinal);
+        foreach (var subject in new[] { "age", "gender", "health", "religion", "ethnicity", "politics", "how someone sounds" })
+        {
+            Assert.Contains(subject, request.System[request.System.IndexOf("Tags:", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task With_the_setting_off_no_tag_names_are_sent_and_the_answer_is_ignored_but_the_facts_are_kept()
+    {
+        StartServer(settings => settings["Nytka:Tags:Suggest"] = "false");
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        Assert.Equal(HttpStatusCode.OK, (await Client.PutAsync($"/api/v1/people/{olena}/tags/colleague", null)).StatusCode);
+        Llm.Respond = _ => Answer([(olena, "Olena has a new job.", lines.Wearer)], [(olena, "neighbour")]);
+
+        await Extract(lines.Conversation);
+
+        var request = Assert.Single(Llm.Requests);
+        Assert.DoesNotContain("Tags:", request.User, StringComparison.Ordinal);
+        Assert.DoesNotContain("colleague", request.User, StringComparison.Ordinal);
+        Assert.Contains("Tags: return an empty list.", request.System, StringComparison.Ordinal);
+        Assert.Equal(["Olena has a new job."], (await Facts()).Select(f => f.Text));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from tag_suggestions"));
+    }
+
+    [Fact]
+    public async Task An_answer_without_tags_fails_the_attempt_and_retries()
+    {
+        var lines = await Conversation();
+        await Person("Olena");
+        Llm.Respond = _ => """{"facts":[]}""";
+        await Publish(lines.Conversation);
+
+        await RunThreeAttempts();
+
+        Assert.Equal(3, Llm.Requests.Count);
+        Assert.Equal("failed", await Db.ScalarAsync<string>("select status from people_runs where kind = 'facts'"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from tag_suggestions"));
+    }
+
+    [Fact]
+    public async Task A_person_deleted_while_the_model_works_gets_no_proposal_and_the_run_still_finishes()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        var anna = await Person("Anna", "4");
+        Llm.RespondAsync = async (_, _) =>
+        {
+            await Db.ExecuteAsync("delete from people where id = @olena", new { olena });
+            return Answer([], [(olena, "neighbour"), (anna, "nurse")]);
+        };
+
+        await Extract(lines.Conversation);
+
+        Assert.Equal(["nurse"], await Db.QueryAsync<string>("select name from tag_suggestions"));
+        Assert.Equal("done", await Db.ScalarAsync<string>("select status from people_runs where kind = 'facts'"));
+    }
+
+    [Fact]
+    public async Task No_log_line_or_run_message_holds_a_proposed_tag()
+    {
+        var lines = await Conversation();
+        var olena = await Person("Olena");
+        Llm.Respond = _ => Answer([], [(olena, "Quokkasecret")]);
+        await Extract(lines.Conversation);
+        await AddSegment(lines.Conversation, "One more thing.", Now.AddMinutes(-1));
+        Llm.Respond = _ => """{"facts":[],"tags":[{"personId":"x","tag":"Numbatsecret"}],"wombatsecret":1}""";
+        await Publish(lines.Conversation);
+
+        await RunThreeAttempts();
+
+        Assert.NotEmpty(_logs.Lines);
+        foreach (var secret in new[] { "quokka", "numbat", "wombat" })
+        {
+            Assert.DoesNotContain(_logs.Lines, l => l.Contains(secret, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(await Db.QueryAsync<string?>("select message from people_runs"), m => m is not null && m.Contains(secret, StringComparison.OrdinalIgnoreCase));
+        }
+    }
 
     [Fact]
     public async Task A_summary_queues_a_job_and_records_a_pending_run()
@@ -405,5 +604,49 @@ public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(HttpStatusCode.Forbidden, (await read.PatchAsJsonAsync($"/api/v1/people/{olena}/facts/{fact}", new { text = "Likes jam." })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await read.DeleteAsync($"/api/v1/people/{olena}/facts/{fact}")).StatusCode);
         Assert.Single(await Facts("deleted_at is null and text = 'Likes tea.'"));
+    }
+
+    /// <summary>Every rendered log message and exception message of the host at Information and above, but the hosting request lines, which carry the path.</summary>
+    private sealed class LogCapture : ILoggerProvider
+    {
+        private readonly List<string> _lines = [];
+
+        public IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (_lines)
+                {
+                    return [.. _lines];
+                }
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName) => new Capture(this, categoryName);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Capture(LogCapture owner, string category) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (category == "Microsoft.AspNetCore.Hosting.Diagnostics")
+                {
+                    return;
+                }
+
+                lock (owner._lines)
+                {
+                    owner._lines.Add(formatter(state, exception) + " " + exception);
+                }
+            }
+        }
     }
 }

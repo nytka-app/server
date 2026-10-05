@@ -175,9 +175,9 @@ you copy without thinking would lock its setting.
 | `Nytka__Llm__BackfillDays` | no | `7` | env only | How far back conversations without a summary are summarized |
 | `Nytka__Memories__Enabled` | no | `true` | editable | `false` stops memory extraction |
 | `Nytka__Memories__UserName` | no | empty | editable | Who "you" is for the model, up to 64 characters; empty means the person wearing the pendant |
-| `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](#people) for unnamed voices; it needs the language model |
+| `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](#people) and [roles](#roles) for unnamed voices; it needs the language model |
 | `Nytka__People__Facts` | no | `true` | editable | `false` stops [facts about people](#facts-about-people) from being taken from conversations; it needs the language model |
-| `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](#tags) for conversations and stops sending it tag names; it needs the language model |
+| `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](#tags) for conversations and people and stops sending it tag names; it needs the language model |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](#ukrainian-search-optional) |
@@ -409,15 +409,18 @@ The MCP tools carry them too: `list_tags`, a `tag` filter on `list_conversations
 - The `conversation.ready` webhook carries `tags`, the conversation's tags when it was summarized. Adding
   a tag sends no event; read `GET /api/v1/conversations/{id}` for the current ones.
 - **Proposed tags.** With `Nytka__Tags__Suggest` on (the default) and a [language model](#the-language-model) set, each
-  summary may bring up to 3 proposed tags for the conversation. A proposal is a name waiting in the
+  summary may bring up to 3 proposed tags for the conversation, and each run of [facts about people](#facts-about-people)
+  up to 3 for each person it lists ("neighbour", "doctor"). A proposal is a name waiting in the
   [review inbox](#review) (kind `tag`) and `GET /api/v1/tags/suggestions`; it tags nothing until you accept it. A
-  rejected tag is never proposed again for that conversation, and neither is one you accepted and later removed. The model
-  does not propose a name of a person in the conversation, an invalid name, or a tag the conversation has. A conversation
-  under 60 words gets none. Accepting is the same add as `PUT`, so it is refused with `409` when the conversation has 20
-  tags, and the proposal stays pending. Merging two conversations gives the survivor the proposals of both.
-- **What the model sees.** With proposals on, the 100 tags in use most (names only) go to the model with each summary so
-  it reuses them, and the prompt asks for nothing about health, religion, ethnicity, politics or how someone sounds. The
-  model reads text, never audio. With proposals off no tag name is sent and an answer's tags are ignored.
+  rejected tag is never proposed again for that conversation or person, and neither is one you accepted and later removed.
+  The model does not propose a name of a person in the conversation, an invalid name, or a tag the item has. A conversation
+  under 60 words gets none. Accepting is the same add as `PUT`, so it is refused with `409` when the conversation or person
+  has 20 tags, and the proposal stays pending. Merging two conversations or two people gives the survivor the proposals of both.
+  A person's proposal also names the conversation it came from.
+- **What the model sees.** With proposals on, the 100 tags in use most (names only) go to the model with each summary and
+  each facts request so it reuses them, and the prompts ask for nothing about health, religion, ethnicity, politics or how
+  someone sounds (nor age or gender, for a person). The model reads text, never audio. With proposals off no tag name is sent
+  and an answer's tags are ignored.
 - Tags can be private ("therapy"). No tag name is in a log line or an error message; the server logs no
   request lines (Serilog's `Request starting` and `Request finished`), because they hold the path.
 
@@ -486,7 +489,7 @@ merges four queues, newest first:
   lines and its similarity, with no clip. None while voice matching is off.
 - **`label`:** a segment of the last 14 days that Nytka scored within 0.05 of `Nytka__Voice__UserThreshold`
   and you have not marked, at most 20; the proposal is Nytka's verdict (`isUser`) and the similarity.
-- **`tag`:** a pending [proposed tag](#tags) for a conversation, shown with the conversation's summary.
+- **`tag`:** a pending [proposed tag](#tags) for a conversation or a person, shown with the summary of the conversation it came from; for a person, `proposal.personId` is set (`GET /api/v1/tags/suggestions` adds `personName`).
 
 An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
 confidence, similarity, isUser, tag, role, named } }`; fields that do not belong to the kind are `null`. `id` is a
@@ -495,7 +498,7 @@ segment id for a label and a guid for the others. `limit` is 1 to 200, default 5
 `POST /api/v1/review/{kind}/{id}/accept` and `/reject` answer an item. A `name` or `voice` item is
 answered as its own routes do (`200` with the person on accept, `204` on reject; `409` when a
 suggestion is no longer pending), and a `tag` as `POST /api/v1/tags/suggestions/{id}/accept` does (`200` with the
-conversation's tags; `409` when it is no longer pending or the conversation has 20 tags), so nothing changes a label or a tag until you accept. For a `label`, accept
+item's tags; `409` when it is no longer pending or the item has 20 tags), so nothing changes a label or a tag until you accept. For a `label`, accept
 stores Nytka's verdict as your mark (`PATCH /api/v1/segments/{id}` with `isUser`) and reject stores the
 opposite, both `204`; either way the segment leaves the list, and a mark of yours may teach your
 voiceprint as that route does. `404` for an unknown kind or item. The list needs a read token, the
@@ -623,6 +626,8 @@ about you stay memories.
   duplicate.
 - List, add, edit and delete facts with `/api/v1/people/{id}/facts`. A fact you add has `source: user`
   and no basis; adding text you deleted earlier brings it back, and text a live fact holds is a `409`.
+- The same answer may propose up to 3 [tags](#tags) for each listed person; they wait in the [review inbox](#review) and tag
+  nobody until you accept them. `Nytka__Tags__Suggest=false` stops them.
 - `Nytka__People__Facts=false`, or no model, means no extraction. The facts you have stay.
 - A failed extraction is tried three times, then again an hour later, three rounds at most.
 - Facts are in [search](#search) but not in Ask or the daily digest, and no webhook payload carries a transcript.
@@ -1169,8 +1174,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tags/{name}/rename` | admin | Body `{ name }`; `200` with the tag; `404` for an unknown tag; `409` when the new name is another tag's (merge instead) |
 | POST | `/api/v1/tags/{name}/merge` | admin | Body `{ into }`; moves every link to `into` (created when new), drops duplicates and the old tag; `200` with `into`; `404` for an unknown tag |
 | GET | `/api/v1/tags/suggestions?status=` | read | `{ items: [{ id, conversationId, personId, personName, name, createdAt }] }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`, else `400`; `personId` is null for a conversation's tag; see [Tags](#tags) |
-| POST | `/api/v1/tags/suggestions/{id}/accept` | admin | Adds the proposed tag to its conversation: `200 { tags }`; `404` for an unknown proposal; `409` when it is no longer pending or the conversation has 20 tags |
-| POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation: `204`; `404` and `409` as accept |
+| POST | `/api/v1/tags/suggestions/{id}/accept` | admin | Adds the proposed tag to its conversation, or to its person when `personId` is set: `200 { tags }`, the item's; `404` for an unknown proposal; `409` when it is no longer pending or the item has 20 tags |
+| POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation or person: `204`; `404` and `409` as accept |
 | DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
@@ -1201,7 +1206,7 @@ transcripts and your webhook secrets.
   database. A webhook secret is, as plain text, because signing needs it.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them). A person known only by a [role](#roles) is marked `named: false` until a name is given.
 - [Tags](#tags) (a name, and which conversations and people hold it) stay until you remove the last link, delete the tag, or delete what held it. They are words you chose and can be sensitive, so a dump holds them.
-- Proposed tags (the name, the conversation it came from and your answer) stay until you delete that conversation; accepted and rejected ones too, which is how a rejected tag stays rejected. They hold model-chosen words about your day, so a dump holds them.
+- Proposed tags (the name, the conversation it came from, the person for a person's tag, and your answer) stay until you delete that conversation or person; accepted and rejected ones too, which is how a rejected tag stays rejected. They hold model-chosen words about your day, so a dump holds them.
 - Name suggestions (the name or role, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.

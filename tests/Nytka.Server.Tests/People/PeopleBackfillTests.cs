@@ -198,7 +198,7 @@ public sealed class PeopleBackfillTests(PostgresFixture db) : AiTestBase(db)
         var before = await Db.ScalarAsync<string>(snapshot, new { id });
         var voice = await Db.ScalarAsync<long>("select min(id) from segments where speaker_id = '4'");
         Llm.Respond = request => request.SchemaName == "person_facts"
-            ? """{"facts":[]}"""
+            ? """{"facts":[],"tags":[]}"""
             : JsonSerializer.Serialize(new { suggestions = new[] { new { voice = "Voice A", name = "Olena", role = (string?)null, segmentId = voice, confidence = 0.9 } } });
 
         await Backfill();
