@@ -1,3 +1,4 @@
+using Nytka.Server.Ai;
 using Nytka.Server.Auth;
 using Nytka.Server.People;
 using Nytka.Server.Settings;
@@ -35,7 +36,7 @@ public static class ReviewEndpoints
         int? limit, ReviewStore review, SettingsService settings, TimeProvider time, CancellationToken ct) =>
         Results.Ok(new ReviewList(await review.ListAsync(
             Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit), PeopleSettings.VoiceMatching(settings), VoiceSettings.UserThreshold(settings),
-            time.GetUtcNow(), ct)));
+            time.GetUtcNow(), ct, UserTimeZone.Resolve(settings))));
 
     /// <summary>
     /// <c>name</c> and <c>voice</c> as <c>POST /people/suggestions/{id}/accept</c> and a card's answer do: 200 with the person.
@@ -44,7 +45,7 @@ public static class ReviewEndpoints
     /// </summary>
     private static async Task<IResult> AcceptAsync(
         string kind, string id, NameSuggestionStore suggestions, VoiceGroupStore groups, PeopleStore people, ReviewStore review,
-        VoiceStore voices, SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, CancellationToken ct)
+        VoiceStore voices, SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, SpeechStore speech, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         switch (kind)
@@ -65,6 +66,8 @@ public static class ReviewEndpoints
                     : NotFound();
             case ReviewStore.LabelKind when long.TryParse(id, out var segment):
                 return await Mark(segment, same: true, review, voices, settings, ct);
+            case ReviewStore.SpeechKind when long.TryParse(id, out var stretch):
+                return await MarkStretch(stretch, accept: true, review, speech, ct);
             default:
                 return NotFound();
         }
@@ -76,7 +79,7 @@ public static class ReviewEndpoints
     /// </summary>
     private static async Task<IResult> RejectAsync(
         string kind, string id, NameSuggestionStore suggestions, VoiceGroupStore groups, ReviewStore review, VoiceStore voices,
-        SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, CancellationToken ct)
+        SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, SpeechStore speech, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         switch (kind)
@@ -94,6 +97,8 @@ public static class ReviewEndpoints
                 return await groups.RejectCardAsync(VoiceGroupStore.MatchKind, match, now, ct) ? Results.NoContent() : NotFound();
             case ReviewStore.LabelKind when long.TryParse(id, out var segment):
                 return await Mark(segment, same: false, review, voices, settings, ct);
+            case ReviewStore.SpeechKind when long.TryParse(id, out var stretch):
+                return await MarkStretch(stretch, accept: false, review, speech, ct);
             default:
                 return NotFound();
         }
@@ -105,6 +110,21 @@ public static class ReviewEndpoints
         && await voices.MarkAsync(segment, same ? verdict : !verdict, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct)
             ? Results.NoContent()
             : NotFound();
+
+    /// <summary>Marks every line of the stretch: the guess on accept (<c>media</c> for <c>unsure</c>), <c>person</c> on reject.</summary>
+    private static async Task<IResult> MarkStretch(long id, bool accept, ReviewStore review, SpeechStore speech, CancellationToken ct)
+    {
+        var stretch = await review.SpeechStretchAsync(id, ct);
+        if (!stretch.Found)
+        {
+            return NotFound();
+        }
+
+        var kind = !accept ? SpeechKinds.Person : stretch.Guess == SpeechKinds.Unsure ? SpeechKinds.Media : stretch.Guess!;
+        return !stretch.Marked && await speech.MarkStretchAsync(stretch.SegmentIds, kind, ct)
+            ? Results.NoContent()
+            : Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The stretch is already marked.");
+    }
 
     private static IResult NotFound() => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such item.");
 
