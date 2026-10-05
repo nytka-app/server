@@ -53,7 +53,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
         items.AddRange(await QueryAsync(
             connection, NameKind,
             """
-            select n.id::text as Id, n.conversation_id as ConversationId, c.title as Title, n.created_at as At, e.text as Text,
+            select n.id::text as Id, n.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, n.created_at as At, e.text as Text,
                    n.name as Name, n.person_id as PersonId, n.confidence as Confidence, cast(null as real) as Similarity,
                    cast(null as boolean) as IsUser
             from name_suggestions n
@@ -69,7 +69,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
             items.AddRange(await QueryAsync(
                 connection, VoiceKind,
                 """
-                select m.id::text as Id, m.conversation_id as ConversationId, c.title as Title, m.created_at as At,
+                select m.id::text as Id, m.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, m.created_at as At,
                        coalesce((select string_agg(t.text, E'\n' order by t.started_at)
                                  from (select s.text, s.started_at from segments s where s.id = any(m.segment_ids)
                                        order by s.started_at limit 3) t), '') as Text,
@@ -88,7 +88,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
         items.AddRange(await QueryAsync(
             connection, LabelKind,
             $"""
-            select s.id::text as Id, s.conversation_id as ConversationId, c.title as Title, s.started_at as At, s.text as Text,
+            select s.id::text as Id, s.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, s.started_at as At, s.text as Text,
                    cast(null as text) as Name, cast(null as uuid) as PersonId, cast(null as real) as Confidence,
                    s.voice_similarity as Similarity, s.voice_is_user as IsUser
             from segments s
