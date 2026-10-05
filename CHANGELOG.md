@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.15.0](https://github.com/nytka-app/server/compare/v0.14.0...v0.15.0) (2026-10-05)
+
+
+### Features
+
+* calendar feed, pre-meeting briefs and brief.ready (People P-9) ([#78](https://github.com/nytka-app/server/issues/78)) ([9b649f9](https://github.com/nytka-app/server/commit/9b649f9fc72480c0369da39b573e1cd329faa843))
+* export people, facts and task persons; document People (People P-10) ([#80](https://github.com/nytka-app/server/issues/80)) ([7d87576](https://github.com/nytka-app/server/commit/7d8757659c9038e6b46491987c3a7e794fde0961))
+* last seen and fact count on the people list, review and briefs feature flags ([#81](https://github.com/nytka-app/server/issues/81)) ([8aa74de](https://github.com/nytka-app/server/commit/8aa74de2a3eea3d89447f42ef8159a066f99d263))
+* review inbox for name suggestions, voice matches and wearer labels (People P-8) ([#77](https://github.com/nytka-app/server/issues/77)) ([7175d13](https://github.com/nytka-app/server/commit/7175d134a8a66156b1ee93cc2460b19800238fde))
+
 ## [0.14.0](https://github.com/nytka-app/server/compare/v0.13.0...v0.14.0) (2026-10-04)
 
 
