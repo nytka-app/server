@@ -29,6 +29,7 @@ public static class InfoEndpoints
     /// <c>GET /api/v1/tags/suggestions</c> and the review kind <c>tag</c>. "roles": a name suggestion may carry a role, and people have <c>named</c> (docs/specs/tags.md, Roles).
     /// "speech-kind": a line has a speech kind and the owner marks it (docs/specs/speech-kind.md): <c>speechKind</c> on <c>PATCH /api/v1/segments/{id}</c>,
     /// <c>POST /api/v1/conversations/{id}/speech</c>, <c>mediaShare</c> and <c>media=</c> on the conversation list.
+    /// "context-ranges": the app may send <c>POST /api/v1/context/ranges</c> (docs/specs/speech-kind.md, Context from the phone).
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -42,6 +43,7 @@ public static class InfoEndpoints
         features.Add("tag-suggestions");
         features.Add("roles");
         features.Add("speech-kind");
+        features.Add("context-ranges");
 
         return features;
     }

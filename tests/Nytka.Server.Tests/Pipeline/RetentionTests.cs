@@ -55,6 +55,15 @@ public sealed class RetentionTests(PostgresFixture db) : IAsyncLifetime
             new { session, receivedAt, processed });
     }
 
+    /// <summary>A context range inserted directly, as the app's upload would store it.</summary>
+    private Task ContextRange(DateTime startedAt, DateTime endedAt) =>
+        db.ExecuteAsync(
+            """
+            insert into context_ranges (id, kind, route, started_at, ended_at, received_at)
+            values (@id, 'media', 'speaker', @startedAt, @endedAt, @endedAt)
+            """,
+            new { id = Guid.CreateVersion7(), startedAt, endedAt });
+
     [Fact]
     public async Task Deletes_speech_audio_past_retention()
     {
@@ -79,6 +88,54 @@ public sealed class RetentionTests(PostgresFixture db) : IAsyncLifetime
         await RunRetention();
 
         Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from speech_audio"));
+    }
+
+    [Fact]
+    public async Task Deletes_context_ranges_that_ended_before_the_audio_cutoff()
+    {
+        var cutoff = Now.AddDays(-14);
+        await ContextRange(Now.AddDays(-15).AddMinutes(-5), Now.AddDays(-15));
+        await ContextRange(cutoff.AddMinutes(-5), cutoff.AddSeconds(-1));
+        await ContextRange(cutoff.AddMinutes(-5), cutoff);
+        await ContextRange(cutoff.AddHours(-1), cutoff.AddHours(1));
+        await ContextRange(Now.AddMinutes(-5), Now.AddMinutes(-1));
+
+        await RunRetention();
+
+        // What ended at the cutoff or later stays, even when it began before it.
+        Assert.Equal(
+            [cutoff, cutoff.AddHours(1), Now.AddMinutes(-1)],
+            await db.QueryAsync<DateTime>("select ended_at from context_ranges order by ended_at"));
+    }
+
+    [Fact]
+    public async Task Context_ranges_follow_the_audio_retention_setting()
+    {
+        _server.Dispose();
+        _server = new NytkaApiFactory(db, settings => settings["Nytka:Audio:RetentionDays"] = "3");
+        await SpeechAudioEnded(Now.AddDays(-4));
+        await SpeechAudioEnded(Now.AddDays(-2));
+        await ContextRange(Now.AddDays(-4).AddMinutes(-5), Now.AddDays(-4));
+        await ContextRange(Now.AddDays(-2).AddMinutes(-5), Now.AddDays(-2));
+
+        await RunRetention();
+
+        Assert.Equal([Now.AddDays(-2)], await db.QueryAsync<DateTime>("select ended_at from speech_audio"));
+        Assert.Equal([Now.AddDays(-2)], await db.QueryAsync<DateTime>("select ended_at from context_ranges"));
+    }
+
+    [Fact]
+    public async Task Retention_zero_deletes_context_ranges_a_day_after_they_end()
+    {
+        _server.Dispose();
+        _server = new NytkaApiFactory(db, settings => settings["Nytka:Audio:RetentionDays"] = "0");
+        await ContextRange(Now.AddDays(-30).AddMinutes(-5), Now.AddDays(-30));
+        await ContextRange(Now.AddHours(-25).AddMinutes(-5), Now.AddHours(-25));
+        await ContextRange(Now.AddHours(-23).AddMinutes(-5), Now.AddHours(-23));
+
+        await RunRetention();
+
+        Assert.Equal([Now.AddHours(-23)], await db.QueryAsync<DateTime>("select ended_at from context_ranges"));
     }
 
     [Fact]
