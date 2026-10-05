@@ -191,7 +191,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Calendar__IcsUrl` | no | | env only | `http` or `https` address of a read-only ICS feed; with it set, meetings of the next 48 hours with someone you named get a [calendar brief](#calendar-briefs). The address usually carries a token, so `GET /api/v1/settings` shows only `isSet`, and no log or error repeats it |
 | `Nytka__Calendar__BriefMinutes` | no | `30` | editable | How long before a meeting its brief is made, 5 to 240 minutes |
 | `Nytka__Speech__Mode` | no | `shadow` | editable | `off`, `shadow` or `on`: whether [speech kinds](#speech-kind) are guessed (`off`: no), only shown (`shadow`) or applied (`on`); your own marks apply in every mode. A change queues `apply-speech` |
-| `Nytka__Speech__MediaThreshold` | no | `0.8` | editable | Score, 0.5 to 0.99, at or above which a guess is `media`; a score less than 0.15 below it is `unsure`. A change works out the stored guesses again |
+| `Nytka__Speech__MediaThreshold` | no | `0.94` | editable | Score, 0.5 to 0.99, at or above which a guess is `media`; a score less than 0.15 below it is `unsure`. A change works out the stored guesses again |
 | `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
@@ -508,8 +508,30 @@ treated as before. The result is stored on the line, so every reader asks one co
 segments carry it as `speechKind`, with `speechGuess`, `speechScore` (0 to 1, how much the line looks like
 media), `speechSignals` (what moved the score) and `speechMarked` (true when your mark decides).
 
-**No guesses yet.** This version stores your marks and applies the setting. Nothing computes a guess, so
-`speechGuess`, `speechScore` and `speechSignals` stay empty, and only your marks set a kind.
+**The guess.** A few scheduler ticks after a conversation closes (its transcription done, and some line with a
+verdict on whether you spoke it), the `classify-speech` job guesses every line. Your own lines are `person`
+with the signal `wearer`. The others are grouped into stretches (consecutive lines with gaps under 4 s, cut at
+10 s) and each stretch gets one score from a fixed linear model, `speech_version` 1: how far the stretch lies
+from your own lines, how much non-wearer speech surrounds it, your share of the conversation's speech, and
+what the audio model YAMNet hears in its first 10 s (`Television`, `Narration, monologue`, `Speech
+synthesizer`). The score is the model's logistic, fitted on 133 labelled clips with media and people
+weighted equally: it is not a probability of media, and a score of 0.94 means no labelled person scored that
+high. `speechSignals` lists what moved it (`far`, `run`, `share`, `tv`, `narr`, `synth`, `phone-media`,
+`phone-call`, `partial`). A phone media range on the loudspeaker over half the stretch adds to the score, and
+a speaker call range over the stretch with your own line within 3 s makes the guess `call` (see [Context from
+the phone](#context-from-the-phone)). A conversation with no line whose wearer is known gets no guess.
+`Nytka__Audio__RetentionDays` bounds the audio: older conversations are guessed from structure alone.
+
+**The model file.** YAMNet (3.7 million parameters, 16 MB, ONNX Runtime on the CPU) and its class map come
+from `scripts/fetch-audio-tagger.sh`, which the Docker image runs; the files go in `src/Nytka.Audio/Models/`
+and are checked by SHA-256. Without them a guess still runs, from structure alone, with the signal
+`partial`. Licence: YAMNet is Apache-2.0 (Google; ONNX export by andrelgomes); it was trained on AudioSet,
+and no terms for AudioSet-trained weights were found. See [NOTICE](NOTICE).
+
+**Guessing again.** `POST /api/v1/speech/backfill` queues `classify-speech` for the conversations with
+unguessed lines and answers `{ "queued": 3, "remaining": 0 }` (admin; one call queues at most 500, so call it
+again once the jobs ran; nothing is queued while the mode is `off`). With `?force=true` it also takes
+conversations guessed by an older `speech_version`.
 
 **Marking.** `PATCH /api/v1/segments/{id}` with `speechKind` (`person`, `media`, `call`, or `null` to
 clear your mark) marks one line, alone or with `isUser` and `personId`. Any line takes a mark, yours
@@ -519,7 +541,7 @@ and answers `{ "marked": 12 }`; `null` clears those marks. Both need an admin to
 change of the settings.
 
 **Settings.** `Nytka__Speech__Mode` is `shadow` by default: guesses are kept and shown and change
-nothing. `off` makes none; `on` lets them set the kind. `Nytka__Speech__MediaThreshold` (0.8) is the score at
+nothing. `off` makes none; `on` lets them set the kind. `Nytka__Speech__MediaThreshold` (0.94, the value no labelled person reached) is the score at
 or above which a guess is `media`; a score less than 0.15 below it is `unsure`, a lower one `person`, so a
 doubt is never `media`. A change of either queues the `apply-speech` job, which works out the stored guesses
 and kinds again from the scores and your marks, with no audio and no model.
@@ -1201,6 +1223,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
+| POST | `/api/v1/speech/backfill?force=` | admin | Queues `classify-speech` for closed conversations with unguessed lines (`force=true`: also those guessed by an older `speech_version`). `200 { queued, remaining }`: at most 500 are queued per call, `remaining` counts the rest; nothing is queued while `Nytka__Speech__Mode` is `off`; see [Speech kind](#speech-kind) |
 | POST | `/api/v1/conversations/{id}/speech` | admin | Body `{ kind }`: `person`, `media`, `call`, or `null` to clear. Marks every line of the conversation that is not yours, in every mode: `200 { marked }`, the number of lines; `400` for another kind, `404` for an unknown conversation; see [Speech kind](#speech-kind) |
 | DELETE | `/api/v1/conversations/{id}` | admin | Deletes it with its transcript, audio, tasks and memories |
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
@@ -1362,7 +1385,9 @@ The search tests that need the Ukrainian dictionary skip themselves until you ru
 `scripts/fetch-uk-dictionary.sh --accept-licence`; CI runs it first and sets
 `NYTKA_REQUIRE_DICTIONARY=1`, so a missing file fails the build. The same goes for the voice tests and
 `scripts/fetch-speaker-model.sh`, which puts TitaNet-small in `src/Nytka.Audio/Models/` (run it before
-`dotnet build`, which copies the model beside the binaries), and `NYTKA_REQUIRE_SPEAKER_MODEL=1`.
+`dotnet build`, which copies the model beside the binaries), and `NYTKA_REQUIRE_SPEAKER_MODEL=1`. The audio
+tagger test takes `scripts/fetch-audio-tagger.sh` (YAMNet and its class map, same place) and
+`NYTKA_REQUIRE_AUDIO_TAGGER=1`.
 
 ## License
 

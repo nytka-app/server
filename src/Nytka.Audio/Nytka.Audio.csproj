@@ -10,6 +10,9 @@
     <None Update="Models\silero_vad.onnx" CopyToOutputDirectory="PreserveNewest" />
     <!-- Fetched, not committed (scripts/fetch-speaker-model.sh); without it the build copies nothing. -->
     <None Update="Models\nemo_en_titanet_small.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Fetched, not committed (scripts/fetch-audio-tagger.sh); without them the build copies nothing. -->
+    <None Update="Models\yamnet.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Models\yamnet_class_map.csv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -13,7 +13,7 @@ public sealed class SpeechSettings : ISettingsGroup
     public IReadOnlyList<SettingDefinition> Definitions { get; } =
     [
         new(ModeKey, SettingType.String, SpeechKinds.Shadow, value => SpeechKinds.IsMode(value) ? null : "Must be off, shadow or on."),
-        new(MediaThresholdKey, SettingType.Number, "0.8", SettingValidators.Number(0.5, 0.99)),
+        new(MediaThresholdKey, SettingType.Number, "0.94", SettingValidators.Number(0.5, 0.99)),
     ];
 
     /// <summary>Whether a guess is made at all (<c>off</c>), shown only (<c>shadow</c>, the default) or applied (<c>on</c>).</summary>

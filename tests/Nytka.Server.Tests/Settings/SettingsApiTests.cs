@@ -120,7 +120,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
         var threshold = Item(await List(), "speech.mediaThreshold");
         Assert.Equal("number", threshold.GetProperty("type").GetString());
-        Assert.Equal("0.8", threshold.GetProperty("default").GetString());
+        Assert.Equal("0.94", threshold.GetProperty("default").GetString());
     }
 
     [Theory]

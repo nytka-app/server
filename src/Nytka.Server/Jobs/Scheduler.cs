@@ -26,6 +26,9 @@ public sealed class Scheduler(
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
 
+    /// <summary>The most conversations one tick queues for a speech guess.</summary>
+    private const int ClassifyPerTick = 50;
+
     private const int ConsecutiveFailuresBeforeProbing = 3;
 
     public async Task TickAsync(CancellationToken ct)
@@ -48,6 +51,24 @@ public sealed class Scheduler(
         await QueueGroupVoicesAsync(now, ct);
         await calendar.QueueAsync(now, ct);
         await QueueApplySpeechAsync(now, ct);
+        await QueueClassifySpeechAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Queues <c>classify-speech</c> for the closed conversations whose transcription is done and whose lines lack the classifier's
+    /// current <c>speech_version</c>; nothing while <c>speech.mode</c> is <c>off</c>. A backlog drains over a few ticks.
+    /// </summary>
+    private async Task QueueClassifySpeechAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (SpeechSettings.Mode(settings) == SpeechKinds.Off)
+        {
+            return;
+        }
+
+        foreach (var id in await speech.UnguessedAsync(SpeechScorer.Version, false, ClassifyPerTick, ct))
+        {
+            await queue.EnqueueAsync(JobKinds.ClassifySpeech, new ClassifySpeechPayload(id), JobKinds.ClassifySpeechKey(id), now, ct);
+        }
     }
 
     /// <summary>

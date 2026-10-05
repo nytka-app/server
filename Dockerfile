@@ -19,6 +19,10 @@ RUN dotnet restore src/Nytka.Server/Nytka.Server.csproj -a "${TARGETARCH}"
 COPY scripts/fetch-speaker-model.sh scripts/
 RUN scripts/fetch-speaker-model.sh
 
+# YAMNet and its class map for the speech kind guess, checked by SHA-256, for the same reason.
+COPY scripts/fetch-audio-tagger.sh scripts/
+RUN scripts/fetch-audio-tagger.sh
+
 COPY src/ src/
 # Migrations are embedded into Nytka.Storage from here.
 COPY db/ db/

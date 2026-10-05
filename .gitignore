@@ -27,3 +27,7 @@ CLAUDE.local.md
 
 # TitaNet-small is fetched by scripts/fetch-speaker-model.sh (and the Docker build), never committed.
 /src/Nytka.Audio/Models/nemo_en_titanet_small.onnx
+
+# YAMNet and its class map are fetched by scripts/fetch-audio-tagger.sh (and the Docker build), never committed.
+/src/Nytka.Audio/Models/yamnet.onnx
+/src/Nytka.Audio/Models/yamnet_class_map.csv

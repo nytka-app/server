@@ -1,3 +1,4 @@
+using Nytka.Audio.Tagging;
 using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
 
@@ -9,7 +10,10 @@ public static class SpeechExtensions
     public static IServiceCollection AddNytkaSpeech(this IServiceCollection services)
     {
         services.AddSingleton<ISettingsGroup, SpeechSettings>();
+        services.AddSingleton(p => AudioTaggerModel.FromFiles(
+            AudioTagger.DefaultPath, AudioTagger.DefaultClassMapPath, p.GetRequiredService<ILogger<AudioTaggerModel>>()));
         services.AddScoped<IJobHandler, ApplySpeechHandler>();
+        services.AddScoped<IJobHandler, ClassifySpeechHandler>();
         return services;
     }
 }

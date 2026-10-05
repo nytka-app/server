@@ -14,6 +14,12 @@ Copyright (c) NVIDIA Corporation.
 The ONNX export is by sherpa-onnx, https://github.com/k2-fsa/sherpa-onnx (release
 speaker-recongition-models), under the Apache License 2.0: Copyright (c) Xiaomi Corporation.
 
+This product uses YAMNet (src/Nytka.Audio/Models/yamnet.onnx and yamnet_class_map.csv, fetched by
+scripts/fetch-audio-tagger.sh and the Docker build), an audio event classifier by Google,
+https://github.com/tensorflow/models/tree/master/research/audioset/yamnet, under the Apache License 2.0:
+Copyright (c) The TensorFlow Authors. The ONNX export is by andrelgomes (https://huggingface.co/andrelgomes/yamnet-onnx).
+The weights were trained on AudioSet; no terms for the weights themselves were found.
+
 This product uses Ical.Net (https://github.com/ical-org/ical.net) to read calendar feeds, under the MIT
 License: Copyright (c) 2007-2026 ical-org and Ical.Net contributors. Ical.Net uses NodaTime
 (https://nodatime.org), under the Apache License 2.0: Copyright (c) 2009 Jon Skeet, Copyright (c) 2012 The Noda
