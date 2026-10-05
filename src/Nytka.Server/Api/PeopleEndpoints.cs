@@ -31,6 +31,8 @@ public static class PeopleEndpoints
         people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
         people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
+        people.MapPut("/{id:guid}/tags/{name}", AddTagAsync);
+        people.MapDelete("/{id:guid}/tags/{name}", RemoveTagAsync);
         people.MapGet("/{id:guid}/facts", FactsAsync).AllowRead();
         people.MapPost("/{id:guid}/facts", AddFactAsync);
         people.MapPatch("/{id:guid}/facts/{factId:guid}", EditFactAsync);
@@ -161,8 +163,34 @@ public static class PeopleEndpoints
 
     public sealed record PersonList(IReadOnlyList<PersonRow> Items);
 
-    private static async Task<IResult> ListAsync(PeopleStore people, CancellationToken ct) =>
-        Results.Ok(new PersonList(await people.ListAsync(ct)));
+    private static async Task<IResult> ListAsync(string? tag, PeopleStore people, CancellationToken ct) =>
+        tag is not null && TagName.Normalize(tag) is null
+            ? TagEndpoints.Invalid("tag")
+            : Results.Ok(new PersonList(await people.ListAsync(TagName.Normalize(tag), ct)));
+
+    /// <summary>Adds the tag, created when new. 200 <c>{ tags }</c>, also when the person had it; 400 for a bad name, 404, 409 at 20 tags.</summary>
+    private static async Task<IResult> AddTagAsync(Guid id, string name, TagStore tags, TimeProvider time, CancellationToken ct)
+    {
+        if (TagName.Normalize(name) is not { } normalized)
+        {
+            return TagEndpoints.InvalidName();
+        }
+
+        return await tags.AddToPersonAsync(id, normalized, time.GetUtcNow(), ct) switch
+        {
+            TagAdd.NoItem => NotFound(),
+            TagAdd.TooMany => TagEndpoints.TooMany(),
+            _ => Results.Ok(new TagEndpoints.ItemTags(await tags.OfPersonAsync(id, ct))),
+        };
+    }
+
+    /// <summary>Removes the tag. 200 <c>{ tags }</c>, also when the person did not have it; 400 for a bad name, 404.</summary>
+    private static async Task<IResult> RemoveTagAsync(Guid id, string name, TagStore tags, CancellationToken ct) =>
+        TagName.Normalize(name) is not { } normalized
+            ? TagEndpoints.InvalidName()
+            : await tags.RemoveFromPersonAsync(id, normalized, ct)
+                ? Results.Ok(new TagEndpoints.ItemTags(await tags.OfPersonAsync(id, ct)))
+                : NotFound();
 
     /// <summary>
     /// Body <c>{ name, speakerId? }</c>. With a <c>speakerId</c> the voice takes the name: the person who has it (any

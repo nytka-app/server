@@ -44,7 +44,8 @@ public static class SpeakerLabel
 
 /// <summary><see cref="LastSeenAt"/> and <see cref="FactCount"/> are those of <see cref="PeopleStore.SummariesAsync"/>.</summary>
 public sealed record PersonRow(
-    Guid Id, string Name, string? Note, DateTime CreatedAt, string[] Voices, int Segments, DateTime? LastSeenAt, int FactCount);
+    Guid Id, string Name, string? Note, DateTime CreatedAt, string[] Voices, int Segments, DateTime? LastSeenAt, int FactCount,
+    IReadOnlyList<string> Tags);
 
 /// <summary>A conversation the person spoke in.</summary>
 public sealed record PersonConversation(Guid Id, string? Title, DateTime StartedAt);
@@ -57,7 +58,7 @@ public sealed record PersonConversation(Guid Id, string? Title, DateTime Started
 public sealed record PersonView(
     Guid Id, string Name, string? Note, DateTime CreatedAt, DateTime? LastSeenAt, string[] Voices, bool HasVoiceprint,
     int VoiceprintSamples, IReadOnlyList<PersonConversation> Conversations, IReadOnlyList<PersonFactRow> Facts,
-    IReadOnlyList<TaskRow> OpenTasks);
+    IReadOnlyList<TaskRow> OpenTasks, IReadOnlyList<string> Tags);
 
 /// <summary>A person for a list: when they were last heard and how many live facts they have.</summary>
 public sealed record PersonSummary(Guid Id, string Name, DateTime? LastSeenAt, int Facts);
@@ -87,11 +88,21 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
 
     private sealed record FactCount(Guid PersonId, int Facts);
 
-    public async Task<IReadOnlyList<PersonRow>> ListAsync(CancellationToken ct)
+    public Task<IReadOnlyList<PersonRow>> ListAsync(CancellationToken ct) => ListAsync(null, ct);
+
+    /// <summary>Everyone by name; <paramref name="tag"/> (normalized) keeps only people who have it.</summary>
+    public async Task<IReadOnlyList<PersonRow>> ListAsync(string? tag, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var people = (await connection.QueryAsync<Row>(new CommandDefinition(
-            "select id as Id, name as Name, note as Note, created_at as CreatedAt from people order by lower(name)", cancellationToken: ct))).ToList();
+            """
+            select p.id as Id, p.name as Name, p.note as Note, p.created_at as CreatedAt from people p
+            where cast(@tag as text) is null or exists (
+                select 1 from person_tags pt join tags t on t.id = pt.tag_id where pt.person_id = p.id and t.name = @tag)
+            order by lower(p.name)
+            """,
+            new { tag }, cancellationToken: ct))).ToList();
+        var tags = await TagStore.OfPeopleAsync(connection, null, people.Select(p => p.Id).ToList(), ct);
         var voices = (await connection.QueryAsync<Voice>(new CommandDefinition(
             "select person_id as PersonId, speaker_id as SpeakerId from person_voices order by speaker_id", cancellationToken: ct))).ToList();
         var counts = (await connection.QueryAsync<Count>(new CommandDefinition(
@@ -107,7 +118,8 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
                 p.Id, p.Name, p.Note, p.CreatedAt,
                 voices.Where(v => v.PersonId == p.Id).Select(v => v.SpeakerId).ToArray(),
                 counts.GetValueOrDefault(p.Id),
-                summaries.GetValueOrDefault(p.Id)?.LastSeenAt, summaries.GetValueOrDefault(p.Id)?.Facts ?? 0))
+                summaries.GetValueOrDefault(p.Id)?.LastSeenAt, summaries.GetValueOrDefault(p.Id)?.Facts ?? 0,
+                tags.GetValueOrDefault(p.Id) ?? []))
             .ToList();
     }
 
@@ -168,7 +180,8 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
         var page = await facts.ListAsync(id, null, ViewFacts, ct);
         return new PersonView(
             header.Id, header.Name, header.Note, header.CreatedAt, header.LastSeenAt, voices, header.VoiceprintSamples is not null,
-            header.VoiceprintSamples ?? 0, conversations, page?.Items ?? [], await tasks.OpenForPersonAsync(id, ViewTasks, ct));
+            header.VoiceprintSamples ?? 0, conversations, page?.Items ?? [], await tasks.OpenForPersonAsync(id, ViewTasks, ct),
+            (await TagStore.OfPeopleAsync(connection, null, [id], ct)).GetValueOrDefault(id) ?? []);
     }
 
     /// <summary>
@@ -296,7 +309,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
         }
     }
 
-    /// <summary>Moves every voice, segment link, voiceprint and fact of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
+    /// <summary>Moves every voice, segment link, voiceprint, fact and tag of <paramref name="id"/> to <paramref name="intoId"/> and deletes <paramref name="id"/>.</summary>
     public async Task<PersonWrite> MergeAsync(Guid id, Guid intoId, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -330,6 +343,7 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
             new { id, intoId }, transaction, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(
             "update person_facts set person_id = @intoId where person_id = @id", new { id, intoId }, transaction, cancellationToken: ct));
+        await TagStore.MovePersonTagsAsync(connection, transaction, id, intoId, ct);
         await connection.ExecuteAsync(new CommandDefinition(
             "delete from people where id = @id", new { id }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);

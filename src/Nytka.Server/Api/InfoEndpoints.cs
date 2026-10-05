@@ -25,7 +25,7 @@ public static class InfoEndpoints
     /// there, so the voice routes work (docs/specs/your-voice.md). "people": notes on people and a person on a segment
     /// (docs/specs/people.md). "review": <c>GET /api/v1/review</c> exists. "briefs": <c>GET /api/v1/briefs/upcoming</c> exists, with or
     /// without a calendar feed (the app reads <c>calendar.icsUrl</c> from the settings). "voice-groups": voice matching of other people is on, the model is there and speech audio is
-    /// kept for a day or more, since fingerprints die with it.
+    /// kept for a day or more, since fingerprints die with it. "tags": tags on conversations and people (docs/specs/tags.md).
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -34,6 +34,8 @@ public static class InfoEndpoints
         {
             features.Add("voice-groups");
         }
+
+        features.Add("tags");
 
         return features;
     }

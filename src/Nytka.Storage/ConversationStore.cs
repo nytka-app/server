@@ -6,7 +6,11 @@ namespace Nytka.Storage;
 /// <summary><paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.</summary>
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
-    int Bookmarks, string Source);
+    int Bookmarks, string Source)
+{
+    /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
+}
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
@@ -137,6 +141,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """);
         await Run("update tasks set conversation_id = @survivor where conversation_id = any(@others)");
         await Run("update memories set conversation_id = @survivor where conversation_id = any(@others)");
+        await TagStore.MoveConversationTagsAsync(connection, transaction, others, survivor, ct);
 
         // The merged conversation reads differently: its title stays, the AI output and the memories run again.
         await Run(
@@ -167,10 +172,11 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>
-    /// Newest first by start. The preview joins the first segments' text; the caller trims it.
+    /// Newest first by start. The preview joins the first segments' text; the caller trims it. <paramref name="tag"/>
+    /// (normalized) keeps only conversations that have it.
     /// </summary>
     public async Task<IReadOnlyList<ConversationSummary>> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int limit, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
@@ -190,11 +196,16 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             ) p on true
             where (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
               and (cast(@since as timestamptz) is null or c.started_at >= cast(@since as timestamptz))
+              and (cast(@tag as text) is null or exists (
+                    select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
+                    where ct.conversation_id = c.id and t.name = @tag))
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { before, since, limit }, cancellationToken: ct));
-        return rows.ToList();
+            new { before, since, limit, tag }, cancellationToken: ct));
+        var items = rows.ToList();
+        var tags = await TagStore.OfConversationsAsync(connection, null, items.Select(c => c.Id).ToList(), ct);
+        return items.Select(c => tags.TryGetValue(c.Id, out var names) ? c with { Tags = names } : c).ToList();
     }
 
     public async Task<ConversationHeader?> GetAsync(Guid id, CancellationToken ct)

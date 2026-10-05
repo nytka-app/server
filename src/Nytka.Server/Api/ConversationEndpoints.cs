@@ -20,6 +20,8 @@ public static class ConversationEndpoints
         conversations.MapPatch("/{id:guid}", PatchAsync);
         conversations.MapPost("/{id:guid}/enrich", EnrichAsync);
         conversations.MapDelete("/{id:guid}", DeleteAsync);
+        conversations.MapPut("/{id:guid}/tags/{name}", AddTagAsync);
+        conversations.MapDelete("/{id:guid}/tags/{name}", RemoveTagAsync);
         conversations.MapGet("/{id:guid}/transcriptions", TranscriptionsAsync);
         return api;
     }
@@ -29,7 +31,7 @@ public static class ConversationEndpoints
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks, string Source);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags);
 
     public sealed record EnrichResponse(string AiStatus);
 
@@ -37,22 +39,28 @@ public static class ConversationEndpoints
         long Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Error, JsonElement? Response);
 
     private static async Task<IResult> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int? limit, ConversationStore conversations, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, ConversationStore conversations, CancellationToken ct)
     {
+        var normalized = TagName.Normalize(tag);
+        if (tag is not null && normalized is null)
+        {
+            return TagEndpoints.Invalid("tag");
+        }
+
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         // Npgsql takes only UTC offsets for timestamptz.
-        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, ct))
+        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, ct))
             .Select(c => c.Preview.Length > PreviewLength ? c with { Preview = c.Preview[..(char.IsHighSurrogate(c.Preview[PreviewLength - 1]) ? PreviewLength - 1 : PreviewLength)] } : c)
             .ToList();
         return Results.Ok(new ConversationPage(items, items.Count == take ? items[^1].StartedAt : null));
     }
 
     private static async Task<IResult> GetAsync(
-        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, CancellationToken ct) =>
-        await DetailAsync(id, conversations, tasks, bookmarks, ct);
+        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, CancellationToken ct) =>
+        await DetailAsync(id, conversations, tasks, bookmarks, tags, ct);
 
     private static async Task<IResult> DetailAsync(
-        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, CancellationToken ct)
+        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, CancellationToken ct)
     {
         if (await conversations.GetAsync(id, ct) is not { } conversation)
         {
@@ -64,13 +72,13 @@ public static class ConversationEndpoints
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Title,
             conversation.Summary, conversation.AiStatus, conversation.TitleEdited, conversation.AiMessage,
             conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments,
-            await bookmarks.ForConversationAsync(id, ct), conversation.Source));
+            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct)));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
     private static async Task<IResult> PatchAsync(
-        Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TimeProvider time,
-        CancellationToken ct)
+        Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags,
+        TimeProvider time, CancellationToken ct)
     {
         string? title = null;
         if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("title", out var value))
@@ -92,7 +100,7 @@ public static class ConversationEndpoints
         }
 
         return await conversations.SetTitleAsync(id, title, time.GetUtcNow(), ct)
-            ? await DetailAsync(id, conversations, tasks, bookmarks, ct)
+            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, ct)
             : NotFound();
     }
 
@@ -122,6 +130,30 @@ public static class ConversationEndpoints
 
     private static IResult Invalid(string message) =>
         Results.ValidationProblem(new Dictionary<string, string[]> { ["title"] = [message] });
+
+    /// <summary>Adds the tag, created when new. 200 <c>{ tags }</c>, also when the conversation had it; 400 for a bad name, 404, 409 at 20 tags.</summary>
+    private static async Task<IResult> AddTagAsync(Guid id, string name, TagStore tags, TimeProvider time, CancellationToken ct)
+    {
+        if (TagName.Normalize(name) is not { } normalized)
+        {
+            return TagEndpoints.InvalidName();
+        }
+
+        return await tags.AddToConversationAsync(id, normalized, time.GetUtcNow(), ct) switch
+        {
+            TagAdd.NoItem => NotFound(),
+            TagAdd.TooMany => TagEndpoints.TooMany(),
+            _ => Results.Ok(new TagEndpoints.ItemTags(await tags.OfConversationAsync(id, ct))),
+        };
+    }
+
+    /// <summary>Removes the tag. 200 <c>{ tags }</c>, also when the conversation did not have it; 400 for a bad name, 404.</summary>
+    private static async Task<IResult> RemoveTagAsync(Guid id, string name, TagStore tags, CancellationToken ct) =>
+        TagName.Normalize(name) is not { } normalized
+            ? TagEndpoints.InvalidName()
+            : await tags.RemoveFromConversationAsync(id, normalized, ct)
+                ? Results.Ok(new TagEndpoints.ItemTags(await tags.OfConversationAsync(id, ct)))
+                : NotFound();
 
     private static async Task<IResult> DeleteAsync(Guid id, ConversationStore conversations, CancellationToken ct) =>
         await conversations.DeleteAsync(id, ct) ? Results.NoContent() : NotFound();

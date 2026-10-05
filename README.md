@@ -333,6 +333,25 @@ A failed run is retried like [memories](#memories): three attempts, then an hour
 at most. The text of the conversation goes to your language model endpoint, as for a summary, together
 with the names of the people you already have; logs and errors hold neither. Turn it off with
 `Nytka__People__SuggestNames=false`; the suggestions already made stay.
+## Tags
+
+Short words on conversations and on people (`work`, `family`, `repairman`), only yours: nothing adds a
+tag but you. Lists show them, and `?tag=` on conversations and people keeps the ones that have it.
+
+- A name is normalized: trimmed, one leading `#` dropped, lower case, each run of spaces one `-`. What is
+  left is 1 to 32 letters (any script), digits, `-` and `_`, starting with a letter or digit, else `400`.
+  `Робота` and `#робота` are one tag; `dog walker` is `dog-walker`; `a/b` is refused.
+- At most 20 tags on one conversation or person (`409`). There is no limit on tags in all.
+- A tag exists while something holds it: removing its last link, deleting the conversation or person
+  that held it, or merging does not leave an empty tag behind. `GET /api/v1/tags` counts from the
+  links, so the counts cannot drift.
+- Merging two conversations (the same speech arriving late) or two people gives the survivor the tags of
+  both. Rename, merge into another tag and delete work on the whole server and need an `admin` token.
+- The `conversation.ready` webhook carries `tags`, the conversation's tags when it was summarized. Adding
+  a tag sends no event; read `GET /api/v1/conversations/{id}` for the current ones.
+- Tags can be private ("therapy"). No tag name is in a log line or an error message; the server logs no
+  request lines (Serilog's `Request starting` and `Request finished`), because they hold the path.
+
 ## Voice grouping
 
 Off by default. Your voice only tells you apart from everyone else; this opt-in layer also tells the
@@ -797,7 +816,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 
 | Event | Sent when | `data` |
 |---|---|---|
-| `conversation.ready` | A summary was stored, the first one and every re-run | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text }] }` |
+| `conversation.ready` | A summary was stored, the first one and every re-run | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text }], tags }` |
 | `task.created` | A summary produced a new task | the task, as `GET /api/v1/tasks` shows it, without `personId` and `personName` |
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
@@ -1006,14 +1025,14 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review` and `briefs`, `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs` and `tags`, `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
 | GET | `/api/v1/coverage?from=&to=&bucket=&limit=` | admin | The "Nothing is lost" report: `{ from, to, timeZone, bucket, totals, buckets, gaps, gapsTotal, now, warnings }`; see [Running the no-loss wear test](#running-the-no-loss-wear-test); `bucket` is `day` (default) or `hour`, `to` defaults to now, `from` to six days before today; `limit` defaults to 500, caps at 5000; `400` for a range over 62 days (14 for hours) |
-| GET | `/api/v1/conversations?before=&since=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source }`, `bookmarks` being a count, `source` `nytka` or `omi`; `since` keeps conversations that started at or after it; `limit` defaults to 30, caps at 100 |
-| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource }`, `isUserSource` being `manual`, `voice`, `provider` or null; see [Your voice](#your-voice)) and `bookmarks` (`{ id, at, note }`) |
+| GET | `/api/v1/conversations?before=&since=&tag=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](#tags) (`400` for a name that is none); `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource }`, `isUserSource` being `manual`, `voice`, `provider` or null; see [Your voice](#your-voice)) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
@@ -1049,9 +1068,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | DELETE | `/api/v1/voice` | admin | Forgets your voice: voiceprint, fingerprints, similarities and verdicts, and every voice group; your marks stay. `204`, also with nothing enrolled |
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
-| GET | `/api/v1/people` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount }`; `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
+| GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters, `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
-| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task] }`; `404` for an unknown person |
+| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags }`; `404` for an unknown person |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, personId, confidence, evidence: { segmentId, startedAt, text } }`, `target` being `speaker`, `label` or `group` (`groupId` is the voice group); see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named); `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
@@ -1066,6 +1085,12 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people/{id}/facts?before=&limit=` | read | `{ items, nextBefore }`, newest first; a fact is `{ id, personId, text, source, basis, conversationId, conversationTitle, segmentId, createdAt, updatedAt }`, `source` is `ai` or `user`, `basis` is `said`, `about`, `mentioned` or null; `limit` defaults to 50, caps at 200; `404` for an unknown person |
 | POST | `/api/v1/people/{id}/facts` | admin | Body `{ text }`, 1 to 300 characters; `201` with the fact (`source: user`); `409` when a live fact of the person holds it; `404` for an unknown person |
 | PATCH, DELETE | `/api/v1/people/{id}/facts/{factId}` | admin | PATCH body `{ text }`, `200` with the fact; DELETE answers `204`; `404` for an unknown fact |
+| GET | `/api/v1/tags?q=` | read | `{ items: [{ name, conversations, people, uses }] }`, most used first, then by name; `q` keeps names that start with it; see [Tags](#tags) |
+| PUT, DELETE | `/api/v1/conversations/{id}/tags/{name}` | admin | Adds or removes one tag: `200 { tags }`, the conversation's tags sorted; removing a tag it does not have is also `200`; `400` for a name that is none, `404` for an unknown conversation, `409` when adding a 21st tag |
+| PUT, DELETE | `/api/v1/people/{id}/tags/{name}` | admin | The same for a person |
+| POST | `/api/v1/tags/{name}/rename` | admin | Body `{ name }`; `200` with the tag; `404` for an unknown tag; `409` when the new name is another tag's (merge instead) |
+| POST | `/api/v1/tags/{name}/merge` | admin | Body `{ into }`; moves every link to `into` (created when new), drops duplicates and the old tag; `200` with `into`; `404` for an unknown tag |
+| DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
@@ -1094,6 +1119,7 @@ transcripts and your webhook secrets.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them).
+- [Tags](#tags) (a name, and which conversations and people hold it) stay until you remove the last link, delete the tag, or delete what held it. They are words you chose and can be sensitive, so a dump holds them.
 - Name suggestions (the name, the voice, the line that shows it and the model's confidence) stay until you delete the conversation they came from or the person they name; accepted and rejected ones too, which is how a rejected name stays rejected.
 - Facts about a person stay until you delete them, their person or the conversation they were taken from. A deleted fact leaves a hidden row with its wording, so extraction does not add it again; it goes with the person.
 - With a [calendar feed](#calendar-briefs) set, the events of the next 48 hours (uid, start, end, title and the attendees' display names, no address) stay until a day after they end, and so do the briefs the model wrote for them, which hold facts about the people; a brief goes with a person you delete. The feed's address is only in `.env`: never in the database, an API answer or a log.
