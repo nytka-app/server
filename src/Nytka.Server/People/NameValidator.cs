@@ -10,9 +10,12 @@ namespace Nytka.Server.People;
 /// </summary>
 public static partial class NameValidator
 {
-    public const int Version = 1;
+    public const int Version = 2;
     public const int MaxTokens = 3;
     public const int MaxLength = 40;
+
+    /// <summary>The most words of a role (<c>dog-walker</c> is two).</summary>
+    public const int MaxRoleTokens = 3;
 
     /// <summary>How many segments either side of the model's segment are searched for the one that says the name.</summary>
     public const int EvidenceReach = 3;
@@ -65,6 +68,10 @@ public static partial class NameValidator
     [GeneratedRegex(@"(?i:\b(?:i am|i['’]m|my name is|я|мене звати|мене звуть|меня зовут))\s*[—–-]?\s*(?<name>\p{Lu}\p{L}+)")]
     private static partial Regex Introduction();
 
+    // What a wearer says to give their own role: "I'm the plumber", "I am a plumber", "я майстер".
+    [GeneratedRegex(@"(?i:\b(?:i am|i['’]m|я))\s*[—–-]?\s*(?:(?i:the|a|an)\s+)?(?<role>\p{L}+(?:['’ʼ-]\p{L}+)*)")]
+    private static partial Regex RoleIntroduction();
+
     public static string[] Tokens(string name) => name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
     /// <summary>
@@ -83,6 +90,34 @@ public static partial class NameValidator
         }
 
         return tokens.All(t => !Stoplist.Contains(t.ToLowerInvariant()) || CapitalizedMidSentence(t, evidence));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="role"/> (a tag name: <see cref="TagName.Normalize"/>) can be a role: 1 to 3 words of letters joined
+    /// by <c>-</c>, none a pronoun, particle, answer, interjection, evaluation or generic address (the <see cref="IsName"/>
+    /// stoplist, without its capital-letter exception, since a role is lower case).
+    /// </summary>
+    public static bool IsRole(string role)
+    {
+        var tokens = role.Split('-');
+        return tokens.Length <= MaxRoleTokens
+            && tokens.All(t => t.Length >= 2 && TokenShape().IsMatch(t) && !Stoplist.Contains(t));
+    }
+
+    /// <summary>A role as words, to look for in a line: <c>dog-walker</c> is "dog walker".</summary>
+    public static string RoleWords(string role) => role.Replace('-', ' ');
+
+    /// <summary>The roles the wearer's own segments give for themselves ("I'm the plumber", "я майстер").</summary>
+    public static IReadOnlyList<string> WearerRoles(IEnumerable<NameSegment> segments) =>
+        segments.Where(s => s.IsWearer)
+            .SelectMany(s => RoleIntroduction().Matches(s.Text).Select(m => m.Groups["role"].Value))
+            .Distinct().ToList();
+
+    /// <summary>Whether a word of <paramref name="role"/> is a word of one of the roles the wearer gave for themselves.</summary>
+    public static bool IsWearerRole(string role, IReadOnlyList<NameSegment> segments)
+    {
+        var tokens = role.Split('-');
+        return WearerRoles(segments).Any(w => tokens.Any(t => SameStem(t, w)));
     }
 
     /// <summary>Whether every word of <paramref name="name"/> occurs in <paramref name="text"/>, in any case ending (<see cref="SameStem"/>).</summary>

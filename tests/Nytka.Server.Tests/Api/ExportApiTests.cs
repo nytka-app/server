@@ -99,7 +99,7 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.All(lines, l => Assert.Equal("type", Names(l)[0]));
 
         var anna = Of(lines, "person").Single();
-        Assert.Equal(["type", "id", "name", "note", "voiceprint", "voices", "tags", "createdAt"], Names(anna));
+        Assert.Equal(["type", "id", "name", "note", "voiceprint", "voices", "tags", "named", "createdAt"], Names(anna));
         Assert.Equal("Anna", anna.GetProperty("name").GetString());
         Assert.Equal("Met at the lake", anna.GetProperty("note").GetString());
         Assert.True(anna.GetProperty("voiceprint").GetBoolean());
@@ -234,6 +234,32 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(0, people[other].GetProperty("tags").GetArrayLength());
         Assert.Equal(["conversation", "person", "setting"], lines[^1].GetProperty("counts").EnumerateObject().Select(c => c.Name).Order());
         Assert.DoesNotContain(lines, l => l.GetProperty("type").GetString() is "tag" or "tag_suggestion");
+    }
+
+    [Fact]
+    public async Task Carries_named_on_people_and_leaves_out_role_suggestions()
+    {
+        var conversation = await Seed("Someone arrived.");
+        var segment = await Db.ScalarAsync<long>("select id from segments limit 1");
+        var known = Guid.CreateVersion7(Now);
+        var byRole = Guid.CreateVersion7(Now);
+        await Db.ExecuteAsync(
+            "insert into people (id, name, created_at, named) values (@known, 'Anna', @Now, true), (@byRole, 'Repairman', @Now, false)",
+            new { known, byRole, Now });
+        await Db.ExecuteAsync(
+            """
+            insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, role, named, evidence_segment_id, confidence, created_at)
+            values (@id, @conversation, 'speaker', 'v9', '{}', 'Quokkafitter', 'quokkafitter', false, @segment, 0.9, @Now)
+            """,
+            new { id = Guid.CreateVersion7(Now), conversation, segment, Now });
+
+        var (body, lines) = await Export();
+
+        var people = Of(lines, "person").ToDictionary(p => p.GetProperty("id").GetGuid());
+        Assert.True(people[known].GetProperty("named").GetBoolean());
+        Assert.False(people[byRole].GetProperty("named").GetBoolean());
+        Assert.DoesNotContain("quokkafitter", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(lines.SelectMany(AllNames), n => n.Contains("role", StringComparison.OrdinalIgnoreCase));
     }
 
     private static IEnumerable<string> AllNames(JsonElement element) => element.ValueKind switch

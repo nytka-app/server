@@ -142,7 +142,7 @@ public sealed class NameValidatorTests
         {
             new NameTarget('A', "speaker", "4", [2]), new NameTarget('B', "speaker", "5", [3, 4]), new NameTarget('C', "speaker", "0", [5]),
         };
-        SuggestNamesHandler.Suggestion S(string voice, string name, long id) => new(voice, name, id, 0.9);
+        SuggestNamesHandler.Suggestion S(string voice, string name, long id) => new(voice, name, id, 0.9, null);
 
         var result = SuggestNamesHandler.Apply(
             [S("Voice A", "Єгор", 2), S("Voice B", "Олена", 4), S("Voice C", "Дана", 5)], targets, segments, null, new Dictionary<string, PersonName>());
@@ -150,5 +150,83 @@ public sealed class NameValidatorTests
         var olena = Assert.Single(result);
         Assert.Equal(("Олена", 3L), (olena.Name, olena.EvidenceSegmentId));
         Assert.Empty(SuggestNamesHandler.Apply([S("Voice A", "Taras", 2)], targets, [Line(2, "Hi, Taras.", speakerId: "4")], "Taras Bondar", new Dictionary<string, PersonName>()));
+    }
+
+    [Theory]
+    [InlineData("repairman")]
+    [InlineData("майстер")]
+    [InlineData("майстре")]
+    [InlineData("dog-walker")]
+    [InlineData("сантехник")]
+    public void A_role_is_one_to_three_words_of_letters(string role) => Assert.True(NameValidator.IsRole(role));
+
+    [Theory]
+    [InlineData("ти")]
+    [InlineData("ты")]
+    [InlineData("he")]
+    [InlineData("the-repairman")]
+    [InlineData("друже")]
+    [InlineData("friend")]
+    [InlineData("girl")]
+    [InlineData("нет")]
+    [InlineData("x")]
+    [InlineData("x1")]
+    [InlineData("ab_cd")]
+    [InlineData("one-two-three-four")]
+    [InlineData("-")]
+    public void A_pronoun_particle_address_term_digit_or_long_phrase_is_no_role(string role) => Assert.False(NameValidator.IsRole(role));
+
+    [Fact]
+    public void Apply_keeps_a_role_the_line_says_in_any_case_ending_and_stores_what_the_model_sent()
+    {
+        var segments = new[] { Line(1, "Hello.", speakerId: "4"), Line(2, "Дякую, майстре, проходьте.", wearer: true, speakerId: "0") };
+        var target = new NameTarget('A', "speaker", "4", [1]);
+
+        var result = SuggestNamesHandler.Apply([new("Voice A", null, 2, 0.9, " Майстре ")], [target], segments, null, new Dictionary<string, PersonName>());
+
+        var candidate = Assert.Single(result);
+        Assert.Equal(("Майстре", "майстре", false, null), (candidate.Name, candidate.Role, candidate.Named, candidate.PersonId));
+        Assert.Equal(2, candidate.EvidenceSegmentId);
+    }
+
+    [Fact]
+    public void Apply_drops_a_role_no_nearby_line_says_a_pronoun_and_one_the_wearer_gave_for_themselves()
+    {
+        var segments = new[]
+        {
+            Line(1, "Hello.", speakerId: "4"),
+            Line(2, "Oh, the repairman is here.", wearer: true, speakerId: "0"),
+            Line(3, "Я майстер, а ти хто?", wearer: true, speakerId: "0"),
+            Line(4, "Filler.", speakerId: "4"),
+            Line(5, "Filler.", speakerId: "4"),
+            Line(6, "Filler.", speakerId: "4"),
+            Line(7, "Filler.", speakerId: "4"),
+            Line(40, "Far away.", speakerId: "4"),
+        };
+        var target = new NameTarget('A', "speaker", "4", [1, 40]);
+        IReadOnlyList<NameCandidate> Run(string role, long segment) =>
+            SuggestNamesHandler.Apply([new("Voice A", null, segment, 0.9, role)], [target], segments, null, new Dictionary<string, PersonName>());
+
+        Assert.Empty(Run("plumber", 2));
+        Assert.Empty(Run("ти", 3));
+        Assert.Empty(Run("майстер", 3));
+        Assert.Empty(Run("repairman", 40));
+        Assert.Empty(Run("the repairman", 2));
+        Assert.Empty(Run("a/b", 2));
+        Assert.Single(Run("#Repairman", 2));
+    }
+
+    [Fact]
+    public void Apply_gives_a_role_only_person_a_name_but_never_a_role_and_matches_a_name_to_a_named_person_only()
+    {
+        var segments = new[] { Line(1, "Thanks for waiting.", speakerId: "4"), Line(2, "Thanks, Olena. The plumber will come too.", wearer: true, speakerId: "0") };
+        var person = Guid.NewGuid();
+        var target = new NameTarget('A', "person", null, [1], person, "repairman");
+        var people = new Dictionary<string, PersonName> { ["olena"] = new(Guid.NewGuid(), "Olena") };
+
+        var named = Assert.Single(SuggestNamesHandler.Apply([new("Voice A (known as: repairman)", "Olena", 2, 0.9, "plumber")], [target], segments, null, people));
+        Assert.Equal(("person", "Olena", person, null, true), (named.Target, named.Name, named.PersonId, named.Role, named.Named));
+        Assert.Empty(SuggestNamesHandler.Apply([new("Voice A", null, 2, 0.9, "plumber")], [target], segments, null, people));
+        Assert.Empty(SuggestNamesHandler.Apply([new("Voice A", "Repairman", 2, 0.9, null)], [target], [Line(1, "x", speakerId: "4"), Line(2, "Thanks, Repairman.", wearer: true)], null, people));
     }
 }

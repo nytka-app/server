@@ -6,9 +6,10 @@ namespace Nytka.Storage;
 /// <summary>
 /// What Nytka proposes for an item. Which fields are set depends on the kind: <c>name</c> has a name, maybe a person and a
 /// confidence; <c>voice</c> a person and a similarity; <c>label</c> a verdict (<see cref="IsUser"/>) and a similarity; <c>tag</c> a
-/// <see cref="Tag"/> name and, for a person's tag, the person.
+/// <see cref="Tag"/> name and, for a person's tag, the person. A
+/// <c>name</c> may carry a <see cref="Role"/>; with <see cref="Named"/> false it is the role alone, and <see cref="Name"/> its display form.
 /// </summary>
-public sealed record ReviewProposal(string? Name, Guid? PersonId, float? Confidence, float? Similarity, bool? IsUser, string? Tag = null);
+public sealed record ReviewProposal(string? Name, Guid? PersonId, float? Confidence, float? Similarity, bool? IsUser, string? Tag = null, string? Role = null, bool? Named = null);
 
 /// <summary>One thing waiting for the owner's answer. <paramref name="Id"/> is a guid, or a segment id for a <c>label</c>.</summary>
 public sealed record ReviewItem(
@@ -35,14 +36,14 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
 
     private sealed record Row(
         string Id, Guid ConversationId, string? Title, DateTime At, string Text, string? Name, Guid? PersonId, float? Confidence,
-        float? Similarity, bool? IsUser);
+        float? Similarity, bool? IsUser, string? Role, bool? Named);
 
     private sealed record TagRow(string Id, Guid ConversationId, string? Title, DateTime At, string Text, string Tag, Guid? PersonId);
 
     private async Task<IEnumerable<ReviewItem>> QueryAsync(NpgsqlConnection connection, string kind, string sql, object args, CancellationToken ct) =>
         (await connection.QueryAsync<Row>(new CommandDefinition(sql, args, cancellationToken: ct))).Select(r => new ReviewItem(
             kind, r.Id, r.ConversationId, r.Title, r.At, r.Text,
-            new ReviewProposal(r.Name, r.PersonId, r.Confidence, r.Similarity, r.IsUser)));
+            new ReviewProposal(r.Name, r.PersonId, r.Confidence, r.Similarity, r.IsUser, Role: r.Role, Named: r.Named)));
 
     /// <summary>
     /// The newest <paramref name="limit"/> items of the queues, newest first. Voice matches are left out when
@@ -59,7 +60,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
             """
             select n.id::text as Id, n.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, n.created_at as At, e.text as Text,
                    n.name as Name, n.person_id as PersonId, n.confidence as Confidence, cast(null as real) as Similarity,
-                   cast(null as boolean) as IsUser
+                   cast(null as boolean) as IsUser, n.role as Role, n.named as Named
             from name_suggestions n
             join conversations c on c.id = n.conversation_id
             join segments e on e.id = n.evidence_segment_id
@@ -78,7 +79,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
                                  from (select s.text, s.started_at from segments s where s.id = any(m.segment_ids)
                                        order by s.started_at limit 3) t), '') as Text,
                        p.name as Name, m.person_id as PersonId, cast(null as real) as Confidence, m.similarity as Similarity,
-                       cast(null as boolean) as IsUser
+                       cast(null as boolean) as IsUser, cast(null as text) as Role, cast(null as boolean) as Named
                 from voice_matches m
                 join people p on p.id = m.person_id
                 join conversations c on c.id = m.conversation_id
@@ -94,7 +95,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
             $"""
             select s.id::text as Id, s.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, s.started_at as At, s.text as Text,
                    cast(null as text) as Name, cast(null as uuid) as PersonId, cast(null as real) as Confidence,
-                   s.voice_similarity as Similarity, s.voice_is_user as IsUser
+                   s.voice_similarity as Similarity, s.voice_is_user as IsUser, cast(null as text) as Role, cast(null as boolean) as Named
             from segments s
             join conversations c on c.id = s.conversation_id
             where {SpeakerLabel.IsUserSource} = 'voice' and s.voice_similarity is not null

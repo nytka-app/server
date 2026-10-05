@@ -7,23 +7,33 @@ namespace Nytka.Storage;
 /// A segment as name suggestion reads it. <see cref="Label"/> is what the label rule gives it; <see cref="Unnamed"/> is
 /// true when it is not the wearer's and has no person, and then <see cref="SpeakerId"/>, <see cref="BatchId"/> and
 /// <see cref="Speaker"/> (the provider's own label) decide its target. <see cref="IsWearer"/> is the label rule's verdict.
+/// <see cref="PersonId"/> is the person the segment belongs to and <see cref="PersonNamed"/> whether they have a name;
+/// <see cref="RoleOnly"/> is true for a person known only by role, who is still a target for a name (docs/specs/tags.md, Roles).
 /// </summary>
 public sealed record NameSegment(
     long Id, DateTime StartedAt, long BatchId, string? Speaker, string? SpeakerId, string? Label, string Text, bool Unnamed,
-    bool IsWearer);
+    bool IsWearer, Guid? PersonId = null, bool PersonNamed = true)
+{
+    public bool RoleOnly => !IsWearer && PersonId is not null && !PersonNamed;
+}
 
 public sealed record NameInput(string? Title, DateTime StartedAt, IReadOnlyList<NameSegment> Segments)
 {
     public long? LastSegmentId => Segments.Count == 0 ? null : Segments.Max(s => s.Id);
 }
 
-/// <summary>A name the model proposed for one target, ready to store.</summary>
+/// <summary>
+/// A name, a role or both that the model proposed for one target, ready to store. A role with no name stores the role's display
+/// form as <paramref name="Name"/> and <paramref name="Named"/> false. For target <c>person</c>, <paramref name="PersonId"/> is the
+/// person known only by role whom the name is for.
+/// </summary>
 public sealed record NameCandidate(
-    string Target, string? SpeakerId, long[] SegmentIds, string Name, Guid? PersonId, long EvidenceSegmentId, float Confidence);
+    string Target, string? SpeakerId, long[] SegmentIds, string Name, Guid? PersonId, long EvidenceSegmentId, float Confidence,
+    string? Role = null, bool Named = true);
 
 public sealed record NameSuggestionRow(
-    Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, Guid? PersonId, float Confidence,
-    NameEvidence Evidence);
+    Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
+    float Confidence, NameEvidence Evidence);
 
 public sealed record NameEvidence(long SegmentId, DateTime StartedAt, string Text);
 
@@ -32,7 +42,7 @@ public sealed record PersonName(Guid Id, string Name);
 public sealed record NameRun(string Status, long? ThroughSegmentId, int Failures, int Validator);
 
 /// <summary>A pending suggestion as revalidation reads it, with the text of its evidence segment.</summary>
-public sealed record PendingName(Guid Id, Guid ConversationId, string Name, string EvidenceText);
+public sealed record PendingName(Guid Id, Guid ConversationId, string Name, string? Role, bool Named, string EvidenceText);
 
 public enum SuggestionDecision { Ok, NotFound, NotPending }
 
@@ -46,8 +56,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     private sealed record RunMark(long? Through, int Validator);
 
     private sealed record Row(
-        Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, Guid? PersonId, float Confidence,
-        long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText);
+        Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
+        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText);
 
     // A class, not a record: Npgsql reports an int8[] column as System.Array, which a constructor parameter of long[] does not match.
     private sealed class Pending
@@ -63,6 +73,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         public long[] SegmentIds { get; init; } = [];
 
         public string Name { get; init; } = "";
+
+        public string? Role { get; init; }
+
+        public bool Named { get; init; }
+
+        public Guid? PersonId { get; init; }
 
         public string Status { get; init; } = "";
     }
@@ -84,7 +100,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             select s.id as Id, s.started_at as StartedAt, s.batch_id as BatchId, s.speaker as Speaker, s.speaker_id as SpeakerId,
                    {SpeakerLabel.Column} as Label, s.text as Text,
                    ({SpeakerLabel.IsUser} is not true and {SpeakerLabel.PersonId} is null) as Unnamed,
-                   coalesce({SpeakerLabel.IsUser}, false) as IsWearer
+                   coalesce({SpeakerLabel.IsUser}, false) as IsWearer,
+                   {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonNamed} as PersonNamed
             from segments s {SpeakerLabel.Joins}
             where s.conversation_id = @conversationId
             order by s.started_at, s.id
@@ -99,12 +116,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         return await ReadInputAsync(connection, null, conversationId, ct);
     }
 
-    /// <summary>The names of every person, with their ids: a suggestion equal to one carries that person.</summary>
+    /// <summary>The names of every named person, with their ids: a suggestion equal to one carries that person. A person known only by role is not one.</summary>
     public async Task<IReadOnlyDictionary<string, PersonName>> PeopleByNameAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var people = await connection.QueryAsync<PersonName>(new CommandDefinition(
-            "select id as Id, name as Name from people", cancellationToken: ct));
+            "select id as Id, name as Name from people where named", cancellationToken: ct));
         return people.ToDictionary(p => p.Name.ToLowerInvariant(), p => p);
     }
 
@@ -184,15 +201,15 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         {
             inserted += await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, person_id,
+                insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, role, named, person_id,
                                               evidence_segment_id, confidence, created_at)
-                values (@id, @conversationId, @target, @speakerId, @segmentIds, @name, @personId, @evidence, @confidence, @now)
+                values (@id, @conversationId, @target, @speakerId, @segmentIds, @name, @role, @named, @personId, @evidence, @confidence, @now)
                 on conflict do nothing
                 """,
                 new
                 {
                     id = Guid.CreateVersion7(now), conversationId, target = candidate.Target, speakerId = candidate.SpeakerId,
-                    segmentIds = candidate.SegmentIds, name = candidate.Name, personId = candidate.PersonId,
+                    segmentIds = candidate.SegmentIds, name = candidate.Name, role = candidate.Role, named = candidate.Named, personId = candidate.PersonId,
                     evidence = candidate.EvidenceSegmentId, confidence = candidate.Confidence, now,
                 }, transaction, cancellationToken: ct));
         }
@@ -231,7 +248,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         var rows = await connection.QueryAsync<Row>(new CommandDefinition(
             """
             select n.id as Id, n.conversation_id as ConversationId, n.target as Target, n.speaker_id as SpeakerId,
-                   n.group_id as GroupId, n.name as Name, n.person_id as PersonId, n.confidence as Confidence,
+                   n.group_id as GroupId, n.name as Name, n.role as Role, n.named as Named, n.person_id as PersonId, n.confidence as Confidence,
                    e.id as EvidenceSegmentId, e.started_at as EvidenceStartedAt, e.text as EvidenceText
             from name_suggestions n
             join segments e on e.id = n.evidence_segment_id
@@ -241,7 +258,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             """,
             new { status, limit }, cancellationToken: ct));
         return rows.Select(r => new NameSuggestionRow(
-            r.Id, r.ConversationId, r.Target, r.SpeakerId, r.GroupId, r.Name, r.PersonId, r.Confidence,
+            r.Id, r.ConversationId, r.Target, r.SpeakerId, r.GroupId, r.Name, r.Role, r.Named, r.PersonId, r.Confidence,
             new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText))).ToList();
     }
 
@@ -249,6 +266,9 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     /// Accepts a pending suggestion in one transaction: a <c>speaker</c> names the voice as <c>POST /people</c> does, a
     /// <c>label</c> sets <c>segments.person_id</c> on its segments that have no person yet, a <c>group</c> is named as its card
     /// is (<see cref="VoiceGroupStore.ConfirmGroupAsync(NpgsqlConnection, NpgsqlTransaction, Guid, Guid, DateTimeOffset, CancellationToken)"/>).
+    /// A suggestion with a role gives the person the role as a tag. A role with no name (<c>named</c> false) makes a new person
+    /// known only by role (<see cref="PeopleStore.CreateNumberedAsync"/>), never one found by name. A <c>person</c> target, the
+    /// voice of such a person, renames them, or merges them into the person who already has the name.
     /// Other pending suggestions for the same target are dropped. The result carries the person it named.
     /// </summary>
     public async Task<(SuggestionDecision Result, Guid? PersonId)> AcceptAsync(Guid id, DateTimeOffset now, CancellationToken ct)
@@ -258,7 +278,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         var row = await connection.QuerySingleOrDefaultAsync<Pending>(new CommandDefinition(
             """
             select id as Id, target as Target, speaker_id as SpeakerId, group_id as GroupId, segment_ids as SegmentIds,
-                   name as Name, status as Status
+                   name as Name, role as Role, named as Named, person_id as PersonId, status as Status
             from name_suggestions where id = @id for update
             """,
             new { id }, transaction, cancellationToken: ct));
@@ -273,13 +293,35 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         }
 
         Guid person;
-        if (row.Target == "speaker")
+        if (row.Target == "person")
         {
-            person = await PeopleStore.NameVoiceAsync(connection, transaction, row.Name, row.SpeakerId!, now, ct);
+            if (row.PersonId is not { } known)
+            {
+                return (SuggestionDecision.NotFound, null);
+            }
+
+            var existing = await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                "select id from people where lower(name) = lower(@name) and id <> @known", new { row.Name, known }, transaction, cancellationToken: ct));
+            if (existing is { } target)
+            {
+                // The suggestion goes with the merged person (cascade), so there is no status to set.
+                await PeopleStore.MergeAsync(connection, transaction, known, target, ct);
+                await transaction.CommitAsync(ct);
+                return (SuggestionDecision.Ok, target);
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition(
+                "update people set name = @name, named = true where id = @known", new { row.Name, known }, transaction, cancellationToken: ct));
+            person = known;
+        }
+        else if (row.Target == "speaker")
+        {
+            person = await PersonAsync(connection, transaction, row, now, ct);
+            await PeopleStore.LinkVoiceAsync(connection, transaction, person, row.SpeakerId!, now, ct);
         }
         else if (row.Target == "label")
         {
-            person = await PeopleStore.FindOrCreateAsync(connection, transaction, row.Name, now, ct);
+            person = await PersonAsync(connection, transaction, row, now, ct);
             await connection.ExecuteAsync(new CommandDefinition(
                 "update segments set person_id = @person where id = any(@segmentIds) and person_id is null",
                 new { person, segmentIds = row.SegmentIds }, transaction, cancellationToken: ct));
@@ -301,6 +343,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             return (SuggestionDecision.NotFound, null);
         }
 
+        if (row.Role is not null)
+        {
+            // A person who already holds 20 tags keeps them; the role is not worth refusing the name for.
+            await TagStore.AddToPersonAsync(connection, transaction, person, row.Role, now, ct);
+        }
+
         await connection.ExecuteAsync(new CommandDefinition(
             "update name_suggestions set status = 'accepted', decided_at = @now where id = @id",
             new { id, now }, transaction, cancellationToken: ct));
@@ -308,13 +356,20 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             """
             delete from name_suggestions
             where status = 'pending' and id <> @id and target = @target
-              and coalesce(speaker_id, segment_ids[1]::text) = coalesce(@speakerId, @first::text)
+              and coalesce(speaker_id, case when target = 'person' then person_id::text end, segment_ids[1]::text)
+                  = coalesce(@speakerId, @personKey::text, @first::text)
             """,
-            new { id, row.Target, row.SpeakerId, first = row.SegmentIds.Length == 0 ? (long?)null : row.SegmentIds[0] },
+            new { id, row.Target, row.SpeakerId, personKey = row.Target == "person" ? row.PersonId?.ToString() : null, first = row.SegmentIds.Length == 0 ? (long?)null : row.SegmentIds[0] },
             transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
         return (SuggestionDecision.Ok, person);
     }
+
+    /// <summary>The person a suggestion names: the one with that name, or for a role without a name a new, numbered one.</summary>
+    private static Task<Guid> PersonAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Pending row, DateTimeOffset now, CancellationToken ct) =>
+        row.Named
+            ? PeopleStore.FindOrCreateAsync(connection, transaction, row.Name, now, ct)
+            : PeopleStore.CreateNumberedAsync(connection, transaction, row.Name, now, ct);
 
     /// <summary>The pending suggestions the model made (not a voice group's), with the text of their evidence segments.</summary>
     public async Task<IReadOnlyList<PendingName>> PendingFromModelAsync(CancellationToken ct)
@@ -322,9 +377,9 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<PendingName>(new CommandDefinition(
             """
-            select n.id as Id, n.conversation_id as ConversationId, n.name as Name, e.text as EvidenceText
+            select n.id as Id, n.conversation_id as ConversationId, n.name as Name, n.role as Role, n.named as Named, e.text as EvidenceText
             from name_suggestions n join segments e on e.id = n.evidence_segment_id
-            where n.status = 'pending' and n.target in ('speaker', 'label')
+            where n.status = 'pending' and n.target in ('speaker', 'label', 'person')
             order by n.created_at, n.id
             """, cancellationToken: ct))).ToList();
     }
