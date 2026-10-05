@@ -567,6 +567,12 @@ excluded from voice grouping.
 When the kinds of a conversation change while the mode is `on` (`apply-speech`, or your mark), its summary,
 names, facts and memories are queued to run again.
 
+**Measuring it.** `GET /api/v1/speech/eval?since=&until=&limit=` (admin) lists every line with a guess or a
+mark, oldest first: `{ segmentId, conversationId, startedAt, durationMs, isUser, guess, score, signals, marked,
+kind }`, no text. `nextSince` pages (`limit` defaults to 500, caps at 2000). Your answers to `speech` review items
+are marks, so the route joins what Nytka guessed with what you decided; the check before `on` is in
+[docs/specs/speech-kind.md](docs/specs/speech-kind.md#how-we-measure-it).
+
 **Nothing disappears.** A media line stays in transcripts, search, export and MCP. The export's segments
 carry `speechKind` and `speechMarked`; MCP's `get_conversation` shows a media line's speaker as `Media` and
 a call line's as `<label> (call)`. The design is in [docs/specs/speech-kind.md](docs/specs/speech-kind.md).
@@ -574,7 +580,7 @@ a call line's as `<label> (call)`. The design is in [docs/specs/speech-kind.md](
 ## Review
 
 One list for everything waiting on your answer, so the app needs one screen. `GET /api/v1/review`
-merges four queues, newest first:
+merges five queues, newest first:
 
 - **`name`:** a pending [name suggestion](#people), shown with the line that carries the name; it may carry a [role](#roles).
 - **`voice`:** a pending [voice match](#voice-grouping) ("Is this Olena?"), shown with its first three
@@ -582,6 +588,12 @@ merges four queues, newest first:
 - **`label`:** a segment of the last 14 days that Nytka scored within 0.05 of `Nytka__Voice__UserThreshold`
   and you have not marked, at most 20; the proposal is Nytka's verdict (`isUser`) and the similarity.
 - **`tag`:** a pending [proposed tag](#tags) for a conversation or a person, shown with the summary of the conversation it came from; for a person, `proposal.personId` is set (`GET /api/v1/tags/suggestions` adds `personName`).
+- **`speech`:** a [stretch](#speech-kind) (consecutive lines that are not yours, gaps under 4 s, cut at 10 s) of a
+  conversation of the last 14 days that you have not marked and Nytka guessed `media`, `call` or `unsure`,
+  nearest `Nytka__Speech__MediaThreshold` first, at most 3 for each day of your time zone. `id` is the stretch's
+  lowest segment id, `text` its lines joined, and the proposal is `speechKind` (the guess) and `lines`:
+  `[{ segmentId, startedAt, text }]`. Accept marks every line of the stretch with the guess (`media` for `unsure`),
+  reject marks them `person`, both `204`; `409` when a line is already marked.
 
 An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
 confidence, similarity, isUser, tag, role, named } }`; fields that do not belong to the kind are `null`. `id` is a
@@ -1269,10 +1281,11 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/people/suggestions/{id}/reject` | admin | `204`; the name is never suggested again for that voice; `404` and `409` as accept |
 | POST | `/api/v1/people/backfill?limit=&force=` | admin | Queues [name suggestions and facts](#backfill) for summarized conversations they have not read (`force=true`: also names runs made under older checks); `limit` 1 to 1000 (default 200), `400` outside it; `200` with `{ queued: { suggestNames, facts }, skipped, remaining }`; `409` without a language model |
 | GET | `/api/v1/people/voice-eval?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for [voice grouping](#voice-grouping): `{ segmentId, conversationId, durationMs, groupId, personId, matchPersonId, similarity }`, no text and no vector; `limit` defaults to 500, caps at 5000 |
+| GET | `/api/v1/speech/eval?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for [speech kind](#speech-kind): `{ segmentId, conversationId, startedAt, durationMs, isUser, guess, score, signals, marked, kind }`, no text; `limit` defaults to 500, caps at 2000 |
 | GET | `/api/v1/people/cards` | admin | `{ items }`, at most 4 and at most 2 per conversation, newest first, empty while voice matching is off: `{ kind, id, conversationId, conversationTitle, personId, personName, similarity, clip: { from, until }, lines: [{ segmentId, startedAt, text }] }`; `kind` is `group` ("Who is this?", no person or similarity) or `match` ("Is this Olena?"); see [Voice grouping](#voice-grouping) |
 | GET | `/api/v1/people/cards/{kind}/{id}/clip` | admin | The card's clip, `audio/ogg`, at most 10 s; `404` for an unknown card or when its audio is gone |
 | POST | `/api/v1/people/cards/{kind}/{id}` | admin | Body `{ personId }`, `{ name }`, `{ skip: true }` or `{ reject: true }`, exactly one; naming or confirming answers `200` with the person, skipping (7 days) or rejecting `204`; `404` for an unknown card or person; `400` for a match named with someone else |
-| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser, tag, role, named } }`; `kind` is `name`, `voice` (none while voice matching is off), `label` or `tag`; see [Review](#review) |
+| GET | `/api/v1/review?limit=` | read | `{ items }`, newest first, `limit` 1 to 200 (default 50): `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser, tag, role, named, speechKind, lines } }`; `kind` is `name`, `voice` (none while voice matching is off), `label`, `tag` or `speech`; see [Review](#review) |
 | POST | `/api/v1/review/{kind}/{id}/accept` | admin | `name` and `voice`: `200` with the person; `label`: stores Nytka's verdict as your mark, `204`; `tag`: `200 { tags }`, the conversation's; `404` for an unknown kind or item; `409` for a name or tag that is no longer pending, or a tag when the conversation has 20 |
 | POST | `/api/v1/review/{kind}/{id}/reject` | admin | `204`; a `label` stores the opposite of Nytka's verdict as your mark; `404` and `409` as accept |
 | DELETE | `/api/v1/people/voiceprints` | admin | Deletes every voice group, every person voiceprint and every pending voice match; segment links stay. `204` |

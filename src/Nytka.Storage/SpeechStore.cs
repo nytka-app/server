@@ -72,6 +72,74 @@ public sealed class SpeechStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>
+    /// Marks every segment of a reviewed stretch as <see cref="MarkAsync"/> does, in one transaction. False, with nothing changed,
+    /// when any of them already carries a mark (or is gone).
+    /// </summary>
+    public async Task<bool> MarkStretchAsync(long[] segmentIds, string kind, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var set = await connection.ExecuteAsync(new CommandDefinition(
+            $"update segments s set speech_manual = @kind, speech_kind = {MarkRule} where s.id = any(@segmentIds) and s.speech_manual is null",
+            new { segmentIds, kind }, transaction, cancellationToken: ct));
+        if (set != segmentIds.Length)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
+
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    /// <summary>A class, not a record: Dapper cannot match a constructor to a <c>text[]</c> column.</summary>
+    public sealed class EvalRow
+    {
+        public long SegmentId { get; set; }
+
+        public Guid ConversationId { get; set; }
+
+        public DateTime StartedAt { get; set; }
+
+        public int DurationMs { get; set; }
+
+        public bool? IsUser { get; set; }
+
+        public string? Guess { get; set; }
+
+        public float? Score { get; set; }
+
+        public string[]? Signals { get; set; }
+
+        public bool Marked { get; set; }
+
+        public string? Kind { get; set; }
+    }
+
+    /// <summary>
+    /// For the evaluation: every segment with a guess or a mark, oldest first, started after <paramref name="since"/> and before
+    /// <paramref name="until"/>. No text.
+    /// </summary>
+    public async Task<IReadOnlyList<EvalRow>> EvalAsync(DateTimeOffset? since, DateTimeOffset? until, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<EvalRow>(new CommandDefinition(
+            $"""
+            select s.id as SegmentId, s.conversation_id as ConversationId, s.started_at as StartedAt,
+                   (extract(epoch from s.ended_at - s.started_at) * 1000)::int as DurationMs,
+                   {SpeakerLabel.IsUser} as IsUser, s.speech_guess as Guess, s.speech_score as Score, s.speech_signals as Signals,
+                   s.speech_manual is not null as Marked, s.speech_kind as Kind
+            from segments s
+            where (s.speech_guess is not null or s.speech_manual is not null)
+              and (cast(@since as timestamptz) is null or s.started_at > cast(@since as timestamptz))
+              and (cast(@until as timestamptz) is null or s.started_at < cast(@until as timestamptz))
+            order by s.started_at, s.id
+            limit @limit
+            """,
+            new { since, until, limit }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>
     /// Derives every guess again from its stored score at <paramref name="threshold"/>, every kind from the mark and the guess
     /// under <paramref name="mode"/>, and records both as applied, in one transaction. No audio or model is read. With the mode
     /// <c>on</c>, the conversations whose kinds changed queue their people runs again.
