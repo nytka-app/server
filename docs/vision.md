@@ -84,7 +84,7 @@ live transcripts. The server handles a frame the same way whichever transport de
 The app follows Material 3 with dynamic color, so it takes its palette from your wallpaper. Its icon
 is one thread that turns into a sound wave, linen on indigo.
 
-The app has five tabs: Conversations, Tasks, Memories, Ask and Device. A status chip in the top bar
+The app has six tabs: Conversations, Tasks, Memories, People, Ask and Device. A status chip in the top bar
 shows recording state and pendant battery on every tab. Ask is still a placeholder that says it
 arrives in a later version; the other four work.
 
