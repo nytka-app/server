@@ -55,15 +55,25 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         await Db.ExecuteAsync("update segments set speaker = 'SPEAKER_1', speaker_id = 'v1', is_user = false where text like 'Yes%'");
         await Db.ExecuteAsync("update segments set speaker = 'SPEAKER_0', speaker_id = 'v0', is_user = true where text like 'Shall%'");
         var person = Guid.CreateVersion7(Now);
-        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@person, 'Anna', @Now)", new { person, Now });
+        await Db.ExecuteAsync("insert into people (id, name, note, created_at) values (@person, 'Anna', 'Met at the lake', @Now)", new { person, Now });
+        await Db.ExecuteAsync("insert into person_voiceprints (person_id, model, centroid, count, updated_at) values (@person, 'm', '\\x00', 1, @Now)", new { person, Now });
         await Db.ExecuteAsync("insert into person_voices (speaker_id, person_id, created_at) values ('v1', @person, @Now)", new { person, Now });
         var task = Guid.CreateVersion7(Now);
         await Db.ExecuteAsync(
             """
-            insert into tasks (id, conversation_id, text, fingerprint, done, done_at, created_at, updated_at)
-            values (@task, @conversation, 'Book the cabin', 'a', true, @Now, @Now, @Now)
+            insert into tasks (id, conversation_id, person_id, text, fingerprint, done, done_at, created_at, updated_at)
+            values (@task, @conversation, @person, 'Book the cabin', 'a', true, @Now, @Now, @Now)
             """,
-            new { task, conversation, Now });
+            new { task, conversation, person, Now });
+        await Db.ExecuteAsync(
+            """
+            insert into person_facts (id, person_id, text, fingerprint, source, basis, conversation_id, edited, created_at, updated_at)
+            values (@f1, @person, 'Rents a cabin', 'f1', 'ai', 'said', @conversation, false, @Now, @Now),
+                   (@f2, @person, 'Has a canoe', 'f2', 'user', null, null, true, @Now, @Now),
+                   (@f3, @person, 'Gone fact', 'f3', 'user', null, null, false, @Now, @Now)
+            """,
+            new { f1 = Guid.CreateVersion7(Now), f2 = Guid.CreateVersion7(Now), f3 = Guid.CreateVersion7(Now), person, conversation, Now });
+        await Db.ExecuteAsync("update person_facts set deleted_at = @Now where text = 'Gone fact'", new { Now });
         await Db.ExecuteAsync(
             """
             insert into memories (id, text, fingerprint, source, conversation_id, created_at, updated_at)
@@ -85,12 +95,14 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         var (_, lines) = await Export();
 
         var types = lines.Select(l => l.GetProperty("type").GetString()).ToList();
-        Assert.Equal(["header", "person", "conversation", "task", "memory", "memory", "bookmark", "digest", "end"], types.Where(t => t != "setting"));
+        Assert.Equal(["header", "person", "conversation", "task", "memory", "memory", "person_fact", "person_fact", "bookmark", "digest", "end"], types.Where(t => t != "setting"));
         Assert.All(lines, l => Assert.Equal("type", Names(l)[0]));
 
         var anna = Of(lines, "person").Single();
-        Assert.Equal(["type", "id", "name", "voices", "createdAt"], Names(anna));
+        Assert.Equal(["type", "id", "name", "note", "voiceprint", "voices", "createdAt"], Names(anna));
         Assert.Equal("Anna", anna.GetProperty("name").GetString());
+        Assert.Equal("Met at the lake", anna.GetProperty("note").GetString());
+        Assert.True(anna.GetProperty("voiceprint").GetBoolean());
         Assert.Equal(["v1"], anna.GetProperty("voices").EnumerateArray().Select(v => v.GetString()));
 
         var c = Of(lines, "conversation").Single();
@@ -112,13 +124,23 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal("v1", segments[1].GetProperty("speakerId").GetString());
 
         var t = Of(lines, "task").Single();
-        Assert.Equal(["type", "id", "conversationId", "text", "done", "doneAt", "createdAt", "updatedAt"], Names(t));
+        Assert.Equal(["type", "id", "conversationId", "personId", "text", "done", "doneAt", "createdAt", "updatedAt"], Names(t));
         Assert.True(t.GetProperty("done").GetBoolean());
+        Assert.Equal(person, t.GetProperty("personId").GetGuid());
         Assert.Equal(conversation, t.GetProperty("conversationId").GetGuid());
 
         var memories = Of(lines, "memory");
         Assert.Equal(["type", "id", "text", "source", "conversationId", "createdAt", "updatedAt"], Names(memories[0]));
         Assert.Equal(["ai", "user"], memories.Select(m => m.GetProperty("source").GetString()).Order());
+
+        var facts = Of(lines, "person_fact");
+        Assert.Equal(["type", "id", "personId", "text", "source", "basis", "conversationId", "edited", "createdAt", "updatedAt"], Names(facts[0]));
+        Assert.Equal(["Has a canoe", "Rents a cabin"], facts.Select(f => f.GetProperty("text").GetString()).Order());
+        var ai = facts.Single(f => f.GetProperty("source").GetString() == "ai");
+        Assert.Equal("said", ai.GetProperty("basis").GetString());
+        Assert.Equal(person, ai.GetProperty("personId").GetGuid());
+        Assert.Equal(conversation, ai.GetProperty("conversationId").GetGuid());
+        Assert.Equal(JsonValueKind.Null, facts.Single(f => f.GetProperty("source").GetString() == "user").GetProperty("basis").ValueKind);
 
         Assert.Equal(["type", "id", "at", "note", "source", "createdAt"], Names(Of(lines, "bookmark").Single()));
 
@@ -130,10 +152,69 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
 
         var counts = lines[^1].GetProperty("counts");
         Assert.Equal(2, counts.GetProperty("memory").GetInt32());
+        Assert.Equal(2, counts.GetProperty("person_fact").GetInt32());
+        Assert.Equal(1, counts.GetProperty("person").GetInt32());
         Assert.Equal(1, counts.GetProperty("conversation").GetInt32());
         Assert.Equal(1, counts.GetProperty("digest").GetInt32());
         Assert.False(counts.TryGetProperty("header", out _));
     }
+
+    [Fact]
+    public async Task Leaves_out_groups_voiceprints_suggestions_matches_calendar_and_briefs()
+    {
+        var conversation = await Seed("Zed said the plan is fine.");
+        var segment = await Db.ScalarAsync<long>("select id from segments limit 1");
+        var person = Guid.CreateVersion7(Now);
+        var group = Guid.CreateVersion7(Now);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@person, 'Anna', @Now)", new { person, Now });
+        await Db.ExecuteAsync("insert into person_voiceprints (person_id, model, centroid, count, updated_at) values (@person, 'm', '\\xdeadbeef', 3, @Now)", new { person, Now });
+        await Db.ExecuteAsync("insert into voice_groups (id, model, centroid, count, created_at, updated_at) values (@group, 'm', '\\xcafebabe', 2, @Now, @Now)", new { group, Now });
+        await Db.ExecuteAsync(
+            """
+            insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, evidence_segment_id, confidence, created_at)
+            values (@id, @conversation, 'speaker', 'v9', '{}', 'Suggested Sue', @segment, 0.9, @Now)
+            """,
+            new { id = Guid.CreateVersion7(Now), conversation, segment, Now });
+        await Db.ExecuteAsync(
+            """
+            insert into voice_matches (id, conversation_id, person_id, segment_ids, similarity, created_at)
+            values (@id, @conversation, @person, array[@segment], 0.87654, @Now)
+            """,
+            new { id = Guid.CreateVersion7(Now), conversation, person, segment, Now });
+        if (await Db.ScalarAsync<string?>("select to_regclass('calendar_events')::text") is not null)
+        {
+            await Db.ExecuteAsync("insert into calendar_events (uid, starts_at, ends_at, title, attendees, fetched_at) values ('u1', @Now, @Now, 'Standup with Bob', '{Bob}', @Now)", new { Now });
+            await Db.ExecuteAsync(
+                "insert into briefs (id, event_uid, event_starts_at, person_ids, text, created_at) values (@id, 'u1', @Now, array[@person], 'Brief text for Bob', @Now)",
+                new { id = Guid.CreateVersion7(Now), person, Now });
+        }
+
+        var (body, lines) = await Export();
+
+        Assert.All(
+            lines.Select(l => l.GetProperty("type").GetString()),
+            type => Assert.Contains(type, new[] { "header", "setting", "person", "conversation", "task", "memory", "person_fact", "bookmark", "digest", "end" }));
+        var names = lines.SelectMany(AllNames).ToHashSet();
+        foreach (var forbidden in new[] { "group", "groupId", "centroid", "suggestion", "match", "similarity", "calendar", "brief", "attendees", "fingerprint", "embedding" })
+        {
+            Assert.DoesNotContain(names, n => n.Contains(forbidden, StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (var content in new[] { "Suggested Sue", "0.87654", "Standup with Bob", "Brief text for Bob", "deadbeef", "cafebabe" })
+        {
+            Assert.DoesNotContain(content, body);
+        }
+
+        Assert.True(Of(lines, "person").Single().GetProperty("voiceprint").GetBoolean());
+        Assert.Equal(["conversation", "person", "setting"], lines[^1].GetProperty("counts").EnumerateObject().Select(c => c.Name).Order());
+    }
+
+    private static IEnumerable<string> AllNames(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Object => element.EnumerateObject().SelectMany(p => AllNames(p.Value).Prepend(p.Name)),
+        JsonValueKind.Array => element.EnumerateArray().SelectMany(AllNames),
+        _ => [],
+    };
 
     [Fact]
     public async Task A_user_title_wins_and_is_marked_edited()
