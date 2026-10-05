@@ -61,7 +61,11 @@ public sealed record PersonView(
     IReadOnlyList<TaskRow> OpenTasks, IReadOnlyList<string> Tags);
 
 /// <summary>A person for a list: when they were last heard and how many live facts they have.</summary>
-public sealed record PersonSummary(Guid Id, string Name, DateTime? LastSeenAt, int Facts);
+public sealed record PersonSummary(Guid Id, string Name, DateTime? LastSeenAt, int Facts)
+{
+    /// <summary>Not a column: <see cref="PeopleStore.SummariesAsync"/> reads the tags in a second query.</summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
+}
 
 public enum PersonWrite { Ok, NotFound, NameTaken }
 
@@ -126,12 +130,20 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
     public async Task<PersonRow?> GetAsync(Guid id, CancellationToken ct) =>
         (await ListAsync(ct)).FirstOrDefault(p => p.Id == id);
 
-    /// <summary>Everyone, most recently heard first (never heard last), then by name.</summary>
-    public async Task<IReadOnlyList<PersonSummary>> SummariesAsync(CancellationToken ct)
+    public Task<IReadOnlyList<PersonSummary>> SummariesAsync(CancellationToken ct) => SummariesAsync(null, ct);
+
+    /// <summary>Everyone, most recently heard first (never heard last), then by name; <paramref name="tag"/> (normalized) keeps only people who have it.</summary>
+    public async Task<IReadOnlyList<PersonSummary>> SummariesAsync(string? tag, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var people = (await connection.QueryAsync<Row>(new CommandDefinition(
-            "select id as Id, name as Name, note as Note, created_at as CreatedAt from people", cancellationToken: ct))).ToList();
+            """
+            select p.id as Id, p.name as Name, p.note as Note, p.created_at as CreatedAt from people p
+            where cast(@tag as text) is null or exists (
+                select 1 from person_tags pt join tags t on t.id = pt.tag_id where pt.person_id = p.id and t.name = @tag)
+            """,
+            new { tag }, cancellationToken: ct))).ToList();
+        var tags = await TagStore.OfPeopleAsync(connection, null, people.Select(p => p.Id).ToList(), ct);
         var seen = (await connection.QueryAsync<Seen>(new CommandDefinition(
             $"""
             select {SpeakerLabel.PersonId} as PersonId, max(s.started_at) as LastSeenAt
@@ -143,7 +155,8 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
             "select person_id as PersonId, count(*)::int as Facts from person_facts where deleted_at is null group by person_id",
             cancellationToken: ct))).ToDictionary(r => r.PersonId, r => r.Facts);
         return people
-            .Select(p => new PersonSummary(p.Id, p.Name, seen.TryGetValue(p.Id, out var at) ? at : null, counts.GetValueOrDefault(p.Id)))
+            .Select(p => new PersonSummary(p.Id, p.Name, seen.TryGetValue(p.Id, out var at) ? at : null, counts.GetValueOrDefault(p.Id))
+            { Tags = tags.GetValueOrDefault(p.Id) ?? [] })
             .OrderByDescending(p => p.LastSeenAt.HasValue).ThenByDescending(p => p.LastSeenAt)
             .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();

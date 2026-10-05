@@ -5,12 +5,13 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Nytka.Server.Ai;
+using Nytka.Server.Api;
 using Nytka.Storage;
 
 namespace Nytka.Server.Mcp;
 
 public sealed record McpConversationItem(
-    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview);
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview, IReadOnlyList<string> Tags);
 
 public sealed record McpConversationList(IReadOnlyList<McpConversationItem> Items, DateTime? NextBefore);
 
@@ -18,7 +19,7 @@ public sealed record McpTask(Guid Id, string Text, bool Done, Guid? PersonId, st
 
 public sealed record McpConversation(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<McpTask> Tasks,
-    string? Transcript, bool Truncated, int Part, int Parts);
+    string? Transcript, bool Truncated, int Part, int Parts, IReadOnlyList<string> Tags);
 
 public sealed record McpTaskList(IReadOnlyList<McpTaskItem> Items, Guid? NextBefore);
 
@@ -46,12 +47,19 @@ public sealed class McpTools(McpQueries queries)
     public async Task<CallToolResult> ListConversationsAsync(
         [Description("Only conversations that started at or after this time (ISO 8601).")] string? since = null,
         [Description("Only conversations that started before this time (ISO 8601).")] string? before = null,
+        [Description("Only conversations with this tag.")] string? tag = null,
         [Description("How many to return, 1 to 50; the default is 20.")] int limit = 20,
         CancellationToken ct = default)
     {
+        var normalized = TagName.Normalize(tag);
+        if (tag is not null && normalized is null)
+        {
+            throw new McpProtocolException(TagEndpoints.InvalidTagSentence, McpErrorCode.InvalidParams);
+        }
+
         var take = Math.Clamp(limit, 1, 50);
-        var rows = await queries.ListConversationsAsync(ParseTime(since, nameof(since)), ParseTime(before, nameof(before)), take, ct);
-        var items = rows.Select(r => new McpConversationItem(r.Id, r.StartedAt, r.EndedAt, r.Title, r.Summary, Trim(r.Preview))).ToList();
+        var rows = await queries.ListConversationsAsync(ParseTime(since, nameof(since)), ParseTime(before, nameof(before)), take, normalized, ct);
+        var items = rows.Select(r => new McpConversationItem(r.Id, r.StartedAt, r.EndedAt, r.Title, r.Summary, Trim(r.Preview), r.Tags)).ToList();
         return Ok(new McpConversationList(items, items.Count == take ? items[^1].StartedAt : null));
     }
 
@@ -73,7 +81,7 @@ public sealed class McpTools(McpQueries queries)
         if (!transcript)
         {
             return Ok(new McpConversation(
-                conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, null, false, 1, 1));
+                conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, null, false, 1, 1, conversation.Tags));
         }
 
         // The text budget is MaxTranscriptParts parts' worth; the line markup makes the last part come out short.
@@ -88,7 +96,7 @@ public sealed class McpTools(McpQueries queries)
 
         return Ok(new McpConversation(
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks,
-            windows.Count == 0 ? "" : windows[part - 1], part < parts, part, parts));
+            windows.Count == 0 ? "" : windows[part - 1], part < parts, part, parts, conversation.Tags));
     }
 
     [McpServerTool(Name = "list_tasks", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(McpTaskList))]

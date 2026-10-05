@@ -25,10 +25,11 @@ public sealed class SearchTools(SearchStore search)
     public async Task<CallToolResult> SearchAsync(
         [Description("The words to find.")] string query,
         [Description("conversation, memory, person, or any of them (all three by default).")] string[]? kinds = null,
+        [Description("Only conversations and people with this tag; memories are left out.")] string? tag = null,
         [Description("How many hits to return, 1 to 30; the default is 10.")] int limit = 10,
         CancellationToken ct = default)
     {
-        if (SearchQuery.Parse(query, kinds, out var error) is not { } parsed)
+        if (SearchQuery.Parse(query, kinds, out var error, tag) is not { } parsed)
         {
             throw new McpProtocolException(error!, McpErrorCode.InvalidParams);
         }

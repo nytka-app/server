@@ -31,12 +31,16 @@ public static class TagEndpoints
     public sealed record ItemTags(IReadOnlyList<string> Tags);
 
     /// <summary>Tags in use, most used first. <c>q</c> keeps names that start with it, normalized as a name is.</summary>
-    private static async Task<IResult> ListAsync(string? q, TagStore tags, CancellationToken ct)
+    private static async Task<IResult> ListAsync(string? q, TagStore tags, CancellationToken ct) =>
+        Results.Ok(await ListForAsync(q, tags, ct));
+
+    /// <summary>Shared with the MCP tool, so both return the same tags.</summary>
+    public static async Task<TagList> ListForAsync(string? q, TagStore tags, CancellationToken ct)
     {
         var prefix = string.IsNullOrWhiteSpace(q) ? null : TagName.Normalize(q);
         return string.IsNullOrWhiteSpace(q) || prefix is not null
-            ? Results.Ok(new TagList(await tags.ListAsync(prefix, ct)))
-            : Results.Ok(new TagList([]));
+            ? new TagList(await tags.ListAsync(prefix, ct))
+            : new TagList([]);
     }
 
     /// <summary>Body <c>{ name }</c>. 200 with the tag; 404; 409 when the new name is in use by another tag.</summary>
@@ -123,6 +127,9 @@ public static class TagEndpoints
             : null;
 
     internal const string InvalidNameSentence = "Must be 1 to 32 letters, digits, - or _, starting with a letter or digit.";
+
+    /// <summary>For a <c>tag</c> filter that is no valid name; a fixed sentence, never the tag.</summary>
+    internal const string InvalidTagSentence = "tag must be 1 to 32 letters, digits, - or _, starting with a letter or digit.";
 
     internal static IResult Invalid(string field) => PeopleEndpoints.Invalid(field, InvalidNameSentence);
 

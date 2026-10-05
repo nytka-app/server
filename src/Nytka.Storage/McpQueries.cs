@@ -4,7 +4,11 @@ using Npgsql;
 namespace Nytka.Storage;
 
 public sealed record McpConversationRow(
-    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview);
+    Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, string Preview)
+{
+    /// <summary>Not a column: the queries read the tags in a second query.</summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
+}
 
 public sealed record McpTaskRow(Guid Id, string Text, bool Done, Guid? PersonId, string? PersonName);
 
@@ -22,9 +26,12 @@ public sealed record McpTaskItem(
 /// </summary>
 public sealed class McpQueries(NpgsqlDataSource dataSource)
 {
-    /// <summary>Newest first by start; <paramref name="since"/> keeps conversations that started at or after it.</summary>
+    /// <summary>
+    /// Newest first by start; <paramref name="since"/> keeps conversations that started at or after it, <paramref name="tag"/>
+    /// (normalized) those that have it.
+    /// </summary>
     public async Task<IReadOnlyList<McpConversationRow>> ListConversationsAsync(
-        DateTimeOffset? since, DateTimeOffset? before, int limit, CancellationToken ct)
+        DateTimeOffset? since, DateTimeOffset? before, int limit, string? tag, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpConversationRow>(new CommandDefinition(
@@ -40,23 +47,31 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
             ) p on true
             where (cast(@since as timestamptz) is null or c.started_at >= cast(@since as timestamptz))
               and (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
+              and (cast(@tag as text) is null or exists (
+                    select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
+                    where ct.conversation_id = c.id and t.name = @tag))
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { since, before, limit }, cancellationToken: ct));
-        return rows.ToList();
+            new { since, before, limit, tag }, cancellationToken: ct));
+        var items = rows.ToList();
+        var tags = await TagStore.OfConversationsAsync(connection, null, items.Select(c => c.Id).ToList(), ct);
+        return items.Select(c => tags.TryGetValue(c.Id, out var names) ? c with { Tags = names } : c).ToList();
     }
 
     public async Task<McpConversationRow?> GetConversationAsync(Guid id, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        return await connection.QuerySingleOrDefaultAsync<McpConversationRow>(new CommandDefinition(
+        var row = await connection.QuerySingleOrDefaultAsync<McpConversationRow>(new CommandDefinition(
             """
             select id as Id, started_at as StartedAt, ended_at as EndedAt,
                    coalesce(title, ai_title) as Title, ai_summary as Summary, '' as Preview
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
+        return row is null
+            ? null
+            : row with { Tags = (await TagStore.OfConversationsAsync(connection, null, [id], ct)).GetValueOrDefault(id) ?? [] };
     }
 
     /// <summary>A conversation's tasks, deleted ones left out, in creation order.</summary>

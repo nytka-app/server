@@ -362,7 +362,9 @@ only conversations with no finished run. Accepted and rejected suggestions stay.
 ## Tags
 
 Short words on conversations and on people (`work`, `family`, `repairman`), only yours: nothing adds a
-tag but you. Lists show them, and `?tag=` on conversations and people keeps the ones that have it.
+tag but you. Lists show them, and `?tag=` on conversations, people and [search](#search) keeps the ones that have it.
+The MCP tools carry them too: `list_tags`, a `tag` filter on `list_conversations`, `list_people` and `search`, and
+`tags` on their items, `get_conversation` and `get_person` ([MCP](#mcp)).
 
 - A name is normalized: trimmed, one leading `#` dropped, lower case, each run of spaces one `-`. What is
   left is 1 to 32 letters (any script), digits, `-` and `_`, starting with a letter or digit, else `400`.
@@ -728,6 +730,9 @@ people by name or by [fact](#facts-about-people), in Ukrainian and English toget
   has `kind: person`, their id, the name as `title`, and a `snippet` of the name or of the best
   matching fact. Deleted items and deleted facts never show. The `snippet` is HTML-escaped,
   and the matches sit in `<mark>` tags, the only tag it holds.
+- `tag` (a [tag](#tags) name, normalized as there) keeps only conversations and people that have it and leaves memories out, so
+  `kinds=memory` with a `tag` finds nothing. The words of `q` are never matched against tag names: searching by tag is
+  the filter, and `q` stays required. An invalid tag is a `400`.
 - `kinds` picks any of `conversation`, `memory` and `person` (all three by default). `limit` defaults to 20 and caps at 50; `offset` runs
   from 0 to 500 (a larger one counts as 500), and `nextOffset` is null on the last page and when the
   next page would start past 500. No word, or an unknown kind, is a `400`.
@@ -938,22 +943,23 @@ through OAuth cannot connect.
 
 | Tool | Input | Output |
 |---|---|---|
-| `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview }], nextBefore }` |
-| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts }` |
+| `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `tag?`, `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview, tags }], nextBefore }` |
+| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts, tags }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `list_digests` | `before?` (a date, `yyyy-MM-dd`), `limit?` (1 to 100, default 30) | `{ items: [{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }], nextBefore }` |
-| `search` | `query`, `kinds?` (a list of `conversation`, `memory` and `person`), `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
-| `list_people` | none | `{ items: [{ id, name, lastSeenAt, facts }] }`, most recently heard first, then by name; `facts` counts live facts |
+| `search` | `query`, `kinds?` (a list of `conversation`, `memory` and `person`), `tag?`, `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
+| `list_people` | `tag?` | `{ items: [{ id, name, lastSeenAt, facts, tags }] }`, most recently heard first, then by name; `facts` counts live facts |
 | `get_person` | `id` (UUID) or `name` (any case), one of the two | the [person page](#person-page) as `GET /api/v1/people/{id}` returns it, without `hasVoiceprint` and `voiceprintSamples`; a tool error ("No such person.") for an unknown one |
+| `list_tags` | `query?` (names starting with it) | `{ items: [{ name, conversations, people, uses }] }`, most used first, as `GET /api/v1/tags` (see [Tags](#tags)) |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
 Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
 structured content and as JSON text. A tool returns the fields its REST endpoint returns, with the
 limits and defaults in the table (`search` has no `offset`). Pass `nextBefore` as `before` to read the
 next page. An unknown id is a tool error ("No such conversation."); a malformed id, time, status or
-kind is JSON-RPC error `-32602`. The transcript has one line per segment, in UTC and without a
+kind or tag is JSON-RPC error `-32602`. The transcript has one line per segment, in UTC and without a
 speaker label when there is none: `[HH:mm:ss] Speaker: text`. It is cut at a line boundary after
 60,000 characters into parts. `part` picks one (from 1; one outside `1` to `parts` is `-32602`),
 `parts` counts them and `truncated` is true while a later part exists, so a client reads the rest with
@@ -1095,7 +1101,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
 | GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](#export) |
-| GET | `/api/v1/search?q=&kinds=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name) |
+| GET | `/api/v1/search?q=&kinds=&tag=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name) |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
 | PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `description`, `active`; DELETE answers `204` and drops its deliveries |
