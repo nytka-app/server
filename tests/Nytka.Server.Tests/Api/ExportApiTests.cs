@@ -99,7 +99,7 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.All(lines, l => Assert.Equal("type", Names(l)[0]));
 
         var anna = Of(lines, "person").Single();
-        Assert.Equal(["type", "id", "name", "note", "voiceprint", "voices", "createdAt"], Names(anna));
+        Assert.Equal(["type", "id", "name", "note", "voiceprint", "voices", "tags", "createdAt"], Names(anna));
         Assert.Equal("Anna", anna.GetProperty("name").GetString());
         Assert.Equal("Met at the lake", anna.GetProperty("note").GetString());
         Assert.True(anna.GetProperty("voiceprint").GetBoolean());
@@ -107,7 +107,7 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
 
         var c = Of(lines, "conversation").Single();
         Assert.Equal(
-            ["type", "id", "source", "externalId", "startedAt", "endedAt", "status", "title", "titleEdited", "summary", "segments"], Names(c));
+            ["type", "id", "source", "externalId", "startedAt", "endedAt", "status", "title", "titleEdited", "summary", "tags", "segments"], Names(c));
         Assert.Equal(conversation, c.GetProperty("id").GetGuid());
         Assert.Equal("nytka", c.GetProperty("source").GetString());
         Assert.Equal(JsonValueKind.Null, c.GetProperty("externalId").ValueKind);
@@ -194,8 +194,10 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.All(
             lines.Select(l => l.GetProperty("type").GetString()),
             type => Assert.Contains(type, new[] { "header", "setting", "person", "conversation", "task", "memory", "person_fact", "bookmark", "digest", "end" }));
+        // T-4 adds tag proposals (tag_suggestions): they are the model's guesses, so no line type or field for them
+        // may appear. This test seeds none yet; when T-4 lands, insert one and keep the checks below.
         var names = lines.SelectMany(AllNames).ToHashSet();
-        foreach (var forbidden in new[] { "group", "groupId", "centroid", "suggestion", "match", "similarity", "calendar", "brief", "attendees", "fingerprint", "embedding" })
+        foreach (var forbidden in new[] { "group", "groupId", "centroid", "suggestion", "match", "similarity", "calendar", "brief", "attendees", "fingerprint", "embedding", "proposal", "proposed" })
         {
             Assert.DoesNotContain(names, n => n.Contains(forbidden, StringComparison.OrdinalIgnoreCase));
         }
@@ -207,6 +209,31 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
 
         Assert.True(Of(lines, "person").Single().GetProperty("voiceprint").GetBoolean());
         Assert.Equal(["conversation", "person", "setting"], lines[^1].GetProperty("counts").EnumerateObject().Select(c => c.Name).Order());
+    }
+
+    [Fact]
+    public async Task Carries_the_tags_of_conversations_and_people_sorted_and_empty_when_none()
+    {
+        var tagged = await Seed("a tagged talk");
+        var plain = await Seed("a plain talk");
+        var person = Guid.CreateVersion7(Now);
+        var other = Guid.CreateVersion7(Now);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@person, 'Anna', @Now), (@other, 'Bob', @Now)", new { person, other, Now });
+        foreach (var path in new[] { $"conversations/{tagged}/tags/work", $"conversations/{tagged}/tags/%D1%80%D0%BE%D0%B1%D0%BE%D1%82%D0%B0", $"people/{person}/tags/family" })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await Client.PutAsync($"/api/v1/{path}", null)).StatusCode);
+        }
+
+        var (_, lines) = await Export();
+
+        var conversations = Of(lines, "conversation").ToDictionary(c => c.GetProperty("id").GetGuid());
+        Assert.Equal(["work", "робота"], conversations[tagged].GetProperty("tags").EnumerateArray().Select(t => t.GetString()).Order(StringComparer.Ordinal));
+        Assert.Equal(0, conversations[plain].GetProperty("tags").GetArrayLength());
+        var people = Of(lines, "person").ToDictionary(p => p.GetProperty("id").GetGuid());
+        Assert.Equal(["family"], people[person].GetProperty("tags").EnumerateArray().Select(t => t.GetString()));
+        Assert.Equal(0, people[other].GetProperty("tags").GetArrayLength());
+        Assert.Equal(["conversation", "person", "setting"], lines[^1].GetProperty("counts").EnumerateObject().Select(c => c.Name).Order());
+        Assert.DoesNotContain(lines, l => l.GetProperty("type").GetString() is "tag" or "tag_suggestion");
     }
 
     private static IEnumerable<string> AllNames(JsonElement element) => element.ValueKind switch

@@ -44,8 +44,8 @@ as the download.
 |---|---|
 | `header` | `format` (`"nytka-export"`), `version` (an integer, `1`), `generatedAt`, `serverVersion` |
 | `setting` | `key`, `value` (a string, as an environment variable would carry it) |
-| `person` | `id`, `name`, `note` (your own note on the person, else null), `voiceprint` (true when a voiceprint of this person is kept; the vector itself is never exported), `voices` (the provider's speaker ids named after this person), `createdAt` |
-| `conversation` | `id`, `source` (`nytka` or `omi`), `externalId` (the Omi id for `omi`, else null), `startedAt`, `endedAt`, `status` (`open` or `closed`), `title` (the one the app shows: the user's, else the generated one, else null), `titleEdited` (true when `title` is the user's), `summary`, `segments` |
+| `person` | `id`, `name`, `note` (your own note on the person, else null), `voiceprint` (true when a voiceprint of this person is kept; the vector itself is never exported), `voices` (the provider's speaker ids named after this person), `tags` (the tags on the person, sorted, `[]` when none), `createdAt` |
+| `conversation` | `id`, `source` (`nytka` or `omi`), `externalId` (the Omi id for `omi`, else null), `startedAt`, `endedAt`, `status` (`open` or `closed`), `title` (the one the app shows: the user's, else the generated one, else null), `titleEdited` (true when `title` is the user's), `summary`, `tags` (the tags on the conversation, sorted, `[]` when none), `segments` |
 | `task` | `id`, `conversationId`, `personId` (the person it is owed to or by, else null), `text`, `done`, `doneAt`, `createdAt`, `updatedAt` |
 | `memory` | `id`, `text`, `source` (`ai`, `user` or `omi`), `conversationId` (null for one added by hand), `createdAt`, `updatedAt` |
 | `person_fact` | `id`, `personId`, `text`, `source` (`ai` or `user`), `basis` (`said`, `about` or `mentioned` for `ai`, null for `user`), `conversationId` (null for one added by hand), `edited`, `createdAt`, `updatedAt` |
@@ -92,6 +92,8 @@ other tools, and for moving away.
   and fetches each file does the same job.
 - Voice groups, voiceprints, name suggestions, voice matches, calendar events and briefs: working state or
   vectors of other people's voices, not the user's data (`docs/specs/people.md`).
+- Proposed tags: a proposal is the model's guess until the user accepts it, and only the accepted tag
+  is in `tags` (`docs/specs/tags.md`).
 - Webhooks, tokens, diagnostics, jobs, search indexes and raw transcription responses: configuration or
   working state, not the user's data.
 - Importing the file into Nytka.
