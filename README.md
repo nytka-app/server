@@ -679,7 +679,7 @@ sets it when it is created, only to a person whose voice you named in that conve
 never counts), matching the name ignoring case; any other name leaves it empty. A later summary never
 changes it. Set, change or clear it with `PATCH` and `personId` (`null` clears it; an unknown person
 is `404`); that counts as touching the task. Deleting the person clears it. What other people owe
-the wearer is not a task.
+the wearer is not a task: it is [waiting on](#waiting-on).
 
 **Kinds.** The summary labels each candidate it finds, in the same model call, with a kind and an owner
 ([docs/specs/task-kinds.md](docs/specs/task-kinds.md)):
@@ -691,9 +691,9 @@ the wearer is not a task.
 | `advice` | a tip or lesson, such as a coach's | a [note](#notes) per conversation and topic |
 | `noise` | a remark, a vague or garbled line, anything from media | nothing; the candidate goes to an audit table |
 
-The owner is `wearer` or `other`; an item owned by someone else is never kept, so another person's promise is
-not your task. `GET /api/v1/tasks` and the MCP `list_tasks` return commitments unless `kind` is `idea` or `all`,
-and a task carries its `kind`. A later summary may relabel an untouched task: a commitment that turns out to be
+The owner is `wearer` or `other`. An item owned by someone else is not your task: its commitment is kept as
+[waiting on](#waiting-on) and anything else of theirs is dropped. `GET /api/v1/tasks` and the MCP `list_tasks`
+return commitments unless `kind` is `idea`, `waiting_on` or `all`, and a task carries its `kind`. A later summary may relabel an untouched task: a commitment that turns out to be
 advice or noise is removed, and an idea that becomes a commitment is announced as `task.created`. The audit table
 `dropped_candidates` (`conversation_id`, `kind`, `owner`, `text`, `created_at`, replaced on every summary) holds what was
 dropped, so you can read the noise rate with SQL; it has no API.
@@ -701,6 +701,18 @@ dropped, so you can read the noise rate with SQL; it has no API.
 Tasks that exist from before this version stay commitments until their conversation is summarized again
 (`POST /api/v1/conversations/{id}/enrich`); that run removes the ones the model now calls noise or advice, except tasks
 you ticked, edited or deleted.
+
+## Waiting on
+
+What someone else promised you ("I'll send you the file on Friday") is kept as a task of kind `waiting_on`: the
+summary labels it a `commitment` with owner `other`. It links to the person who owes it (`personId`, `personName`) when
+that person's voice is named in the conversation, as for any task. It is hidden from the default task list and
+announced by no webhook: `GET /api/v1/tasks?kind=waiting_on` and the MCP `list_tasks` with `kind` `waiting_on` list them,
+`kind=all` includes them, and the [person page](#person-page) shows the person's open ones as `waitingOn`.
+Tick one off, edit it or delete it with the task endpoints, like any task. A conversation keeps up to 10, the next
+summary replaces the ones you did not touch, and another person's idea, advice or remark is still only audited.
+`GET /api/v1/info` lists `waiting-on` under `features`. Tasks from before this version appear after their conversation
+is summarized again (`POST /api/v1/conversations/{id}/enrich`).
 
 ## Notes
 
@@ -735,7 +747,7 @@ person wearing the pendant.
 they were last heard (`lastSeenAt`, the newest segment the [label rule](#transcription-endpoints) gives
 them; your own lines never count, and it is null when they were never heard), their `voices`, the newest
 10 conversations they spoke in (`{ id, title, startedAt }`), their newest 50 [facts](#facts-about-people)
-and the open tasks owed to them (newest 100). `hasVoiceprint` and `voiceprintSamples` say whether a
+the open tasks owed to them and, as `waitingOn`, the [open promises](#waiting-on) they made to you (newest 100 each). `hasVoiceprint` and `voiceprintSamples` say whether a
 [voiceprint](#voice-grouping) exists and how many segments it was made from; the voiceprint itself
 never leaves the database. `404` for an unknown person. The `list_people` and `get_person` [MCP tools](#mcp)
 read the same page, without the two voiceprint fields. `named` is `false` for a person known so far only by a [role](#roles).
@@ -1130,7 +1142,7 @@ through OAuth cannot connect.
 |---|---|---|
 | `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `tag?`, `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview, mediaShare, tags }], nextBefore }` |
 | `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts, tags }` |
-| `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `kind?` (`commitment`, the default, `idea` or `all`), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
+| `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `kind?` (`commitment`, the default, `idea`, `waiting_on` or `all`), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_notes` | `topic?`, `conversationId?`, `before?` (a note id), `limit?` (1 to 200, default 50) | `{ items: [Note], nextBefore }`, newest first (see [Notes](#notes)) |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
@@ -1256,7 +1268,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1273,7 +1285,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
 | GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
 | GET | `/api/v1/conversations/{id}/audio/index` | read | `{ durationMs, runs: [{ offsetMs, startedAt, endedAt }] }`: each stretch of continuous capture and where it starts in the stream; `404` as above |
-| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind }`; `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind }`; `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea`, `waiting_on` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
 | GET | `/api/v1/notes?topic=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a note is `{ id, conversationId, conversationTitle, conversationStartedAt, topic, points, createdAt }`; `topic` is a name (`400` for one that is none); `limit` defaults to 50, caps at 200 |
 | PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done?, personId? }`, `text` 1 to 200 characters, `personId` a person id or `null` (`404` for an unknown person); DELETE answers `204` |
 | GET, PATCH | `/api/v1/settings` | admin | GET: `{ items: [{ key, type, value, isSet, source, locked, default }] }`. PATCH body `{ values: { "<key>": value or null } }`, all or nothing, `null` restores the default; `400` for an unknown key or a bad value, `409` for a locked key or any API key |
@@ -1306,7 +1318,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId?, speechKind? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `speechKind` is `person`, `media`, `call` or `null` (clears your mark) on any line, yours included, see [Speech kind](#speech-kind); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
-| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named }`; `404` for an unknown person |
+| GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named, waitingOn: [Task] }`; `404` for an unknown person |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, role, named, personId, confidence, sameName, evidence: { segmentId, startedAt, text } }` (`sameName`: pending suggestions with the same name, any case, itself included), `target` being `speaker`, `label`, `group` (`groupId` is the voice group) or `person` (the voice of a person known only by a [role](#roles); `personId` is that person); `role` is a tag name or null, and `named` false means the role alone, `name` being its display form; see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named), creates the person known by a [role](#roles), or renames or merges the person of a `person` target; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/accept-by-name` `{ name }` | admin | Accepts every pending suggestion of that name (any case) for a voice, label or voice group as accept does, in one transaction, so the name is one person; role-only and `person` suggestions stay; `200` with `{ person, accepted, skipped }` (`skipped`: no longer applies, as a voice that belongs to someone else); `404` when none is pending; `400` for a missing or blank name; `409` when the pending ones disagree; see [People](#people) |

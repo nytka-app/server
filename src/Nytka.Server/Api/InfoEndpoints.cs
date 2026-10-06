@@ -31,6 +31,7 @@ public static class InfoEndpoints
     /// <c>POST /api/v1/conversations/{id}/speech</c>, <c>mediaShare</c> and <c>media=</c> on the conversation list.
     /// "context-ranges": the app may send <c>POST /api/v1/context/ranges</c> (docs/specs/speech-kind.md, Context from the phone).
     /// "task-kinds": a task has a <c>kind</c> (<c>commitment</c> or <c>idea</c>), <c>GET /api/v1/tasks</c> takes <c>kind=</c>, and <c>GET /api/v1/notes</c> exists (docs/specs/task-kinds.md).
+    /// "waiting-on": a task may have the kind <c>waiting_on</c> (what another person promised the wearer), <c>kind=waiting_on</c> lists them and the person page has <c>waitingOn</c> (docs/specs/task-kinds.md, Waiting on).
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -46,6 +47,7 @@ public static class InfoEndpoints
         features.Add("speech-kind");
         features.Add("context-ranges");
         features.Add("task-kinds");
+        features.Add("waiting-on");
 
         return features;
     }

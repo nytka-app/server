@@ -14,7 +14,7 @@ public sealed record McpPersonList(IReadOnlyList<PersonSummary> Items);
 public sealed record McpPerson(
     Guid Id, string Name, string? Note, DateTime CreatedAt, DateTime? LastSeenAt, string[] Voices,
     IReadOnlyList<PersonConversation> Conversations, IReadOnlyList<PersonFactRow> Facts, IReadOnlyList<TaskRow> OpenTasks,
-    IReadOnlyList<string> Tags, bool Named);
+    IReadOnlyList<string> Tags, bool Named, IReadOnlyList<TaskRow> WaitingOn);
 
 /// <summary>The <c>list_people</c> and <c>get_person</c> tools (docs/specs/people.md, API): what REST returns, no voiceprint field.</summary>
 [McpServerToolType]
@@ -39,7 +39,7 @@ public sealed class PeopleTools(PeopleStore people)
     }
 
     [McpServerTool(Name = "get_person", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(McpPerson))]
-    [Description("Reads one person's page: the note, when they were last heard, their newest conversations and facts, and the open tasks owed to them. Give the id or the name, not both.")]
+    [Description("Reads one person's page: the note, when they were last heard, their newest conversations and facts, the open tasks owed to them and what they owe the wearer (waitingOn). Give the id or the name, not both.")]
     public async Task<CallToolResult> GetPersonAsync(
         [Description("The person's id (UUID).")] string? id = null,
         [Description("The person's name, in any case.")] string? name = null,
@@ -69,7 +69,7 @@ public sealed class PeopleTools(PeopleStore people)
 
         return Ok(new McpPerson(
             view.Id, view.Name, view.Note, view.CreatedAt, view.LastSeenAt, view.Voices, view.Conversations, view.Facts, view.OpenTasks, view.Tags,
-            view.Named));
+            view.Named, view.WaitingOn));
     }
 
     private static CallToolResult Ok<T>(T value)

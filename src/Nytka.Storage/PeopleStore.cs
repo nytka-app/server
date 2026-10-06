@@ -64,7 +64,7 @@ public sealed record PersonConversation(Guid Id, string? Title, DateTime Started
 public sealed record PersonView(
     Guid Id, string Name, string? Note, DateTime CreatedAt, DateTime? LastSeenAt, string[] Voices, bool HasVoiceprint,
     int VoiceprintSamples, IReadOnlyList<PersonConversation> Conversations, IReadOnlyList<PersonFactRow> Facts,
-    IReadOnlyList<TaskRow> OpenTasks, IReadOnlyList<string> Tags, bool Named);
+    IReadOnlyList<TaskRow> OpenTasks, IReadOnlyList<string> Tags, bool Named, IReadOnlyList<TaskRow> WaitingOn);
 
 /// <summary>A person for a list: when they were last heard and how many live facts they have.</summary>
 public sealed record PersonSummary(Guid Id, string Name, DateTime? LastSeenAt, int Facts, bool Named)
@@ -200,7 +200,8 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
         return new PersonView(
             header.Id, header.Name, header.Note, header.CreatedAt, header.LastSeenAt, voices, header.VoiceprintSamples is not null,
             header.VoiceprintSamples ?? 0, conversations, page?.Items ?? [], await tasks.OpenForPersonAsync(id, ViewTasks, ct),
-            (await TagStore.OfPeopleAsync(connection, null, [id], ct)).GetValueOrDefault(id) ?? [], header.Named);
+            (await TagStore.OfPeopleAsync(connection, null, [id], ct)).GetValueOrDefault(id) ?? [], header.Named,
+            await tasks.OpenWaitingOnForPersonAsync(id, ViewTasks, ct));
     }
 
     /// <summary>

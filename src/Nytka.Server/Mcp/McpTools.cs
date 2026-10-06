@@ -106,7 +106,7 @@ public sealed class McpTools(McpQueries queries)
         [Description("open (the default) or done.")] string? status = null,
         [Description("Only tasks of this conversation (UUID).")] string? conversationId = null,
         [Description("A task id (UUID): only tasks older than it.")] string? before = null,
-        [Description("commitment (the default: what the wearer committed to do), idea (floated, nobody took it on) or all.")] string? kind = null,
+        [Description("commitment (the default: what the wearer committed to do), idea (floated, nobody took it on), waiting_on (what another person promised the wearer; personName is who owes it) or all.")] string? kind = null,
         [Description("How many to return, 1 to 200; the default is 50.")] int limit = 50,
         CancellationToken ct = default)
     {
@@ -117,9 +117,9 @@ public sealed class McpTools(McpQueries queries)
             _ => throw new McpProtocolException("status must be open or done.", McpErrorCode.InvalidParams),
         };
 
-        if (kind is not (null or TaskKinds.Commitment or TaskKinds.Idea or TaskEndpoints.AllKinds))
+        if (kind is not (null or TaskKinds.Commitment or TaskKinds.Idea or TaskKinds.WaitingOn or TaskEndpoints.AllKinds))
         {
-            throw new McpProtocolException("kind must be commitment, idea or all.", McpErrorCode.InvalidParams);
+            throw new McpProtocolException("kind must be commitment, idea, waiting_on or all.", McpErrorCode.InvalidParams);
         }
 
         var take = Math.Clamp(limit, 1, 200);

@@ -157,13 +157,31 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task Waiting_on_tasks_stay_off_the_default_list_and_show_for_their_kind_and_all()
+    {
+        var conversation = await Seed(Talk);
+        await SeedTask(conversation, "call Ben", minutesAgo: 3);
+        await SeedTask(conversation, "Anna sends the contract", minutesAgo: 2, kind: "waiting_on");
+        await SeedTask(conversation, "build the app", minutesAgo: 1, kind: "idea");
+
+        var byDefault = await Get("tasks");
+        var waiting = await Get("tasks?kind=waiting_on");
+        var all = await Get("tasks?kind=all");
+
+        Assert.Equal(["call Ben"], Texts(byDefault));
+        Assert.Equal(["Anna sends the contract"], Texts(waiting));
+        Assert.Equal(["waiting_on"], waiting.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("kind").GetString()));
+        Assert.Equal(["build the app", "Anna sends the contract", "call Ben"], Texts(all));
+    }
+
+    [Fact]
     public async Task An_unknown_kind_is_400()
     {
         var response = await Client.GetAsync("/api/v1/tasks?kind=advice");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("Must be commitment, idea or all.", problem.GetProperty("errors").GetProperty("kind")[0].GetString());
+        Assert.Equal("Must be commitment, idea, waiting_on or all.", problem.GetProperty("errors").GetProperty("kind")[0].GetString());
     }
 
     [Fact]

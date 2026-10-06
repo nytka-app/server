@@ -38,8 +38,11 @@ public static class TaskKindFixture
         new("Look up the conversation in Slack", TaskKinds.Commitment), // task list
         new("Send Anna the contract by Friday", TaskKinds.Commitment, Person: "Anna"),
 
-        // What someone else took on: not the wearer's task.
-        new("Ben will book the cabin for the weekend", TaskKinds.Commitment, TaskKinds.Other),
+        // What someone else promised the wearer: waited on, not the wearer's task.
+        new("Ben will book the cabin for the weekend", TaskKinds.Commitment, TaskKinds.Other, Person: "Anna"),
+
+        // What someone else floated for themselves: dropped.
+        new("Ben might try the new climbing gym", TaskKinds.Idea, TaskKinds.Other),
 
         // Floated, taken on by nobody.
         new("Build a small app that sorts the day's photos", TaskKinds.Idea),
