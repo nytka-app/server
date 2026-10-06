@@ -36,6 +36,10 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
                    ('018f0000-0000-7000-8000-0000000000a3', @b, 'Open two', 'open two', false, null, null, @start, @start);
             insert into tasks (id, conversation_id, text, fingerprint, deleted_at, created_at, updated_at)
             values ('018f0000-0000-7000-8000-0000000000a4', @a, 'Deleted', 'deleted', @start, @start, @start);
+            insert into tasks (id, conversation_id, text, fingerprint, kind, created_at, updated_at)
+            values ('018f0000-0000-7000-8000-0000000000a5', @a, 'An idea', 'an idea', 'idea', @start, @start);
+            insert into notes (id, conversation_id, topic, points, created_at, updated_at)
+            values ('018f0000-0000-7000-8000-0000000000c1', @a, 'table-tennis', array['Loose grip', 'Bend the knees'], @start, @start);
             """,
             new { a = Conversation, b = Other, start = Start });
     }
@@ -65,7 +69,7 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
 
         var tools = (await client.ListToolsAsync()).ToDictionary(t => t.Name);
 
-        foreach (var name in new[] { "list_conversations", "get_conversation", "list_tasks" })
+        foreach (var name in new[] { "list_conversations", "get_conversation", "list_tasks", "list_notes" })
         {
             var tool = Assert.Contains(name, tools);
             Assert.True(tool.ProtocolTool.Annotations?.ReadOnlyHint);
@@ -331,6 +335,49 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("Open two", Assert.Single(inOther.GetProperty("items").EnumerateArray()).GetProperty("text").GetString());
         Assert.Equal("Open two", page.GetProperty("items")[0].GetProperty("text").GetString());
         Assert.Equal("Open one", next.GetProperty("items")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task List_tasks_lists_ideas_or_every_kind_when_asked_and_commitments_otherwise()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var ideas = Structured(await client.CallToolAsync("list_tasks", new Dictionary<string, object?> { ["kind"] = "idea" }));
+        var all = Structured(await client.CallToolAsync("list_tasks", new Dictionary<string, object?> { ["kind"] = "all" }));
+        var byDefault = Structured(await client.CallToolAsync("list_tasks"));
+
+        var idea = Assert.Single(ideas.GetProperty("items").EnumerateArray());
+        Assert.Equal("An idea", idea.GetProperty("text").GetString());
+        Assert.Equal("idea", idea.GetProperty("kind").GetString());
+        Assert.Equal(["An idea", "Open two", "Open one"], all.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("text").GetString()));
+        Assert.Equal(["Open two", "Open one"], byDefault.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("text").GetString()));
+        Assert.Equal(["commitment", "commitment"], byDefault.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("kind").GetString()));
+    }
+
+    [Fact]
+    public async Task List_tasks_with_a_bad_kind_is_invalid_params()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var error = await Assert.ThrowsAsync<McpProtocolException>(() =>
+            client.CallToolAsync("list_tasks", new Dictionary<string, object?> { ["kind"] = "advice" }).AsTask());
+
+        Assert.Equal(McpErrorCode.InvalidParams, error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task List_notes_lists_the_advice_by_topic()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var all = Structured(await client.CallToolAsync("list_notes"));
+        var none = Structured(await client.CallToolAsync("list_notes", new Dictionary<string, object?> { ["topic"] = "cooking" }));
+
+        var note = Assert.Single(all.GetProperty("items").EnumerateArray());
+        Assert.Equal("table-tennis", note.GetProperty("topic").GetString());
+        Assert.Equal(["Loose grip", "Bend the knees"], note.GetProperty("points").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(Conversation, note.GetProperty("conversationId").GetGuid());
+        Assert.Empty(none.GetProperty("items").EnumerateArray());
     }
 
     [Fact]

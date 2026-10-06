@@ -641,8 +641,9 @@ JSON object and puts the schema in the prompt.
 Nothing is queued while the base URL or the model is empty, and an open conversation is never
 summarized. At most 100 conversations are queued a minute. A conversation under 20 words is `skipped` ("Too short to summarize."). A run writes a
 title (up to 80 characters), a summary (up to 1,200) and up to ten tasks (200 characters each), in
-`llm.outputLanguage`, and asks for tasks only the wearer has to do, and for up to three [proposed tags](#tags). Each task may name the person it
-is owed to, taken from the people you named in that conversation (see [Tasks](#tasks)). A transcript longer than
+`llm.outputLanguage`, and for up to three [proposed tags](#tags). In the same call the model labels every candidate task as a
+commitment, an idea, advice or noise, and only the wearer's commitments become tasks (see [Tasks](#tasks)). Each task may name the person it
+is owed to, taken from the people you named in that conversation. A transcript longer than
 `Nytka__Llm__MaxInputChars` is cut at line boundaries into windows; each is answered on its own and
 a last request merges them. More than six windows fail the run.
 
@@ -667,7 +668,7 @@ never hold transcript text or a response body.
 
 ## Tasks
 
-A task is something the wearer has to do, taken from a summary. Its text carries its deadline: there
+A task is something the wearer committed to do, taken from a summary. Its text carries its deadline: there
 are no due dates and no hand-made tasks. Tick, reopen, edit or delete a task in the Tasks tab, or with
 `PATCH` and `DELETE` on `/api/v1/tasks/{id}`. A later summary never adds a deleted task again with the same wording, and
 never removes or rewrites one you touched. `GET /api/v1/tasks` lists open or done tasks, newest
@@ -679,6 +680,35 @@ never counts), matching the name ignoring case; any other name leaves it empty. 
 changes it. Set, change or clear it with `PATCH` and `personId` (`null` clears it; an unknown person
 is `404`); that counts as touching the task. Deleting the person clears it. What other people owe
 the wearer is not a task.
+
+**Kinds.** The summary labels each candidate it finds, in the same model call, with a kind and an owner
+([docs/specs/task-kinds.md](docs/specs/task-kinds.md)):
+
+| Kind | What it is | What Nytka keeps |
+|---|---|---|
+| `commitment` | the wearer said they will do it, or was asked and did not turn it down | a task |
+| `idea` | floated, and nobody took it on | a task row of kind `idea`, hidden from the default list |
+| `advice` | a tip or lesson, such as a coach's | a [note](#notes) per conversation and topic |
+| `noise` | a remark, a vague or garbled line, anything from media | nothing; the candidate goes to an audit table |
+
+The owner is `wearer` or `other`; an item owned by someone else is never kept, so another person's promise is
+not your task. `GET /api/v1/tasks` and the MCP `list_tasks` return commitments unless `kind` is `idea` or `all`,
+and a task carries its `kind`. A later summary may relabel an untouched task: a commitment that turns out to be
+advice or noise is removed, and an idea that becomes a commitment is announced as `task.created`. The audit table
+`dropped_candidates` (`conversation_id`, `kind`, `owner`, `text`, `created_at`, replaced on every summary) holds what was
+dropped, so you can read the noise rate with SQL; it has no API.
+
+Tasks that exist from before this version stay commitments until their conversation is summarized again
+(`POST /api/v1/conversations/{id}/enrich`); that run removes the ones the model now calls noise or advice, except tasks
+you ticked, edited or deleted.
+
+## Notes
+
+A note is the advice of one conversation on one topic: the tips of a coaching session about table tennis are the
+points of one note, `table-tennis`, not nine tasks. A topic is a tag-like name of up to 32 characters; advice with no
+topic goes to `general`. A conversation has up to five notes of up to ten points each, and the next summary of the
+conversation replaces them. `GET /api/v1/notes` and the MCP `list_notes` list them; deleting the conversation deletes its
+notes.
 
 ## Memories
 
@@ -780,7 +810,7 @@ Every line has a `type` first. The order is `header` (`format: "nytka-export"`, 
 `serverVersion`), `setting` (`key`, `value`), `person` (`id`, `name`, `note`, `voiceprint` as true or false, `voices`, `tags`, `named`, `createdAt`),
 `conversation` (`id`, `source`, `externalId`, `startedAt`, `endedAt`, `status`, `title`, `titleEdited`,
 `summary`, `tags`, and `segments`: `{ startedAt, endedAt, text, speaker, speakerId, isUser, person, speechKind, speechMarked }`), `task`
-(`id`, `conversationId`, `personId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`), `memory` (`id`, `text`,
+(`id`, `conversationId`, `personId`, `text`, `done`, `doneAt`, `createdAt`, `updatedAt`, `kind`), `memory` (`id`, `text`,
 `source`, `conversationId`, `createdAt`, `updatedAt`), `person_fact` (`id`, `personId`, `text`, `source`,
 `basis`, `conversationId`, `edited`, `createdAt`, `updatedAt`), `bookmark` (`id`, `at`, `note`, `source`,
 `createdAt`), `digest` (`id`, `localDate`, `headline`, `overview`, `highlights`, `decisions`,
@@ -1015,7 +1045,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | Event | Sent when | `data` |
 |---|---|---|
 | `conversation.ready` | A summary was stored, the first one and every re-run | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text }], tags }` |
-| `task.created` | A summary produced a new task | the task, as `GET /api/v1/tasks` shows it, without `personId` and `personName` |
+| `task.created` | A summary produced a new commitment | the task, as `GET /api/v1/tasks` shows it, without `personId` and `personName` |
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
@@ -1100,7 +1130,8 @@ through OAuth cannot connect.
 |---|---|---|
 | `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `tag?`, `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview, mediaShare, tags }], nextBefore }` |
 | `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts, tags }` |
-| `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
+| `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `kind?` (`commitment`, the default, `idea` or `all`), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
+| `list_notes` | `topic?`, `conversationId?`, `before?` (a note id), `limit?` (1 to 200, default 50) | `{ items: [Note], nextBefore }`, newest first (see [Notes](#notes)) |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `list_digests` | `before?` (a date, `yyyy-MM-dd`), `limit?` (1 to 100, default 30) | `{ items: [{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }], nextBefore }` |
@@ -1225,7 +1256,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`) `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1242,7 +1273,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
 | GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
 | GET | `/api/v1/conversations/{id}/audio/index` | read | `{ durationMs, runs: [{ offsetMs, startedAt, endedAt }] }`: each stretch of continuous capture and where it starts in the stream; `404` as above |
-| GET | `/api/v1/tasks?status=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName }`; `status` is `open` (default) or `done`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind }`; `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/notes?topic=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a note is `{ id, conversationId, conversationTitle, conversationStartedAt, topic, points, createdAt }`; `topic` is a name (`400` for one that is none); `limit` defaults to 50, caps at 200 |
 | PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done?, personId? }`, `text` 1 to 200 characters, `personId` a person id or `null` (`404` for an unknown person); DELETE answers `204` |
 | GET, PATCH | `/api/v1/settings` | admin | GET: `{ items: [{ key, type, value, isSet, source, locked, default }] }`. PATCH body `{ values: { "<key>": value or null } }`, all or nothing, `null` restores the default; `400` for an unknown key or a bad value, `409` for a locked key or any API key |
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |

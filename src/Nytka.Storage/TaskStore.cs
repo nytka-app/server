@@ -6,13 +6,13 @@ namespace Nytka.Storage;
 /// <summary>A task with the conversation it came from, as the API shows it.</summary>
 public sealed record TaskRow(
     Guid Id, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, string Text,
-    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName);
+    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind);
 
 /// <summary>
-/// A task the model returned: its text as stored, the fingerprint the text had when it was created and the person it is
-/// owed to, if the model named a known one.
+/// A task the model returned: its text as stored, the fingerprint the text had when it was created, the person it is
+/// owed to, if the model named a known one, and its <see cref="TaskKinds">kind</see> (a commitment or an idea).
 /// </summary>
-public sealed record AiTask(string Text, string Fingerprint, Guid? PersonId = null);
+public sealed record AiTask(string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment);
 
 /// <summary>A user's change of a task's person: <see langword="null"/> clears it.</summary>
 public sealed record PersonChange(Guid? PersonId);
@@ -25,21 +25,24 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
 {
     private sealed record Current(string Text, bool Done, Guid? PersonId);
 
-    private sealed record Existing(Guid Id, string Fingerprint, bool Done, bool Edited, DateTime? DeletedAt);
+    private sealed record Existing(Guid Id, string Fingerprint, bool Done, bool Edited, DateTime? DeletedAt, string Kind);
 
     private const string Select =
         """
         select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
-               t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName
+               t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind
         from tasks t
         join conversations c on c.id = t.conversation_id
         left join people p on p.id = t.person_id
         """;
 
-    /// <summary>Newest first, by id. Deleted tasks never show. <paramref name="before"/> is a task id.</summary>
+    /// <summary>
+    /// Newest first, by id. Deleted tasks never show. <paramref name="before"/> is a task id; <paramref name="kind"/> is a
+    /// stored kind, or null for every kind.
+    /// </summary>
     public async Task<IReadOnlyList<TaskRow>> ListAsync(
-        bool done, Guid? conversationId, Guid? before, int limit, CancellationToken ct)
+        bool done, Guid? conversationId, Guid? before, string? kind, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
@@ -49,29 +52,30 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             where t.deleted_at is null and t.done = @done
               and (cast(@conversationId as uuid) is null or t.conversation_id = @conversationId)
               and (cast(@before as uuid) is null or t.id < @before)
+              and (cast(@kind as text) is null or t.kind = @kind)
             order by t.id desc
             limit @limit
             """,
-            new { done, conversationId, before, limit }, cancellationToken: ct));
+            new { done, conversationId, before, kind, limit }, cancellationToken: ct));
         return rows.ToList();
     }
 
-    /// <summary>The person's open tasks, newest first, deleted ones left out.</summary>
+    /// <summary>The person's open commitments, newest first, deleted ones left out.</summary>
     public async Task<IReadOnlyList<TaskRow>> OpenForPersonAsync(Guid personId, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
-            Select + "\nwhere t.person_id = @personId and t.done = false and t.deleted_at is null order by t.id desc limit @limit",
+            Select + "\nwhere t.person_id = @personId and t.done = false and t.deleted_at is null and t.kind = 'commitment' order by t.id desc limit @limit",
             new { personId, limit }, cancellationToken: ct));
         return rows.ToList();
     }
 
-    /// <summary>A conversation's tasks in creation order, deleted ones left out.</summary>
+    /// <summary>A conversation's commitments in creation order, deleted ones left out.</summary>
     public async Task<IReadOnlyList<TaskRow>> ForConversationAsync(Guid conversationId, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
-            Select + "\nwhere t.conversation_id = @conversationId and t.deleted_at is null order by t.id",
+            Select + "\nwhere t.conversation_id = @conversationId and t.deleted_at is null and t.kind = 'commitment' order by t.id",
             new { conversationId }, cancellationToken: ct));
         return rows.ToList();
     }
@@ -136,9 +140,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Brings a conversation's tasks in line with what the model returned, inside the caller's
-    /// transaction. A returned fingerprint that has a row, in any state, changes nothing; a new one
+    /// transaction. A returned fingerprint that has a row, in any state, adds no row; a new one
     /// inserts a task; an untouched row (open, not edited, not deleted) the model no longer returns
-    /// is deleted. Returns the ids of the inserted tasks.
+    /// is deleted. An untouched row the model now gives another kind takes that kind. Returns the ids of the
+    /// commitments that are new: inserted, or promoted from an idea. An idea raises no <c>task.created</c>.
     /// <para>
     /// A task the model words differently (a new fingerprint) is inserted as a new task and publishes
     /// <c>task.created</c> again, while its old row is deleted or, if the user touched it, stays. The
@@ -152,7 +157,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         var existing = (await connection.QueryAsync<Existing>(
             new CommandDefinition(
                 """
-                select id as Id, fingerprint as Fingerprint, done as Done, edited as Edited, deleted_at as DeletedAt
+                select id as Id, fingerprint as Fingerprint, done as Done, edited as Edited, deleted_at as DeletedAt, kind as Kind
                 from tasks where conversation_id = @conversationId for update
                 """,
                 new { conversationId }, transaction, cancellationToken: ct))).ToList();
@@ -170,25 +175,41 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 "delete from tasks where id = any(@stale)", new { stale }, transaction, cancellationToken: ct));
         }
 
-        var inserted = new List<Guid>();
+        var created = new List<Guid>();
+        var inserted = 0;
         foreach (var task in returned)
         {
             if (!known.Add(task.Fingerprint))
             {
+                var row = existing.FirstOrDefault(t => t.Fingerprint == task.Fingerprint);
+                if (row is { Done: false, Edited: false, DeletedAt: null } && row.Kind != task.Kind)
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(
+                        "update tasks set kind = @Kind, updated_at = @now where id = @Id",
+                        new { row.Id, task.Kind, now }, transaction, cancellationToken: ct));
+                    if (task.Kind == TaskKinds.Commitment)
+                    {
+                        created.Add(row.Id);
+                    }
+                }
+
                 continue;
             }
 
             // A millisecond apart, so ids keep the order the model gave the tasks in.
-            var id = Guid.CreateVersion7(now.AddMilliseconds(inserted.Count));
+            var id = Guid.CreateVersion7(now.AddMilliseconds(inserted++));
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into tasks (id, conversation_id, text, fingerprint, person_id, created_at, updated_at)
-                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @now, @now)
+                insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, created_at, updated_at)
+                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @now, @now)
                 """,
-                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, now }, transaction, cancellationToken: ct));
-            inserted.Add(id);
+                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, now }, transaction, cancellationToken: ct));
+            if (task.Kind == TaskKinds.Commitment)
+            {
+                created.Add(id);
+            }
         }
 
-        return inserted;
+        return created;
     }
 }

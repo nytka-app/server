@@ -21,7 +21,7 @@ public sealed class ReadScopeTests(PostgresFixture db) : AiTestBase(db)
         var task = await Db.ScalarAsync<Guid>("select id from tasks limit 1");
         var client = Server.CreateClientWithScope("read");
 
-        foreach (var path in new[] { "conversations", $"conversations/{id}", "tasks", $"tasks?conversationId={id}" })
+        foreach (var path in new[] { "conversations", $"conversations/{id}", "tasks", $"tasks?conversationId={id}", "notes" })
         {
             var response = await client.GetAsync($"/api/v1/{path}");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);

@@ -12,17 +12,17 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
     private HttpClient Client => Server.CreateAuthorizedClient();
 
     /// <summary>A task in a conversation, created <paramref name="minutesAgo"/> minutes before now; ids follow creation order.</summary>
-    private async Task<Guid> SeedTask(Guid conversationId, string text, int minutesAgo = 0, bool done = false, bool deleted = false)
+    private async Task<Guid> SeedTask(Guid conversationId, string text, int minutesAgo = 0, bool done = false, bool deleted = false, string kind = "commitment")
     {
         var at = Now.AddMinutes(-minutesAgo);
         var id = Guid.CreateVersion7(at);
         await Db.ExecuteAsync(
             """
-            insert into tasks (id, conversation_id, text, fingerprint, done, done_at, deleted_at, created_at, updated_at)
+            insert into tasks (id, conversation_id, text, fingerprint, done, done_at, deleted_at, kind, created_at, updated_at)
             values (@id, @conversationId, @text, @text, @done, case when @done then @at end,
-                    case when @deleted then @at end, @at, @at)
+                    case when @deleted then @at end, @kind, @at, @at)
             """,
-            new { id, conversationId, text, done, deleted, at });
+            new { id, conversationId, text, done, deleted, kind, at });
         return id;
     }
 
@@ -53,7 +53,7 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(JsonValueKind.String, task.GetProperty("createdAt").ValueKind);
         Assert.Equal(JsonValueKind.Null, page.GetProperty("nextBefore").ValueKind);
         Assert.Equal(
-            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "text", "done", "doneAt", "createdAt", "personId", "personName"],
+            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "text", "done", "doneAt", "createdAt", "personId", "personName", "kind"],
             task.EnumerateObject().Select(p => p.Name));
     }
 
@@ -134,6 +134,36 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
 
         Assert.Equal(50, (await Get("tasks")).GetProperty("items").GetArrayLength());
         Assert.Equal(200, (await Get("tasks?limit=500")).GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Lists_commitments_by_default_and_ideas_or_every_kind_on_request()
+    {
+        var conversation = await Seed(Talk);
+        await SeedTask(conversation, "call Ben", minutesAgo: 2);
+        await SeedTask(conversation, "build the app", minutesAgo: 1, kind: "idea");
+
+        var byDefault = await Get("tasks");
+        var commitments = await Get("tasks?kind=commitment");
+        var ideas = await Get("tasks?kind=idea");
+        var all = await Get("tasks?kind=all");
+
+        Assert.Equal(["call Ben"], Texts(byDefault));
+        Assert.Equal(["call Ben"], Texts(commitments));
+        Assert.Equal(["build the app"], Texts(ideas));
+        Assert.Equal(["idea"], ideas.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("kind").GetString()));
+        Assert.Equal(["build the app", "call Ben"], Texts(all));
+        Assert.Equal(["idea", "commitment"], all.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("kind").GetString()));
+    }
+
+    [Fact]
+    public async Task An_unknown_kind_is_400()
+    {
+        var response = await Client.GetAsync("/api/v1/tasks?kind=advice");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Must be commitment, idea or all.", problem.GetProperty("errors").GetProperty("kind")[0].GetString());
     }
 
     [Fact]

@@ -46,7 +46,7 @@ as the download.
 | `setting` | `key`, `value` (a string, as an environment variable would carry it) |
 | `person` | `id`, `name`, `note` (your own note on the person, else null), `voiceprint` (true when a voiceprint of this person is kept; the vector itself is never exported), `voices` (the provider's speaker ids named after this person), `tags` (the tags on the person, sorted, `[]` when none), `named` (false for a person known so far only by a role: `name` is then the role's display form, as "Repairman"), `createdAt` |
 | `conversation` | `id`, `source` (`nytka` or `omi`), `externalId` (the Omi id for `omi`, else null), `startedAt`, `endedAt`, `status` (`open` or `closed`), `title` (the one the app shows: the user's, else the generated one, else null), `titleEdited` (true when `title` is the user's), `summary`, `tags` (the tags on the conversation, sorted, `[]` when none), `segments` |
-| `task` | `id`, `conversationId`, `personId` (the person it is owed to or by, else null), `text`, `done`, `doneAt`, `createdAt`, `updatedAt` |
+| `task` | `id`, `conversationId`, `personId` (the person it is owed to or by, else null), `text`, `done`, `doneAt`, `createdAt`, `updatedAt`, `kind` (`commitment` or `idea`) |
 | `memory` | `id`, `text`, `source` (`ai`, `user` or `omi`), `conversationId` (null for one added by hand), `createdAt`, `updatedAt` |
 | `person_fact` | `id`, `personId`, `text`, `source` (`ai` or `user`), `basis` (`said`, `about` or `mentioned` for `ai`, null for `user`), `conversationId` (null for one added by hand), `edited`, `createdAt`, `updatedAt` |
 | `bookmark` | `id`, `at`, `note`, `source` (`pendant` or `app`), `createdAt` |

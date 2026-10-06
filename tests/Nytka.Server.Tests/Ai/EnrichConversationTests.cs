@@ -114,7 +114,7 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         await TickAndRun();
 
         var request = Assert.Single(Llm.Requests);
-        Assert.Contains("Return no tasks", request.System, StringComparison.Ordinal);
+        Assert.Contains("Return no tasks and no other items", request.System, StringComparison.Ordinal);
         var ai = await Ai(id);
         Assert.Equal("done", ai.AiStatus);
         Assert.Equal("A short chat.", ai.AiSummary);
@@ -153,13 +153,15 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
     [Theory]
     [InlineData("not json at all")]
     [InlineData("""{"title":"t","summary":"s"}""")]
-    [InlineData("""{"title":"t","summary":"s","tasks":[]}""")] // the shape before tags: tags is required
-    [InlineData("""{"title":"t","summary":"s","tasks":[],"tags":"work"}""")]
-    [InlineData("""{"title":"t","summary":"s","tasks":[],"tags":[null]}""")]
-    [InlineData("""{"title":"t","summary":"s","tasks":[],"tags":[],"extra":1}""")]
-    [InlineData("""{"title":"t","summary":3,"tasks":[],"tags":[]}""")]
-    [InlineData("""{"title":"t","summary":"s","tasks":["Call Ben"],"tags":[]}""")] // the old shape: strings
-    [InlineData("""{"title":"t","summary":"s","tasks":[{"text":"Call Ben"}],"tags":[]}""")] // person is required
+    [InlineData("""{"title":"t","summary":"s","items":[]}""")] // the shape before tags: tags is required
+    [InlineData("""{"title":"t","summary":"s","items":[],"tags":"work"}""")]
+    [InlineData("""{"title":"t","summary":"s","items":[],"tags":[null]}""")]
+    [InlineData("""{"title":"t","summary":"s","items":[],"tags":[],"extra":1}""")]
+    [InlineData("""{"title":"t","summary":3,"items":[],"tags":[]}""")]
+    [InlineData("""{"title":"t","summary":"s","items":["Call Ben"],"tags":[]}""")] // the old shape: strings
+    [InlineData("""{"title":"t","summary":"s","tasks":[{"text":"Call Ben","person":null}],"tags":[]}""")] // the shape before kinds: items is required
+    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","person":null}],"tags":[]}""")] // topic is required
+    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","topic":null}],"tags":[]}""")] // person is required
     public async Task A_broken_answer_fails_the_attempt(string answer)
     {
         var id = await Seed(Talk);

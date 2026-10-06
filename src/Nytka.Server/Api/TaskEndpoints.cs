@@ -22,20 +22,43 @@ public static class TaskEndpoints
         return api;
     }
 
+    /// <summary>The <c>kind</c> value that lists every kind.</summary>
+    public const string AllKinds = "all";
+
     public sealed record TaskPage(IReadOnlyList<TaskRow> Items, Guid? NextBefore);
 
+    /// <summary><c>kind</c> is <c>commitment</c> (the default), <c>idea</c> or <c>all</c>.</summary>
     private static async Task<IResult> ListAsync(
-        string? status, Guid? conversationId, Guid? before, int? limit, TaskStore tasks, CancellationToken ct)
+        string? status, Guid? conversationId, Guid? before, string? kind, int? limit, TaskStore tasks, CancellationToken ct)
     {
+        var errors = new Dictionary<string, string[]>();
         if (status is not (null or "open" or "done"))
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["status"] = ["Must be open or done."] });
+            errors["status"] = ["Must be open or done."];
+        }
+
+        if (kind is not (null or TaskKinds.Commitment or TaskKinds.Idea or AllKinds))
+        {
+            errors["kind"] = ["Must be commitment, idea or all."];
+        }
+
+        if (errors.Count > 0)
+        {
+            return Results.ValidationProblem(errors);
         }
 
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
-        var items = await tasks.ListAsync(status == "done", conversationId, before, take, ct);
+        var items = await tasks.ListAsync(status == "done", conversationId, before, StoredKind(kind), take, ct);
         return Results.Ok(new TaskPage(items, items.Count == take ? items[^1].Id : null));
     }
+
+    /// <summary>The kind to filter by: the commitment when none is given, null (every kind) for <c>all</c>.</summary>
+    public static string? StoredKind(string? kind) => kind switch
+    {
+        null => TaskKinds.Commitment,
+        AllKinds => null,
+        _ => kind,
+    };
 
     /// <summary>Body <c>{ text?, done?, personId? }</c>; a null <c>personId</c> clears the person. Read by hand, so a field of the wrong type is a 400 in every environment.</summary>
     private static async Task<IResult> PatchAsync(

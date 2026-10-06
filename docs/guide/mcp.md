@@ -1,6 +1,6 @@
 ---
 title: "MCP reference"
-description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs and all eleven read-only tools."
+description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs and all twelve read-only tools."
 order: 4
 section: "Reference"
 ---
@@ -66,7 +66,7 @@ way. Behind a reverse proxy, pass `/mcp` and that header through unchanged.
 
 ## Tools
 
-All eleven tools are read-only (`ReadOnly = true` in the source), declare an output schema and
+All twelve tools are read-only (`ReadOnly = true` in the source), declare an output schema and
 return structured content plus JSON text. The names below match the `McpServerTool` attributes in
 `src/Nytka.Server/Mcp/`.
 
@@ -74,7 +74,8 @@ return structured content plus JSON text. The names below match the `McpServerTo
 |---|---|
 | `list_conversations` | `since?`, `before?`, `tag?`, `limit?` (1 to 50, 20) |
 | `get_conversation` | `id`, `transcript?`, `part?` |
-| `list_tasks` | `status?`, `conversationId?`, `before?`, `limit?` (1 to 200, 50) |
+| `list_tasks` | `status?`, `conversationId?`, `before?`, `kind?` (`commitment` by default, `idea`, `all`), `limit?` (1 to 200, 50) |
+| `list_notes` | `topic?`, `conversationId?`, `before?`, `limit?` (1 to 200, 50) |
 | `list_memories` | `before?`, `limit?` (1 to 200, 50) |
 | `list_bookmarks` | `before?`, `beforeId?`, `limit?` (1 to 100, 30) |
 | `list_digests` | `before?`, `limit?` (1 to 100, 30) |

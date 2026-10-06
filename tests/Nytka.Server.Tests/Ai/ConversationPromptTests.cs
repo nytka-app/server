@@ -11,13 +11,15 @@ public class ConversationPromptTests
         var schema = JsonSerializer.Deserialize<JsonElement>(ConversationPrompt.Schema);
 
         Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
-        Assert.Equal(["title", "summary", "tasks", "tags"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
-        Assert.Equal(["title", "summary", "tags", "tasks"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["title", "summary", "items", "tags"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["title", "summary", "tags", "items"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
         Assert.Equal("string", schema.GetProperty("properties").GetProperty("tags").GetProperty("items").GetProperty("type").GetString());
-        var item = schema.GetProperty("properties").GetProperty("tasks").GetProperty("items");
+        var item = schema.GetProperty("properties").GetProperty("items").GetProperty("items");
         Assert.False(item.GetProperty("additionalProperties").GetBoolean());
-        Assert.Equal(["text", "person"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
-        Assert.Equal(["text", "person"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["text", "kind", "owner", "person", "topic"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["text", "kind", "owner", "person", "topic"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["commitment", "idea", "advice", "noise"], item.GetProperty("properties").GetProperty("kind").GetProperty("enum").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["wearer", "other"], item.GetProperty("properties").GetProperty("owner").GetProperty("enum").EnumerateArray().Select(p => p.GetString()));
     }
 
     [Fact]
@@ -125,7 +127,7 @@ public class ConversationPromptTests
         var system = ConversationPrompt.System("auto", brief: true);
 
         Assert.Contains("summary of one sentence", system, StringComparison.Ordinal);
-        Assert.Contains("Return no tasks", system, StringComparison.Ordinal);
+        Assert.Contains("Return no tasks and no other items", system, StringComparison.Ordinal);
         Assert.DoesNotContain("A task is", system, StringComparison.Ordinal);
     }
 

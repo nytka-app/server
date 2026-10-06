@@ -225,7 +225,7 @@ public sealed class TagSuggestionTests(PostgresFixture db) : AiTestBase(db)
     public async Task An_answer_without_tags_fails_the_attempt_and_retries()
     {
         var id = await Seed(Talk);
-        Llm.Respond = _ => """{"title":"t","summary":"s","tasks":[]}""";
+        Llm.Respond = _ => """{"title":"t","summary":"s","items":[]}""";
 
         await TickAndRun();
         await RunThreeAttempts();
@@ -373,7 +373,7 @@ public sealed class TagSuggestionTests(PostgresFixture db) : AiTestBase(db)
     {
         var id = await Seed(Talk);
         var other = await SeedAt(Now.AddMinutes(-30), "closed", Talk);
-        Llm.Respond = r => r.User.Contains("Quokkasecret", StringComparison.Ordinal) ? """{"title":"t","summary":"s","tasks":[],"wombatsecret":["x"]}"""
+        Llm.Respond = r => r.User.Contains("Quokkasecret", StringComparison.Ordinal) ? """{"title":"t","summary":"s","items":[],"wombatsecret":["x"]}"""
             : FakeLlm.AnswerTagged("t", "s", "Quokkasecret", "numbatsecret");
 
         await TickAndRun();

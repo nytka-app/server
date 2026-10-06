@@ -24,6 +24,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<TokenStore>();
         services.AddSingleton<SettingStore>();
         services.AddSingleton<TaskStore>();
+        services.AddSingleton<NoteStore>();
         services.AddSingleton<MemoryStore>();
         services.AddSingleton<SearchStore>();
         services.AddSingleton<WebhookStore>();
