@@ -21,6 +21,9 @@ public sealed record BatchOutcomes(string? LastError, DateTime? LastErrorAt, Dat
 
 public sealed record BatchRow(long Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Error, string? Response);
 
+/// <summary>Runs inside <see cref="BatchStore.CompleteAsync"/>'s transaction after the segments are written, so what it writes commits with them.</summary>
+public delegate Task BatchStoredHook(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, CancellationToken ct);
+
 public sealed class BatchStore(NpgsqlDataSource dataSource)
 {
     /// <summary>Inserts a pending batch and its speech audio inside the caller's transaction.</summary>
@@ -63,11 +66,12 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// Marks the batch done with its segments, their voice verdicts and fingerprints, and its raw response, teaches the
     /// voiceprint (<paramref name="voice"/>) and drops the WAV, in one transaction. Does nothing when the batch is no
-    /// longer pending (deleted with its conversation, or already finished). Deleting the speech audio deletes the
+    /// longer pending (deleted with its conversation, or already finished). <paramref name="stored"/> runs in the transaction once the segments are in. Deleting the speech audio deletes the
     /// fingerprints with it.
     /// </summary>
     public async Task CompleteAsync(
-        long id, string response, IReadOnlyList<NewSegment> segments, BatchVoice? voice, bool deleteSpeechAudio, CancellationToken ct)
+        long id, string response, IReadOnlyList<NewSegment> segments, BatchVoice? voice, bool deleteSpeechAudio, CancellationToken ct,
+        BatchStoredHook? stored = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -120,6 +124,11 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
                 delete from segment_fingerprints where batch_id = @id;
                 """,
                 new { id }, transaction, cancellationToken: ct));
+        }
+
+        if (stored is not null && segments.Count > 0)
+        {
+            await stored(connection, transaction, conversationId.Value, ct);
         }
 
         await transaction.CommitAsync(ct);

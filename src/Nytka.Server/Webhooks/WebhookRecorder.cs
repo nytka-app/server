@@ -19,7 +19,10 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
 
     /// <summary>The types a webhook can ask for, <c>ping</c> (the test call's own) aside.</summary>
     public static readonly IReadOnlyList<string> Types =
-        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated, NytkaEvent.BriefReady];
+        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated, NytkaEvent.BriefReady, NytkaEvent.SegmentCreated];
+
+    /// <summary>Types that only a webhook naming them gets: <c>*</c> does not match them, because a batch every half minute is not what "all" means.</summary>
+    public static readonly IReadOnlyList<string> OptIn = [NytkaEvent.SegmentCreated];
 
     public const string Ping = "ping";
 
@@ -32,7 +35,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             return;
         }
 
-        var targets = await webhooks.ActiveFor(connection, transaction, nytkaEvent.Type, ct);
+        var targets = await webhooks.ActiveFor(connection, transaction, nytkaEvent.Type, !OptIn.Contains(nytkaEvent.Type), ct);
         if (targets.Count == 0)
         {
             return;
@@ -62,6 +65,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     /// </summary>
     private static Guid EventId(NytkaEvent e, object data) => WebhookSigner.NameGuid(e.Type + ":" + e.SubjectId + data switch
     {
+        SegmentData d => ":" + d.BatchId,
         TaskData { DoneAt: { } doneAt } when e.Type == NytkaEvent.TaskCompleted => ":" + doneAt.Ticks,
         ConversationData { AiUpdatedAt: { } at } => ":" + at.Ticks,
         _ => "",
@@ -137,6 +141,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                     new { id = e.SubjectId }, transaction, cancellationToken: ct));
             case NytkaEvent.BriefReady:
                 return await BriefAsync(e.SubjectId, connection, transaction, ct);
+            case NytkaEvent.SegmentCreated:
+                return await SegmentsAsync(e, connection, transaction, ct);
             case NytkaEvent.DigestReady:
                 return await connection.QuerySingleOrDefaultAsync<DigestData>(new CommandDefinition(
                     "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview from digests where id = @id",
@@ -144,6 +150,15 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             default:
                 return null;
         }
+    }
+
+    /// <summary>The ids and times of the batch's segments, never their text: read the text with a <c>read</c> token. Null when the batch has none.</summary>
+    private static async Task<SegmentData?> SegmentsAsync(NytkaEvent e, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
+    {
+        var segments = (await connection.QueryAsync<SegmentRef>(new CommandDefinition(
+            "select id as Id, started_at as StartedAt, ended_at as EndedAt from segments where batch_id = @batchId order by started_at, id",
+            new { batchId = e.BatchId }, transaction, cancellationToken: ct))).ToList();
+        return segments.Count == 0 ? null : new SegmentData(e.SubjectId, e.BatchId!.Value, segments);
     }
 
     /// <summary>The brief with the people it names; one deleted since is left out. Never a transcript.</summary>
@@ -226,6 +241,10 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private sealed record BriefPersonRef(Guid Id, string Name);
 
     private sealed record BriefData(Guid Id, string Title, DateTime StartsAt, IReadOnlyList<BriefPersonRef> People, string Text);
+
+    private sealed record SegmentRef(long Id, DateTime StartedAt, DateTime EndedAt);
+
+    private sealed record SegmentData(Guid ConversationId, long BatchId, IReadOnlyList<SegmentRef> Segments);
 
     private sealed record DigestData(Guid Id, string LocalDate, string Headline, string Overview);
 }
