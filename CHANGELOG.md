@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.22.0](https://github.com/nytka-app/server/compare/v0.21.0...v0.22.0) (2026-10-05)
+
+
+### Features
+
+* classify speech as person, media or call (Speech kind S-3) ([#109](https://github.com/nytka-app/server/issues/109)) ([422698d](https://github.com/nytka-app/server/commit/422698da55132f8c2ec21210e3b9a2b01ee025f9))
+* context ranges from the phone (Speech kind S-2) ([#104](https://github.com/nytka-app/server/issues/104)) ([11c3b3b](https://github.com/nytka-app/server/commit/11c3b3b4447eb6b77d0b9609e10b431d28b70f1c))
+* media and calls stop feeding the people features (Speech kind S-4) ([#108](https://github.com/nytka-app/server/issues/108)) ([ca0377d](https://github.com/nytka-app/server/commit/ca0377d8ca283c7a6799a02d0a74487f4df8eaf3))
+* review inbox kind and evaluation route for speech kind (Speech kind S-5) ([#107](https://github.com/nytka-app/server/issues/107)) ([635ec28](https://github.com/nytka-app/server/commit/635ec28ec43d5ae43c7cb64235d3413a4260bcbe))
+* speech kinds, marks and the rule (Speech kind S-1) ([#103](https://github.com/nytka-app/server/issues/103)) ([6df366d](https://github.com/nytka-app/server/commit/6df366d7b6afe2bec47f8a3b82cd42e72b54ae32))
+
 ## [0.21.0](https://github.com/nytka-app/server/compare/v0.20.0...v0.21.0) (2026-10-05)
 
 
