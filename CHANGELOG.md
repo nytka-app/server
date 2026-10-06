@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/nytka-app/server/compare/v0.23.0...v0.24.0) (2026-10-06)
+
+
+### Features
+
+* classify task candidates as commitment, idea, advice or noise ([#113](https://github.com/nytka-app/server/issues/113)) ([62b50db](https://github.com/nytka-app/server/commit/62b50dbbac56912c7b2781f03234a489732e6325))
+
 ## [0.23.0](https://github.com/nytka-app/server/compare/v0.22.0...v0.23.0) (2026-10-06)
 
 
