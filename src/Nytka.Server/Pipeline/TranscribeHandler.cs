@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Nytka.Audio.Batching;
+using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Transcription;
 using Nytka.Server.Voice;
@@ -8,7 +9,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Pipeline;
 
-public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient client, VoiceMatcher voice, IOptions<NytkaOptions> options) : IJobHandler
+public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient client, VoiceMatcher voice, IEventPublisher events, IOptions<NytkaOptions> options) : IJobHandler
 {
     public string Kind => JobKinds.Transcribe;
 
@@ -31,7 +32,9 @@ public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient cl
             segments = segments.Select((s, i) => s with { Voice = match.Segments[i] }).ToList();
         }
 
-        await batches.CompleteAsync(batchId, result.RawJson, segments, match?.Batch, options.Value.Audio.RetentionDays == 0, ct);
+        await batches.CompleteAsync(batchId, result.RawJson, segments, match?.Batch, options.Value.Audio.RetentionDays == 0, ct,
+            (connection, transaction, conversationId, token) =>
+                events.PublishAsync(new NytkaEvent(NytkaEvent.SegmentCreated, conversationId, batchId), connection, transaction, token));
         return JobOutcome.Done;
     }
 

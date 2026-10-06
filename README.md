@@ -1005,7 +1005,7 @@ curl -X POST https://nytka.example.com/api/v1/webhooks \
   -d '{"url": "https://hooks.example.com/nytka", "events": ["conversation.ready", "task.created"]}'
 ```
 
-`events` names event types, or `*` for all of them. The answer holds the signing `secret`, `whsec_`
+`events` names event types, or `*` for all of them except `segment.created`, which only a webhook naming it gets. The answer holds the signing `secret`, `whsec_`
 and 43 characters, once: nothing shows it again, and there is no rotation, so delete the webhook and
 make a new one. The URL is `http` or `https`, at most 2,048 characters. Private addresses are allowed,
 because your receivers usually sit on your own network. At most 20 webhooks. `PATCH` changes `url`,
@@ -1021,6 +1021,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
 | `person.fact.created` | A fact about a person was added, by extraction or by hand | `{ id, personId, personName, text, basis, conversationId }`; `basis` and `conversationId` are null for a fact you added |
 | `brief.ready` | A [calendar brief](#calendar-briefs) was made for a meeting | `{ id, title, startsAt, people: [{ id, name }], text }` |
+| `segment.created` | A transcription batch stored its segments, about every 30 to 90 seconds while someone talks. Opt-in: `*` does not match it | `{ conversationId, batchId, segments: [{ id, startedAt, endedAt }] }`: ids and times only, never the text. Read the text with `GET /api/v1/conversations/{id}` and a `read` token; each segment there has `isUser`, the wearer's verdict (your mark, else the voice match, else the provider's) |
 | `digest.ready` | A daily digest was made, by the schedule or on demand | `{ id, localDate, headline, overview }` |
 | `ping` | You called `test` | `{}` |
 

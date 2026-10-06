@@ -2,9 +2,9 @@ namespace Nytka.Server.Events;
 
 /// <summary>
 /// Something that happened, for the rest of the server to react to. <paramref name="SubjectId"/> is
-/// the id of the conversation, task, memory or bookmark it is about.
+/// the id of the conversation, task, memory or bookmark it is about; <paramref name="BatchId"/> is set only by <c>segment.created</c>.
 /// </summary>
-public sealed record NytkaEvent(string Type, Guid SubjectId)
+public sealed record NytkaEvent(string Type, Guid SubjectId, long? BatchId = null)
 {
     /// <summary>A summary was stored; the subject is the conversation.</summary>
     public const string ConversationReady = "conversation.ready";
@@ -26,6 +26,9 @@ public sealed record NytkaEvent(string Type, Guid SubjectId)
 
     /// <summary>A brief for a calendar meeting was stored; the subject is the brief.</summary>
     public const string BriefReady = "brief.ready";
+
+    /// <summary>A transcription batch stored its segments; the subject is the conversation, <see cref="BatchId"/> the batch.</summary>
+    public const string SegmentCreated = "segment.created";
 
     /// <summary>A daily digest was stored; the subject is the digest.</summary>
     public const string DigestReady = "digest.ready";

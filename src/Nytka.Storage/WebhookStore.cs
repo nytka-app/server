@@ -118,12 +118,12 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
             "select exists (select 1 from webhooks where id = @id)", new { id }, cancellationToken: ct));
     }
 
-    /// <summary>The ids of the active webhooks that want <paramref name="eventType"/> (or <c>*</c>), read in the caller's transaction.</summary>
+    /// <summary>The ids of the active webhooks that want <paramref name="eventType"/> (or <c>*</c>, unless <paramref name="wildcard"/> is false), read in the caller's transaction.</summary>
     public async Task<IReadOnlyList<Guid>> ActiveFor(
-        NpgsqlConnection connection, NpgsqlTransaction? transaction, string eventType, CancellationToken ct) =>
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, string eventType, bool wildcard, CancellationToken ct) =>
         (await connection.QueryAsync<Guid>(new CommandDefinition(
-            "select id from webhooks where active and (@eventType = any(events) or '*' = any(events)) order by created_at, id",
-            new { eventType }, transaction, cancellationToken: ct))).ToList();
+            "select id from webhooks where active and (@eventType = any(events) or (@wildcard and '*' = any(events))) order by created_at, id",
+            new { eventType, wildcard }, transaction, cancellationToken: ct))).ToList();
 
     /// <summary>
     /// Writes a pending delivery, and drops the log's oldest ended rows beyond (a pending delivery is never trimmed) <see cref="KeptDeliveries"/>. Returns false
