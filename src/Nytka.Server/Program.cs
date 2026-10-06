@@ -109,6 +109,7 @@ api.MapCoverage();
 api.MapTokens();
 api.MapSettings();
 api.MapTasks();
+api.MapNotes();
 api.MapMemories();
 api.MapSearch();
 api.MapAsk();

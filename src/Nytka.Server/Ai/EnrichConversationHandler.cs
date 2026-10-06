@@ -168,7 +168,7 @@ public sealed class EnrichConversationHandler(
             : await CompleteAsync(
                 ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags, mediaLines),
                 ConversationPrompt.UserForMerge(startedAt, parts, zone, people, tagNames), ct);
-        var result = brief ? answer with { Tasks = [] } : answer;
+        var result = brief ? answer with { Items = [] } : answer;
         return brief || !suggestTags ? result with { Tags = [] } : result;
     }
 
@@ -176,7 +176,7 @@ public sealed class EnrichConversationHandler(
         LlmJson.Parse<ConversationAnswer>(
             await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, ConversationPrompt.Schema, system, user), ct));
 
-    /// <summary>Stores the result, reconciles the tasks and publishes the events, in one transaction.</summary>
+    /// <summary>Stores the result, reconciles the tasks and notes, records what was dropped and publishes the events, in one transaction.</summary>
     private async Task<EnrichmentStore> StoreAsync(
         Guid conversationId, ConversationAnswer answer, IReadOnlyList<TaskPerson> people, long? through, int segmentCount,
         CancellationToken ct)
@@ -184,13 +184,7 @@ public sealed class EnrichConversationHandler(
         var now = time.GetUtcNow();
         var title = ConversationPrompt.Cut(answer.Title, ConversationPrompt.MaxTitle);
         var summary = ConversationPrompt.Cut(answer.Summary, ConversationPrompt.MaxSummary);
-        var aiTasks = answer.Tasks
-            .Select(t => (Text: ConversationPrompt.Cut(t.Text, ConversationPrompt.MaxTask), t.Person))
-            .Select(t => new AiTask(t.Text, TextFingerprint.Of(t.Text), PersonNamed(people, t.Person)))
-            .Where(t => t.Fingerprint.Length > 0)
-            .DistinctBy(t => t.Fingerprint)
-            .Take(ConversationPrompt.MaxTasks)
-            .ToList();
+        var classified = ItemClassifier.Classify(answer.Items, name => PersonNamed(people, name));
 
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -203,7 +197,9 @@ public sealed class EnrichConversationHandler(
             return stored; // no event: the conversation is gone, changed since the read, or was summarized already
         }
 
-        var created = await tasks.ReconcileAsync(connection, transaction, conversationId, aiTasks, now, ct);
+        var created = await tasks.ReconcileAsync(connection, transaction, conversationId, classified.Tasks, now, ct);
+        await NoteStore.ReplaceAsync(connection, transaction, conversationId, classified.Notes, now, ct);
+        await NoteStore.ReplaceDroppedAsync(connection, transaction, conversationId, classified.Dropped, now, ct);
         await TagSuggestionStore.AddAsync(
             connection, transaction, conversationId, null, await ProposedTagsAsync(connection, transaction, conversationId, answer.Tags, people, ct), now, ct);
         await events.PublishAsync(new NytkaEvent(NytkaEvent.ConversationReady, conversationId), connection, transaction, ct);
@@ -213,6 +209,9 @@ public sealed class EnrichConversationHandler(
         }
 
         await transaction.CommitAsync(ct);
+        logger.LogInformation(
+            "Conversation {ConversationId} items: {Tasks} tasks, {Notes} notes, {Dropped} dropped.",
+            conversationId, classified.Tasks.Count, classified.Notes.Count, classified.Dropped.Count);
         return stored;
     }
 

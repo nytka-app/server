@@ -124,7 +124,8 @@ public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal("v1", segments[1].GetProperty("speakerId").GetString());
 
         var t = Of(lines, "task").Single();
-        Assert.Equal(["type", "id", "conversationId", "personId", "text", "done", "doneAt", "createdAt", "updatedAt"], Names(t));
+        Assert.Equal(["type", "id", "conversationId", "personId", "text", "done", "doneAt", "createdAt", "updatedAt", "kind"], Names(t));
+        Assert.Equal("commitment", t.GetProperty("kind").GetString());
         Assert.True(t.GetProperty("done").GetBoolean());
         Assert.Equal(person, t.GetProperty("personId").GetGuid());
         Assert.Equal(conversation, t.GetProperty("conversationId").GetGuid());

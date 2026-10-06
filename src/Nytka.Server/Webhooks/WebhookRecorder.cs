@@ -198,7 +198,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         }
 
         var tasks = (await connection.QueryAsync<TaskRef>(new CommandDefinition(
-            "select id as Id, text as Text from tasks where conversation_id = @id and deleted_at is null order by created_at, id",
+            "select id as Id, text as Text from tasks where conversation_id = @id and deleted_at is null and kind = 'commitment' order by created_at, id",
             new { id }, transaction, cancellationToken: ct))).ToList();
         var tags = (await TagStore.OfConversationsAsync(connection, transaction, [id], ct)).GetValueOrDefault(id) ?? [];
         return new ConversationData(

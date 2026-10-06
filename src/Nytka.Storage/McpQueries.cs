@@ -17,7 +17,7 @@ public sealed record McpSegmentRow(DateTime StartedAt, string? Speaker, string T
 
 public sealed record McpTaskItem(
     Guid Id, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, string Text, bool Done,
-    DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName);
+    DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind);
 
 /// <summary>
 /// The SQL behind the MCP tools: read-only, written against the final schema (migrations 0003 and 0004), so
@@ -77,7 +77,7 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
             : row with { Tags = (await TagStore.OfConversationsAsync(connection, null, [id], ct)).GetValueOrDefault(id) ?? [] };
     }
 
-    /// <summary>A conversation's tasks, deleted ones left out, in creation order.</summary>
+    /// <summary>A conversation's commitments, deleted ones left out, in creation order.</summary>
     public async Task<IReadOnlyList<McpTaskRow>> ConversationTasksAsync(Guid id, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -85,7 +85,7 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
             """
             select t.id as Id, t.text as Text, t.done as Done, t.person_id as PersonId, p.name as PersonName
             from tasks t left join people p on p.id = t.person_id
-            where t.conversation_id = @id and t.deleted_at is null
+            where t.conversation_id = @id and t.deleted_at is null and t.kind = 'commitment'
             order by t.id
             """,
             new { id }, cancellationToken: ct));
@@ -114,16 +114,16 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
-    /// <summary>Newest first by task id, of the open or the done tasks.</summary>
+    /// <summary>Newest first by task id, of the open or the done tasks; <paramref name="kind"/> is a stored kind, or null for every kind.</summary>
     public async Task<IReadOnlyList<McpTaskItem>> ListTasksAsync(
-        bool done, Guid? conversationId, Guid? before, int limit, CancellationToken ct)
+        bool done, Guid? conversationId, Guid? before, string? kind, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpTaskItem>(new CommandDefinition(
             """
             select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                    c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
-                   t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName
+                   t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind
             from tasks t
             join conversations c on c.id = t.conversation_id
             left join people p on p.id = t.person_id
@@ -131,10 +131,11 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
               and t.done = @done
               and (cast(@conversationId as uuid) is null or t.conversation_id = @conversationId)
               and (cast(@before as uuid) is null or t.id < @before)
+              and (cast(@kind as text) is null or t.kind = @kind)
             order by t.id desc
             limit @limit
             """,
-            new { done, conversationId, before, limit }, cancellationToken: ct));
+            new { done, conversationId, before, kind, limit }, cancellationToken: ct));
         return rows.ToList();
     }
 }

@@ -104,7 +104,7 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
             """,
             args, cancellationToken: ct))).ToList();
         var tasks = (await connection.QueryAsync<string>(new CommandDefinition(
-            $"select text from tasks where deleted_at is null and created_at >= @from and created_at < @to order by created_at, id limit {MaxTasks}",
+            $"select text from tasks where deleted_at is null and kind = 'commitment' and created_at >= @from and created_at < @to order by created_at, id limit {MaxTasks}",
             args, cancellationToken: ct))).ToList();
         var memories = (await connection.QueryAsync<string>(new CommandDefinition(
             $"select text from memories where deleted_at is null and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",

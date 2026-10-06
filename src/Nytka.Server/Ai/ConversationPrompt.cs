@@ -4,10 +4,14 @@ using System.Text.Json;
 namespace Nytka.Server.Ai;
 
 /// <summary>What the model returns for a conversation (or for one window of it), before the lengths are enforced.</summary>
-public sealed record ConversationAnswer(string Title, string Summary, IReadOnlyList<AnswerTask> Tasks, IReadOnlyList<string> Tags);
+public sealed record ConversationAnswer(string Title, string Summary, IReadOnlyList<AnswerItem> Items, IReadOnlyList<string> Tags);
 
-/// <summary>A task as the model words it; <paramref name="Person"/> is a name from the people the user message lists, or null.</summary>
-public sealed record AnswerTask(string Text, string? Person);
+/// <summary>
+/// A candidate task as the model words and labels it (docs/specs/task-kinds.md). <paramref name="Kind"/> and <paramref name="Owner"/> are
+/// <see cref="Nytka.Storage.TaskKinds"/> values; <paramref name="Person"/> is a name from the people the user message lists, or null;
+/// <paramref name="Topic"/> names the subject of an advice item and is null for any other kind. <see cref="ItemClassifier"/> decides what is kept.
+/// </summary>
+public sealed record AnswerItem(string Text, string Kind, string Owner, string? Person, string? Topic);
 
 /// <summary>The messages and the schema of the <c>enrich-conversation</c> call. Server code, not a setting.</summary>
 public static class ConversationPrompt
@@ -16,18 +20,24 @@ public static class ConversationPrompt
 
     public const string Schema =
         """
-        { "type": "object", "additionalProperties": false, "required": ["title", "summary", "tasks", "tags"],
+        { "type": "object", "additionalProperties": false, "required": ["title", "summary", "items", "tags"],
           "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
                           "tags": { "type": "array", "items": { "type": "string" } },
-                          "tasks": { "type": "array", "items": {
-                            "type": "object", "additionalProperties": false, "required": ["text", "person"],
-                            "properties": { "text": { "type": "string" }, "person": { "type": ["string", "null"] } } } } } }
+                          "items": { "type": "array", "items": {
+                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic"],
+                            "properties": { "text": { "type": "string" },
+                                            "kind": { "type": "string", "enum": ["commitment", "idea", "advice", "noise"] },
+                                            "owner": { "type": "string", "enum": ["wearer", "other"] },
+                                            "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] } } } } } }
         """;
 
     public const int MaxTitle = 80;
     public const int MaxSummary = 1_200;
     public const int MaxTask = 200;
     public const int MaxTasks = 10;
+
+    /// <summary>The items the prompt allows in one answer, of every kind; <see cref="ItemClassifier"/> keeps fewer.</summary>
+    public const int MaxItems = 25;
 
     /// <summary>Tags kept from one answer, and tag names sent to the model with a request.</summary>
     public const int MaxTags = 3;
@@ -47,13 +57,19 @@ public static class ConversationPrompt
             ? "the language the conversation is in"
             : outputLanguage;
         var answer = brief
-            ? $"This conversation is short. Answer with a short title (at most {MaxTitle} characters) and a summary of one sentence. Return no tasks."
-            : $"Answer with a short title (at most {MaxTitle} characters), a summary (a few sentences, at most {MaxSummary} characters) and the tasks.";
+            ? $"This conversation is short. Answer with a short title (at most {MaxTitle} characters) and a summary of one sentence. Return no tasks and no other items."
+            : $"Answer with a short title (at most {MaxTitle} characters), a summary (a few sentences, at most {MaxSummary} characters) and the items.";
         var tasks = brief
             ? ""
             : $"""
 
-              A task is something the wearer committed to do, or was asked to do and did not turn down. Lines labelled "Wearer" are the wearer's own: a task needs the wearer saying they will do it, or another speaker asking the wearer. A task is a concrete action: a feeling, a wish, an insight or a topic to keep exploring is not one. In a therapy, coaching or lesson setting, list only homework or actions explicitly agreed. The "Wearer" label can be wrong, so the content must fit the wearer: a line labelled "Wearer" that is plainly another person's instruction or explanation is not the wearer's commitment. Leave out what other people said they would do, ideas and plans nobody took on, general talk and anything already done. When no line is labelled "Wearer", list only what is clearly addressed to the wearer, otherwise nothing. Set a task's person to the name of the person it is owed to or who asked for it, copied exactly from the "People" list in the user message, and to null when no listed person fits or there is no list. Return at most {MaxTasks} tasks, none when there are none.
+              Items: return what sounds like something to do, try or remember as items, each with a kind. Be strict: most talk has no item, and a few real ones beat a long list. Write each item's text as one short sentence that stands alone.
+              Kind "commitment": something the wearer committed to do, or was asked to do and did not turn down. Lines labelled "Wearer" are the wearer's own: a commitment needs the wearer saying they will do it, or another speaker asking the wearer. A commitment becomes a task. A task is a concrete action: a feeling, a wish, an insight or a topic to keep exploring is not one. In a therapy, coaching or lesson setting, only homework or actions explicitly agreed are commitments. The "Wearer" label can be wrong, so the content must fit the wearer: a line labelled "Wearer" that is plainly another person's instruction or explanation is not the wearer's commitment. When no line is labelled "Wearer", a commitment is only what is clearly addressed to the wearer.
+              Kind "idea": something worth trying, building or looking into that was floated and nobody took on.
+              Kind "advice": a tip, rule or lesson on how to do something well, from a coach, a lesson, a video or a friend: know-how, not something the wearer promised. Give every advice item a topic of one to three words that names the subject, and the same topic to every tip on that subject.
+              Kind "noise": any other item-like line: a remark, a feeling, a topic to think about, something already done, a line you cannot restate as a clear action (a vague "this stuff", an unintelligible phrase) and anything taken from media or a script.
+              Set owner to "wearer" when the item is the wearer's to do, try or learn, and to "other" when it is another person's own business, such as what other people said they would do. Set a person to the name of the person an item is owed to or who asked for it, copied exactly from the "People" list in the user message, and to null when no listed person fits or there is no list. Set topic to null unless the kind is advice. Return at most {MaxItems} items, none when there are none.
+              Examples: "Send Anna the contract by Friday", said by the wearer, is a commitment. "Maybe build a small app that sorts the day's photos" is an idea. "Keep a relaxed grip on the paddle", said by a coach, is advice with the topic "table tennis". "Make this stuff tomorrow" is noise, because nothing says what "this stuff" is.
               """;
         var tags = suggestTags && !brief
             ? $"""
@@ -77,7 +93,7 @@ public static class ConversationPrompt
         string outputLanguage, string timeZone = UserTimeZone.Default, bool suggestTags = true, bool mediaLines = false) =>
         System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines)
         + "\n\nThe transcript was too long for one request, so it was described in consecutive parts. "
-        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one task list and one tag list, dropping duplicates and tasks a later part shows as done.";
+        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person and topic, and dropping duplicates and items a later part shows as done.";
 
     /// <summary>The date line: the conversation's local date and weekday, so the model can resolve "Friday".</summary>
     public static string DateLine(DateTimeOffset startedAt, TimeZoneInfo? zone = null) => "Date: " + LocalDate(startedAt, zone);

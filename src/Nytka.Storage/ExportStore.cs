@@ -32,7 +32,7 @@ public sealed record ExportConversation(
 }
 
 public sealed record ExportTask(
-    Guid Id, Guid ConversationId, Guid? PersonId, string Text, bool Done, DateTime? DoneAt, DateTime CreatedAt, DateTime UpdatedAt) : ExportLine
+    Guid Id, Guid ConversationId, Guid? PersonId, string Text, bool Done, DateTime? DoneAt, DateTime CreatedAt, DateTime UpdatedAt, string Kind) : ExportLine
 {
     [JsonPropertyOrder(-1)]
     public override string Type => "task";
@@ -158,7 +158,7 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
         await foreach (var task in connection.QueryUnbufferedAsync<ExportTask>(
             """
             select id as Id, conversation_id as ConversationId, person_id as PersonId, text as Text, done as Done, done_at as DoneAt,
-                   created_at as CreatedAt, updated_at as UpdatedAt
+                   created_at as CreatedAt, updated_at as UpdatedAt, kind as Kind
             from tasks where deleted_at is null order by created_at, id
             """, transaction: transaction).WithCancellation(ct))
         {
