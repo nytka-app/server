@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/nytka-app/server/compare/v0.24.0...v0.25.0) (2026-10-06)
+
+
+### Features
+
+* keep what others promise the wearer as waiting_on tasks ([#115](https://github.com/nytka-app/server/issues/115)) ([4d3f742](https://github.com/nytka-app/server/commit/4d3f742cde5e3b92047a80d554f423a2945cd3b3))
+
 ## [0.24.0](https://github.com/nytka-app/server/compare/v0.23.0...v0.24.0) (2026-10-06)
 
 
