@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/nytka-app/server/compare/v0.22.0...v0.23.0) (2026-10-06)
+
+
+### Features
+
+* segment.created webhook event ([#111](https://github.com/nytka-app/server/issues/111)) ([feff6e1](https://github.com/nytka-app/server/commit/feff6e1e0f386933d9e989879f72e7d630f9940f))
+
 ## [0.22.0](https://github.com/nytka-app/server/compare/v0.21.0...v0.22.0) (2026-10-05)
 
 
