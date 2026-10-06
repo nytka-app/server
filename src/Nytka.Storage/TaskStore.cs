@@ -10,7 +10,8 @@ public sealed record TaskRow(
 
 /// <summary>
 /// A task the model returned: its text as stored, the fingerprint the text had when it was created, the person it is
-/// owed to, if the model named a known one, and its <see cref="TaskKinds">kind</see> (a commitment or an idea).
+/// owed to (for a <c>waiting_on</c> task, who owes it), if the model named a known one, and its <see cref="TaskKinds">kind</see>
+/// (a commitment, an idea or something awaited).
 /// </summary>
 public sealed record AiTask(string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment);
 
@@ -66,6 +67,16 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
             Select + "\nwhere t.person_id = @personId and t.done = false and t.deleted_at is null and t.kind = 'commitment' order by t.id desc limit @limit",
+            new { personId, limit }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    /// <summary>What the person owes the wearer: their open <c>waiting_on</c> tasks, newest first, deleted ones left out.</summary>
+    public async Task<IReadOnlyList<TaskRow>> OpenWaitingOnForPersonAsync(Guid personId, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
+            Select + "\nwhere t.person_id = @personId and t.done = false and t.deleted_at is null and t.kind = 'waiting_on' order by t.id desc limit @limit",
             new { personId, limit }, cancellationToken: ct));
         return rows.ToList();
     }

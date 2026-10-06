@@ -76,4 +76,17 @@ commitment the owner meant. A dropped commitment is a lost task: read the list f
 - No rewording of the old tasks: they are relabelled only when their conversation is summarized again.
 - No cross-conversation note per topic: a note belongs to one conversation.
 - No edit or delete of a note or an idea in the API, and no app screen for notes yet.
-- Commitments of other people ("waiting on") are audited, not listed.
+- Commitments of other people ("waiting on"): audited here, kept since the next milestone (below).
+
+## Waiting on
+
+What another person promises the wearer is kept, not dropped. An item of kind `commitment` and owner `other` becomes a
+task of kind `waiting_on` (migration `0027_waiting_on.sql` widens the `tasks.kind` check), linked to the person who owes
+it when the model names one the conversation knows. An unknown owner stays dropped, never waited on.
+
+- `GET /api/v1/tasks` and MCP `list_tasks` take `kind=waiting_on`; `all` includes them; the default list does not.
+- `GET /api/v1/people/{id}` (and `get_person`) carry `waitingOn`, the person's open waiting-on tasks, newest 100.
+- A summary replaces untouched ones like any task, keeps at most 10 per conversation and raises no `task.created`.
+  The conversation detail, digest, briefs, webhooks and Ask still read commitments only; the export carries them.
+- `GET /api/v1/info` lists `waiting-on` under `features`.
+- Another person's idea, advice or noise is still only audited in `dropped_candidates`.

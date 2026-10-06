@@ -8,12 +8,14 @@ public sealed record ClassifiedItems(IReadOnlyList<AiTask> Tasks, IReadOnlyList<
 /// <summary>
 /// Applies the contract of docs/specs/task-kinds.md to the items a model labelled. Only the wearer's commitments become tasks of
 /// kind <c>commitment</c>, the wearer's ideas become tasks of kind <c>idea</c>, the wearer's advice is grouped into one note per
-/// topic, and everything else (noise, and any item owned by someone else) is dropped and listed for the audit. An unknown kind is
-/// noise and an unknown owner is someone else's, so a model that strays from the schema costs a task, never adds one.
+/// topic, someone else's commitments become tasks of kind <c>waiting_on</c> (what they owe the wearer), and everything else (noise, and
+/// any other item owned by someone else) is dropped and listed for the audit. An unknown kind is
+/// noise and an unknown owner is someone else's (dropped, never waited on), so a model that strays from the schema costs a task, never adds one.
 /// </summary>
 public static class ItemClassifier
 {
     public const int MaxIdeas = 10;
+    public const int MaxWaitingOn = 10;
     public const int MaxNotes = 5;
     public const int MaxNotePoints = 10;
     public const int MaxDropped = ConversationPrompt.MaxItems;
@@ -30,6 +32,7 @@ public static class ItemClassifier
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var commitments = 0;
         var ideas = 0;
+        var waitingOn = 0;
 
         foreach (var item in items)
         {
@@ -43,7 +46,15 @@ public static class ItemClassifier
             var kind = item.Kind.Trim().ToLowerInvariant();
             kind = TaskKinds.IsKind(kind) ? kind : TaskKinds.Noise;
             var owner = item.Owner.Trim().ToLowerInvariant();
-            owner = TaskKinds.IsOwner(owner) ? owner : TaskKinds.Other;
+            var ownerKnown = TaskKinds.IsOwner(owner);
+            owner = ownerKnown ? owner : TaskKinds.Other;
+
+            if (kind == TaskKinds.Commitment && ownerKnown && owner == TaskKinds.Other && waitingOn < MaxWaitingOn)
+            {
+                waitingOn++;
+                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn));
+                continue;
+            }
 
             if (kind == TaskKinds.Noise || owner == TaskKinds.Other)
             {

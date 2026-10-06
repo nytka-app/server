@@ -46,16 +46,48 @@ public class ItemClassifierTests
     }
 
     [Fact]
-    public void Noise_and_what_someone_else_owns_are_dropped_and_listed_for_the_audit()
+    public void Noise_and_what_someone_else_floats_are_dropped_and_listed_for_the_audit()
     {
         var kept = ItemClassifier.Classify(TaskKindFixture.Items(TaskKindFixture.Cases), PersonNamed);
 
         Assert.Equal(
             [
                 .. TaskKindFixture.Of(TaskKinds.Noise).Select(c => new DroppedCandidate(TaskKinds.Noise, TaskKinds.Wearer, c.Text)),
-                new DroppedCandidate(TaskKinds.Commitment, TaskKinds.Other, "Ben will book the cabin for the weekend"),
+                new DroppedCandidate(TaskKinds.Idea, TaskKinds.Other, "Ben might try the new climbing gym"),
             ],
             kept.Dropped);
+    }
+
+    [Fact]
+    public void A_commitment_of_someone_else_is_kept_as_waiting_on_with_the_person_who_owes_it()
+    {
+        var kept = ItemClassifier.Classify(TaskKindFixture.Items(TaskKindFixture.Cases), PersonNamed);
+
+        var waiting = Assert.Single(kept.Tasks, t => t.Kind == TaskKinds.WaitingOn);
+        Assert.Equal("Ben will book the cabin for the weekend", waiting.Text);
+        Assert.Equal(Anna, waiting.PersonId);
+    }
+
+    [Fact]
+    public void A_waiting_on_task_without_a_known_person_has_none()
+    {
+        var kept = Classify(Item("Ben will send the file", owner: TaskKinds.Other, person: "Ben"));
+
+        var waiting = Assert.Single(kept.Tasks);
+        Assert.Equal(TaskKinds.WaitingOn, waiting.Kind);
+        Assert.Null(waiting.PersonId);
+    }
+
+    [Fact]
+    public void Only_a_commitment_of_someone_else_is_waited_on()
+    {
+        var kept = Classify(
+            Item("an idea", TaskKinds.Idea, TaskKinds.Other), Item("a tip", TaskKinds.Advice, TaskKinds.Other, topic: "x"),
+            Item("a remark", TaskKinds.Noise, TaskKinds.Other));
+
+        Assert.Empty(kept.Tasks);
+        Assert.Empty(kept.Notes);
+        Assert.Equal(3, kept.Dropped.Count);
     }
 
     [Fact]
@@ -118,6 +150,7 @@ public class ItemClassifierTests
         var kept = Classify(Item("Call Ben", " Commitment ", "WEARER"));
 
         Assert.Equal("Call Ben", Assert.Single(kept.Tasks).Text);
+        Assert.Equal(TaskKinds.WaitingOn, Assert.Single(Classify(Item("Ben calls", " COMMITMENT", " Other ")).Tasks).Kind);
     }
 
     [Fact]
@@ -138,18 +171,21 @@ public class ItemClassifierTests
     }
 
     [Fact]
-    public void Texts_are_cut_to_200_characters_and_commitments_and_ideas_to_ten_each()
+    public void Texts_are_cut_to_200_characters_and_commitments_ideas_and_waiting_on_to_ten_each()
     {
         var kept = Classify(
             [
                 Item(new string('t', 300)),
                 .. Enumerable.Range(1, 12).Select(i => Item($"task {i}")),
                 .. Enumerable.Range(1, 12).Select(i => Item($"idea {i}", TaskKinds.Idea)),
+                .. Enumerable.Range(1, 12).Select(i => Item($"promise {i}", owner: TaskKinds.Other)),
             ]);
 
         Assert.Equal(200, kept.Tasks[0].Text.Length);
         Assert.Equal(10, kept.Tasks.Count(t => t.Kind == TaskKinds.Commitment));
         Assert.Equal(10, kept.Tasks.Count(t => t.Kind == TaskKinds.Idea));
+        Assert.Equal(10, kept.Tasks.Count(t => t.Kind == TaskKinds.WaitingOn));
+        Assert.Equal(2, kept.Dropped.Count);
     }
 
     [Fact]

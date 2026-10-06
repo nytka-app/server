@@ -27,7 +27,7 @@ public static class TaskEndpoints
 
     public sealed record TaskPage(IReadOnlyList<TaskRow> Items, Guid? NextBefore);
 
-    /// <summary><c>kind</c> is <c>commitment</c> (the default), <c>idea</c> or <c>all</c>.</summary>
+    /// <summary><c>kind</c> is <c>commitment</c> (the default), <c>idea</c>, <c>waiting_on</c> or <c>all</c>.</summary>
     private static async Task<IResult> ListAsync(
         string? status, Guid? conversationId, Guid? before, string? kind, int? limit, TaskStore tasks, CancellationToken ct)
     {
@@ -37,9 +37,9 @@ public static class TaskEndpoints
             errors["status"] = ["Must be open or done."];
         }
 
-        if (kind is not (null or TaskKinds.Commitment or TaskKinds.Idea or AllKinds))
+        if (kind is not (null or TaskKinds.Commitment or TaskKinds.Idea or TaskKinds.WaitingOn or AllKinds))
         {
-            errors["kind"] = ["Must be commitment, idea or all."];
+            errors["kind"] = ["Must be commitment, idea, waiting_on or all."];
         }
 
         if (errors.Count > 0)

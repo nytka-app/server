@@ -34,6 +34,7 @@ public sealed class TaskKindsTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(
             [
                 .. TaskKindFixture.Of(TaskKinds.Commitment).Select(c => new TaskKindRow(c.Text, TaskKinds.Commitment)),
+                new TaskKindRow("Ben will book the cabin for the weekend", TaskKinds.WaitingOn),
                 .. TaskKindFixture.Of(TaskKinds.Idea).Select(c => new TaskKindRow(c.Text, TaskKinds.Idea)),
             ],
             await TaskKindRows(id));
@@ -42,9 +43,64 @@ public sealed class TaskKindsTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(
             [
                 .. TaskKindFixture.Of(TaskKinds.Noise).Select(c => new DroppedState(TaskKinds.Noise, TaskKinds.Wearer, c.Text)),
-                new DroppedState(TaskKinds.Commitment, TaskKinds.Other, "Ben will book the cabin for the weekend"),
+                new DroppedState(TaskKinds.Idea, TaskKinds.Other, "Ben might try the new climbing gym"),
             ],
             await Dropped(id));
+    }
+
+    private async Task<Guid> SeedWithOlena()
+    {
+        var id = await Seed(Talk);
+        await Db.ExecuteAsync("delete from segments");
+        await AddSegment(id, Talk, Now.AddMinutes(-9), "SPEAKER_0", "0", true);
+        await AddSegment(id, Talk, Now.AddMinutes(-8), "SPEAKER_4", "4", false);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (gen_random_uuid(), 'Olena', now())");
+        await Db.ExecuteAsync("insert into person_voices (speaker_id, person_id, created_at) select '4', id, now() from people");
+        return id;
+    }
+
+    [Fact]
+    public async Task A_promise_of_someone_else_becomes_a_waiting_on_task_linked_to_them_and_raises_no_event()
+    {
+        var id = await SeedWithOlena();
+        Llm.Respond = _ => FakeLlm.AnswerItems(
+            "t", "s", new FakeLlm.Item("Olena sends the photos", TaskKinds.Commitment, TaskKinds.Other, "Olena"),
+            new FakeLlm.Item("Ben sends the bill", TaskKinds.Commitment, TaskKinds.Other, "Ben"));
+
+        await TickAndRun();
+
+        Assert.Equal(
+            [new TaskKindRow("Olena sends the photos", TaskKinds.WaitingOn), new TaskKindRow("Ben sends the bill", TaskKinds.WaitingOn)],
+            await TaskKindRows(id));
+        Assert.Equal(["Olena", null], await Db.QueryAsync<string?>(
+            "select p.name from tasks t left join people p on p.id = t.person_id order by t.id"));
+        Assert.Empty(await Dropped(id));
+        Assert.Equal(["conversation.ready"], Events.Types);
+        var client = Server.CreateAuthorizedClient();
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>("/api/v1/tasks")).GetProperty("items").EnumerateArray());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>($"/api/v1/conversations/{id}")).GetProperty("tasks").EnumerateArray());
+        var olena = await Db.ScalarAsync<Guid>("select id from people");
+        var page = await client.GetFromJsonAsync<JsonElement>($"/api/v1/people/{olena}");
+        Assert.Equal(["Olena sends the photos"], page.GetProperty("waitingOn").EnumerateArray().Select(t => t.GetProperty("text").GetString()));
+    }
+
+    [Fact]
+    public async Task A_later_summary_removes_an_untouched_waiting_on_task_and_keeps_one_the_user_ticked()
+    {
+        var id = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.AnswerItems(
+            "t", "s", new FakeLlm.Item("Ben sends the bill", TaskKinds.Commitment, TaskKinds.Other),
+            new FakeLlm.Item("Ben books the cabin", TaskKinds.Commitment, TaskKinds.Other));
+        await TickAndRun();
+        var ticked = await Db.ScalarAsync<Guid>("select id from tasks where text = 'Ben books the cabin'");
+        (await Server.CreateAuthorizedClient().PatchAsJsonAsync($"/api/v1/tasks/{ticked}", new { done = true })).EnsureSuccessStatusCode();
+
+        Server.Time.Advance(TimeSpan.FromMinutes(5));
+        await AddSegment(id, Talk, Now);
+        Llm.Respond = _ => FakeLlm.AnswerItems("t", "s");
+        await TickAndRun();
+
+        Assert.Equal([new TaskKindRow("Ben books the cabin", TaskKinds.WaitingOn)], await TaskKindRows(id));
     }
 
     [Fact]
@@ -168,7 +224,7 @@ public sealed class TaskKindsTests(PostgresFixture db) : AiTestBase(db)
         await TickAndRun();
 
         var request = Assert.Single(Llm.Requests);
-        foreach (var kind in new[] { "Kind \"commitment\"", "Kind \"idea\"", "Kind \"advice\"", "Kind \"noise\"", "Set owner to \"wearer\"" })
+        foreach (var kind in new[] { "Kind \"commitment\"", "Kind \"idea\"", "Kind \"advice\"", "Kind \"noise\"", "A commitment of another person", "Set owner to \"wearer\"" })
         {
             Assert.Contains(kind, request.System, StringComparison.Ordinal);
         }

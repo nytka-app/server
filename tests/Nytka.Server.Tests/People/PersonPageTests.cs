@@ -56,13 +56,13 @@ public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
             """,
             new { id = Guid.CreateVersion7(), person, text, deleted, at = T0 });
 
-    private Task AddTask(Guid conversation, Guid? person, string text, bool done = false, bool deleted = false) =>
+    private Task AddTask(Guid conversation, Guid? person, string text, bool done = false, bool deleted = false, string kind = "commitment") =>
         db.ExecuteAsync(
             """
-            insert into tasks (id, conversation_id, text, fingerprint, done, deleted_at, person_id, created_at, updated_at)
-            values (@id, @conversation, @text, @text, @done, case when @deleted then @at end, @person, @at, @at)
+            insert into tasks (id, conversation_id, text, fingerprint, done, deleted_at, person_id, kind, created_at, updated_at)
+            values (@id, @conversation, @text, @text, @done, case when @deleted then @at end, @person, @kind, @at, @at)
             """,
-            new { id = Guid.CreateVersion7(), conversation, person, text, done, deleted, at = T0 });
+            new { id = Guid.CreateVersion7(), conversation, person, text, done, deleted, kind, at = T0 });
 
     private async Task<JsonElement> View(Guid id) => await Client.GetFromJsonAsync<JsonElement>($"/api/v1/people/{id}");
 
@@ -109,6 +109,29 @@ public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0, other.GetProperty("voiceprintSamples").GetInt32());
         Assert.Empty(other.GetProperty("conversations").EnumerateArray());
         Assert.Equal("Call Olena", Assert.Single(other.GetProperty("openTasks").EnumerateArray()).GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task The_page_lists_what_the_person_owes_as_open_waiting_on_items_apart_from_their_tasks()
+    {
+        var anna = await Person("Anna");
+        var olena = await Person("Olena");
+        var conversation = await SearchSeed.ConversationAsync(db.DataSource, T0, aiTitle: "Market");
+        await AddTask(conversation, anna, "Bring jars");
+        await AddTask(conversation, anna, "Send the contract", kind: "waiting_on");
+        await AddTask(conversation, anna, "Sent the receipt", done: true, kind: "waiting_on");
+        await AddTask(conversation, anna, "Forgot it", deleted: true, kind: "waiting_on");
+        await AddTask(conversation, anna, "Try the new cafe", kind: "idea");
+        await AddTask(conversation, olena, "Book the cabin", kind: "waiting_on");
+
+        var page = await View(anna);
+
+        var waiting = Assert.Single(page.GetProperty("waitingOn").EnumerateArray());
+        Assert.Equal("Send the contract", waiting.GetProperty("text").GetString());
+        Assert.Equal("waiting_on", waiting.GetProperty("kind").GetString());
+        Assert.Equal("Anna", waiting.GetProperty("personName").GetString());
+        Assert.Equal("Bring jars", Assert.Single(page.GetProperty("openTasks").EnumerateArray()).GetProperty("text").GetString());
+        Assert.Equal("Book the cabin", Assert.Single((await View(olena)).GetProperty("waitingOn").EnumerateArray()).GetProperty("text").GetString());
     }
 
     [Fact]

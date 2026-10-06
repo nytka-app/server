@@ -355,6 +355,30 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task List_tasks_lists_what_others_owe_for_waiting_on_and_in_all_but_not_by_default()
+    {
+        await db.ExecuteAsync(
+            """
+            insert into tasks (id, conversation_id, text, fingerprint, kind, person_id, created_at, updated_at)
+            values ('018f0000-0000-7000-8000-0000000000a6', @a, 'Olena sends the photos', 'olena sends the photos',
+                    'waiting_on', '018f0000-0000-7000-8000-0000000000b1', @start, @start)
+            """,
+            new { a = Conversation, start = Start });
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var waiting = Structured(await client.CallToolAsync("list_tasks", new Dictionary<string, object?> { ["kind"] = "waiting_on" }));
+        var all = Structured(await client.CallToolAsync("list_tasks", new Dictionary<string, object?> { ["kind"] = "all" }));
+        var byDefault = Structured(await client.CallToolAsync("list_tasks"));
+
+        var item = Assert.Single(waiting.GetProperty("items").EnumerateArray());
+        Assert.Equal("Olena sends the photos", item.GetProperty("text").GetString());
+        Assert.Equal("waiting_on", item.GetProperty("kind").GetString());
+        Assert.Equal("Olena", item.GetProperty("personName").GetString());
+        Assert.Contains("Olena sends the photos", all.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("text").GetString()));
+        Assert.DoesNotContain("Olena sends the photos", byDefault.GetProperty("items").EnumerateArray().Select(t => t.GetProperty("text").GetString()));
+    }
+
+    [Fact]
     public async Task List_tasks_with_a_bad_kind_is_invalid_params()
     {
         await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
