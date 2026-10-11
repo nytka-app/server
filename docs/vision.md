@@ -1,9 +1,9 @@
 # Nytka
 
-Nytka is a companion app and server for the Omi AI necklace. It keeps every recording, transcript
-and summary on a server you run. The pendant streams audio to the Nytka Android app, the app
-forwards it to your Nytka server, and the server transcribes and summarizes it with models you
-pick, so Omi's cloud sees none of it.
+Nytka is a companion app and server for AI pendants, starting with the Omi necklace. It keeps
+every recording, transcript and summary on a server you run. The pendant streams audio to the Nytka
+Android app, the app forwards it to your Nytka server, and the server transcribes and summarizes it
+with models you pick, so the pendant maker's cloud sees none of it.
 
 Nytka (нитка) is Ukrainian for thread: the thread of your day, on your own server.
 
@@ -20,12 +20,17 @@ endpoint and nothing else. You cannot choose the model that reads your conversat
 move that step onto your own hardware. Nytka replaces the app and the cloud with a pair you control:
 an Android app that talks to the pendant, and a server that does the rest.
 
+Pendant makers also change hands. Meta bought Limitless, which stopped selling its pendant on
+5 December 2025 and says it supports existing pendants throughout 2026; after that, owners keep a
+working pendant and may lose the app. Nytka supports more than one pendant, so a pendant can outlive its maker's
+cloud.
+
 ## Who it is for
 
-You own an Omi necklace and you already run services yourself: Docker Compose on a home server or a
-VPS, reached through a reverse proxy or a VPN such as Tailscale. You can edit an `.env` file and
-read container logs. Nytka assumes that much. A hosted version for people who do not self-host is
-out of scope.
+You own an Omi necklace, or a Limitless pendant once Nytka supports it, and you already run
+services yourself: Docker Compose on a home server or a VPS, reached through a reverse proxy or a VPN
+such as Tailscale. You can edit an `.env` file and read container logs. Nytka assumes that much.
+Until 1.0 Nytka is for people who self-host; whether a hosted version follows is decided after 1.0.
 
 ## Principles
 
@@ -169,9 +174,13 @@ the two do not match. The spec files keep their `v0.x` names.
 - **Your voice (shipped).** Voice enrollment on the server, so segments are labelled as yours
   with any transcription provider. The app enrolls your voice from the pendant and lets you mark a
   line as yours or not yours. Details: [specs/your-voice.md](specs/your-voice.md).
-- **1.0, anyone can run it.** A person with an Omi pendant installs the server and the app from the
-  documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a week. This is
-  a real release number, the target of the 1.0 release.
+- **More pendants (planned).** The Limitless pendant: connect, stream and sync the audio it
+  stores, ported from the official Omi app's MIT-licensed Limitless connector, and an import of a
+  Limitless data export. Limitless sends Opus frames like Omi, so the server needs no change. Plaud
+  and Bee follow after 1.0; Bee sends AAC, so the server needs a decoder for it.
+- **1.0, anyone can run it.** A person with an Omi or Limitless pendant installs the server and the
+  app from the documentation in 15 minutes, from F-Droid or IzzyOnDroid, and keeps using it for a
+  week. This is a real release number, the target of the 1.0 release.
 - **People (shipped on the server).** Name suggestions for unnamed voices from what is said, opt-in grouping of
   other people's voices with "Who is this?" cards, facts and a page for each person, tasks owed to a
   person, a brief before a calendar meeting, and one review inbox. Details:
@@ -184,9 +193,12 @@ the two do not match. The spec files keep their `v0.x` names.
 - **After 1.0.** Firmware updates from the app, live transcripts, a local model or stripping
   personal data before text reaches a cloud model, opt-in location tags, a home-screen widget,
   vector search, an optional supporter key that unlocks nothing, and web, desktop or iOS clients.
-- **Not planned.** A hosted service, user accounts, sharing, a plugin store, a Wear OS tile,
-  transcription on the phone, several pendants per person, and database encryption inside the app
-  (encrypt the disk instead).
+- **Decided after 1.0.** A hosted service. If one comes, it runs one Nytka server per person from
+  the same image, so Nytka still needs no user accounts, and the full export moves anyone between
+  hosted and self-hosted.
+- **Not planned.** User accounts, sharing, a plugin store, a Wear OS tile, transcription on the
+  phone, more than one pendant connected at a time, and database encryption inside the app (encrypt
+  the disk instead).
 
 ## Configuration and security
 
@@ -238,8 +250,8 @@ nothing phones home.
 - **Docs.** This file holds the whole picture. `docs/specs/` holds one spec per version. The server
   README holds setup, configuration, provider recipes and the API; the Android README holds the
   app's.
-- **Independence.** Based Hardware makes Omi and owns its name. Nytka is an independent project with
-  no affiliation to them.
+- **Independence.** Based Hardware makes Omi and owns its name; Meta owns Limitless. Nytka is an
+  independent project with no affiliation to either.
 
 ## Key decisions
 
@@ -247,12 +259,13 @@ nothing phones home.
 |---|---|
 | Thin app, smart server | You change prompts and models without shipping an app, and the phone does little work. |
 | Kotlin, Android only | The official Omi app handles Bluetooth and its foreground service in native Kotlin under MIT, and Nytka reuses that code. iOS waits for a contributor with an iPhone. |
+| More than one pendant | The official Omi app (MIT) holds Bluetooth connectors for the Limitless, Plaud, Bee and other pendants. Porting them costs less than reverse engineering, and a pendant outlives its maker's cloud. |
 | Android 12 and later | One Bluetooth permission model, with no location permission needed to scan. |
 | Raw Opus to the server | Decoding on the phone adds no quality and multiplies the upload size. |
 | HTTP chunks first | Chunks survive flaky mobile networks. WebSocket arrives with live transcripts. |
 | .NET, Postgres, Dapper, DbUp | The maintainer's stack. Plain SQL suits jsonb, full-text search and pgvector. |
 | Hilt | It injects dependencies into the foreground service and view models, and swaps in the fake pendant for tests. |
-| One person per server | A household runs two servers. Accounts would crowd out the first versions. |
+| One person per server | A household runs two servers. Accounts would crowd out the first versions. A hosted offer, if one comes, runs the same image once per person. |
 | Apache-2.0 | It grants a patent license and keeps the name out of the license. |
 | `io.github.nytka_app` | A permanent app ID with no domain to buy. The website lives on GitHub Pages. |
 | Two-minute conversation gap | A starting value; each server can tune it. |
@@ -263,7 +276,7 @@ nothing phones home.
 
 | Term | Meaning |
 |---|---|
-| Pendant | The Omi necklace. |
+| Pendant | The wearable recorder: the Omi necklace, and the Limitless pendant once Nytka supports it. |
 | Frame | One 20 ms Opus audio frame, with a sequence number and a capture time. |
 | Chunk | A batch of frames the app uploads in one request. |
 | Conversation | Speech with no gap of two minutes or more inside it. |
