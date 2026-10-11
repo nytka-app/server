@@ -8,10 +8,8 @@ summary and tasks, and keeps lasting facts about you as memories. It searches ev
 and English. Webhooks tell your other tools when something new exists, and AI agents read it all
 over MCP. Omi's cloud sees none of it.
 
-Status: the first four milestones of the [roadmap](docs/vision.md#roadmap) are shipped: capture and
-transcription ([spec v0.1](docs/specs/v0.1.md)), the AI layer ([v0.2](docs/specs/v0.2.md)), offline
-sync ([v0.3](docs/specs/v0.3.md)) and memory and search ([v0.4](docs/specs/v0.4.md)). Parts of the
-later milestones are shipped too. Each spec says what it does and does not do. Milestones have
+Status: what is shipped and what comes next, milestone by milestone, is in the
+[roadmap](ROADMAP.md). Each spec in `docs/specs/` says what it does and does not do. Milestones have
 names and release numbers come from release-please, so the two differ.
 
 ## Install in 15 minutes
