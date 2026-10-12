@@ -1,11 +1,11 @@
 ---
 title: "Status"
-description: "What works, what is partial and what is not built in Nytka server v0.19.0 and Android app v0.15.0, with the test behind each."
+description: "What works, what is partial and what is not built in Nytka server v0.25.0 and Android app v0.17.0, with the test behind each."
 order: 7
 section: "Project"
 ---
 
-This page describes server v0.19.0 and Android app v0.15.0, the latest GitHub releases of
+This page describes server v0.25.0 and Android app v0.17.0, the latest GitHub releases of
 [nytka-app/server](https://github.com/nytka-app/server/releases) and
 [nytka-app/android](https://github.com/nytka-app/android/releases). There is no 1.0 release.
 Roadmap milestones have names and release numbers come from release-please, so the two differ
@@ -62,9 +62,8 @@ The app is documented in [its own README](https://github.com/nytka-app/android#r
 checked against it:
 
 - Installs from an APK on [GitHub Releases](https://github.com/nytka-app/android/releases/latest).
-- The Ask tab is a placeholder in that README ("Arrives in a later version"). The vision file calls
-  the app side of Ask shipped, so the two disagree; the app README is newer and is the one to trust.
-- Tag chips, the review inbox, offline sync and voice enrollment are described there.
+- Ask, tags, people and the review inbox are described there as shipped.
+- Offline sync and voice enrollment are described there.
 
 ## Not built
 
