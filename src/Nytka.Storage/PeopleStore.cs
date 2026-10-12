@@ -136,6 +136,14 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
     public async Task<PersonRow?> GetAsync(Guid id, CancellationToken ct) =>
         (await ListAsync(ct)).FirstOrDefault(p => p.Id == id);
 
+    /// <summary>Everyone known by name, for the transcription endpoint's vocabulary hint; a person known only by a role is not one.</summary>
+    public async Task<IReadOnlyList<string>> NamesAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<string>(new CommandDefinition(
+            "select name from people where named order by lower(name)", cancellationToken: ct))).ToList();
+    }
+
     public Task<IReadOnlyList<PersonSummary>> SummariesAsync(CancellationToken ct) => SummariesAsync(null, ct);
 
     /// <summary>Everyone, most recently heard first (never heard last), then by name; <paramref name="tag"/> (normalized) keeps only people who have it.</summary>
