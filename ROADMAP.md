@@ -68,9 +68,11 @@ show yet.
   - Shipped: the server guesses the kind of each stretch of speech and labels it, but changes nothing
     yet (shadow mode); the app shows the labels, hides media on request and asks about doubtful
     stretches in the review inbox.
-  - Left: the check, then switching it on, and its docs.
-  - Done when: of the last 100 reviewed stretches guessed as media, at least 95 are media, and the
-    guess is on ([spec](docs/specs/speech-kind.md)).
+  - Left: the check, then switching it on and backfilling conversations stored before that, and its
+    docs.
+  - Done when: of the last 100 reviewed stretches guessed media, at least 95 are media, and of the
+    last 100 guessed unsure, at least 80 are people; the guess is on and the backfill has run
+    ([spec](docs/specs/speech-kind.md)).
 
 ## Stage 2 — Anyone can run it (ends with 1.0)
 
