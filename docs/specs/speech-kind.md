@@ -291,6 +291,10 @@ guessed `media` that the owner reviewed or marked:
 Below that, raise `speech.mediaThreshold`, or leave the mode at `shadow`. The study's 27 media clips fix the model;
 they do not prove the rate in the field, which is why the threshold is high and the first weeks are shadow.
 
+**Turning it on.** Flipping `speech.mode` to `on` queues `apply-speech`, which re-derives every stored guess under
+the new mode at once. It does not reach conversations with lines nobody has guessed yet; those still need
+`POST /api/v1/speech/backfill` (What media stops feeding) before they stop feeding the people features too.
+
 **Re-running when the model changes.** The study's harness lives outside the repository (it handles real audio).
 A new model version re-guesses from stored features it can recompute, and the owner re-labels nothing: the marks
 the owner already made are the labels, and `speech/eval` is the data. An AUC and the count of people called media
