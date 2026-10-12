@@ -160,6 +160,12 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// <c>task.created</c> again, while its old row is deleted or, if the user touched it, stays. The
     /// spec allows this; v0.4's webhooks will see the second event.
     /// </para>
+    /// <para>
+    /// NYTKA-75: a fingerprint this conversation has not seen before that still matches an open (not
+    /// done, not deleted) task of another conversation inserts no row either; the match is recorded
+    /// in <c>task_duplicates</c> instead, since a task's <c>conversation_id</c> cannot name a second
+    /// conversation.
+    /// </para>
     /// </summary>
     public async Task<IReadOnlyList<Guid>> ReconcileAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, IReadOnlyList<AiTask> returned,
@@ -204,6 +210,22 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                     }
                 }
 
+                continue;
+            }
+
+            var duplicateOf = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+                """
+                select id from tasks
+                where fingerprint = @Fingerprint and conversation_id <> @conversationId and done = false and deleted_at is null
+                order by id
+                limit 1
+                """,
+                new { task.Fingerprint, conversationId }, transaction, cancellationToken: ct));
+            if (duplicateOf is { } existingTaskId)
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "insert into task_duplicates (conversation_id, task_id, created_at) values (@conversationId, @existingTaskId, @now)",
+                    new { conversationId, existingTaskId, now }, transaction, cancellationToken: ct));
                 continue;
             }
 
