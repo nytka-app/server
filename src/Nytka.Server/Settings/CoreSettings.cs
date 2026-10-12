@@ -14,7 +14,7 @@ public sealed class CoreSettings : ISettingsGroup
         new("stt.apiKey", SettingType.Secret, null, _ => null),
         new("stt.model", SettingType.String, null, SettingValidators.MaxLength(128)),
         new("stt.language", SettingType.Language, "auto", SettingValidators.Language),
-        new("stt.vocabulary", SettingType.String, null, SettingValidators.MaxLength(4096)),
+        new("stt.vocabulary", SettingType.String, null, SettingValidators.MaxLength(1000)),
         new("conversations.gap", SettingType.Duration, "00:02:00",
             SettingValidators.Duration(TimeSpan.FromSeconds(30), TimeSpan.FromHours(1))),
         new(Ai.UserTimeZone.Key, SettingType.String, Ai.UserTimeZone.Default, Ai.UserTimeZone.Validate),
