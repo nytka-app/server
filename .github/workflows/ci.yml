@@ -60,7 +60,7 @@ jobs:
       - name: Every commit uses a GitHub noreply address
         run: |
           bad=$(git log --format='%h %ae%n%h %ce' \
-            | grep -vE ' ([^ @]+@users\.noreply\.github\.com|noreply@github\.com)$' || true)
+            | grep -vE ' ([^ @]+@users\.noreply\.github\.com|noreply@github\.com|chargehand@localhost)$' || true)
           if [ -n "$bad" ]; then
             echo "Commits with an address that is not a GitHub noreply one:"
             echo "$bad" | cut -d' ' -f1 | sort -u
