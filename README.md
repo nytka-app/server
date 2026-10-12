@@ -672,6 +672,12 @@ are no due dates and no hand-made tasks. Tick, reopen, edit or delete a task in 
 never removes or rewrites one you touched. `GET /api/v1/tasks` lists open or done tasks, newest
 first, with the title and day of their conversation.
 
+A task whose normalized text matches an open (not done, not deleted) task from an earlier conversation is not
+created again: a task's `conversation_id` cannot name a second conversation, so the match is recorded in
+`task_duplicates` (`conversation_id`, `task_id`, `created_at`) instead, and raises no `task.created`. Matching ignores
+case, punctuation and whitespace, the same normalization a task's own fingerprint uses, so only text that is
+the same in substance is merged. `task_duplicates` has no API.
+
 A task can name the person it is owed to or who asked for it (`personId`, `personName`). A summary
 sets it when it is created, only to a person whose voice you named in that conversation (the wearer
 never counts), matching the name ignoring case; any other name leaves it empty. A later summary never

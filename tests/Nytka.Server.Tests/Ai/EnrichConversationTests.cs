@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using Nytka.Server.Ai;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
+using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Ai;
 
@@ -678,6 +679,108 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(
             await Db.QueryAsync<Guid>("select id from tasks order by id"),
             Events.Events.Skip(1).Select(e => e.SubjectId));
+    }
+
+    private Task<long> Duplicates(Guid conversationId) =>
+        Db.ScalarAsync<long>("select count(*) from task_duplicates where conversation_id = @conversationId", new { conversationId });
+
+    private Task<Guid> TaskId(Guid conversationId) =>
+        Db.ScalarAsync<Guid>("select id from tasks where conversation_id = @conversationId", new { conversationId });
+
+    [Fact]
+    public async Task A_task_matching_an_open_task_from_an_earlier_conversation_is_not_duplicated()
+    {
+        var first = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "Call Ben");
+        await TickAndRun();
+        var firstTaskId = await TaskId(first);
+
+        var second = await Seed(Talk);
+        Events.Reset();
+        await TickAndRun();
+
+        Assert.Empty(await Tasks(second));
+        Assert.Equal(1, await Duplicates(second));
+        Assert.Equal(firstTaskId, await Db.ScalarAsync<Guid>("select task_id from task_duplicates where conversation_id = @second", new { second }));
+        Assert.DoesNotContain("task.created", Events.Types);
+        Assert.Equal(["Call Ben"], (await Tasks(first)).Select(t => t.Text)); // the original is untouched
+    }
+
+    [Fact]
+    public async Task The_cross_conversation_match_ignores_case_punctuation_and_whitespace()
+    {
+        var first = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "Call Ben");
+        await TickAndRun();
+
+        var second = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "  call, BEN!  ");
+        await TickAndRun();
+
+        Assert.Empty(await Tasks(second));
+        Assert.Equal(1, await Duplicates(second));
+    }
+
+    [Fact]
+    public async Task Distinct_task_text_across_conversations_is_not_merged()
+    {
+        var first = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "Call Ben");
+        await TickAndRun();
+
+        var second = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "Call Benjamin");
+        await TickAndRun();
+
+        Assert.Equal(["Call Benjamin"], (await Tasks(second)).Select(t => t.Text));
+        Assert.Equal(0, await Duplicates(second));
+    }
+
+    [Fact]
+    public async Task A_task_matching_a_done_task_from_an_earlier_conversation_is_created_again()
+    {
+        var first = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "Call Ben");
+        await TickAndRun();
+        var client = Server.CreateAuthorizedClient();
+        (await client.PatchAsJsonAsync($"/api/v1/tasks/{await TaskId(first)}", new { done = true })).EnsureSuccessStatusCode();
+
+        var second = await Seed(Talk);
+        await TickAndRun();
+
+        Assert.Equal(["Call Ben"], (await Tasks(second)).Select(t => t.Text));
+        Assert.Equal(0, await Duplicates(second));
+    }
+
+    [Fact]
+    public async Task A_task_matching_a_deleted_task_from_an_earlier_conversation_is_created_again()
+    {
+        var first = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.Answer("t", "s", "Call Ben");
+        await TickAndRun();
+        var client = Server.CreateAuthorizedClient();
+        (await client.DeleteAsync($"/api/v1/tasks/{await TaskId(first)}")).EnsureSuccessStatusCode();
+
+        var second = await Seed(Talk);
+        await TickAndRun();
+
+        Assert.Equal(["Call Ben"], (await Tasks(second)).Select(t => t.Text));
+        Assert.Equal(0, await Duplicates(second));
+    }
+
+    [Fact]
+    public async Task The_match_is_not_limited_to_commitments()
+    {
+        var first = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.AnswerItems("t", "s", new FakeLlm.Item("Open a bakery", TaskKinds.Idea, TaskKinds.Wearer));
+        await TickAndRun();
+
+        var second = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.AnswerItems("t", "s", new FakeLlm.Item("Open a bakery", TaskKinds.Idea, TaskKinds.Wearer));
+        await TickAndRun();
+
+        Assert.Empty(await Tasks(second));
+        Assert.Equal(1, await Duplicates(second));
     }
 
     [Fact]
