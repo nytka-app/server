@@ -8,11 +8,12 @@ public class TranscriptionClientTests
 {
     private readonly FakeStt _stt = new();
 
-    private TranscriptionClient Client(Action<NytkaOptions.SttOptions>? configure = null)
+    private TranscriptionClient Client(Action<NytkaOptions.SttOptions>? configure = null, IReadOnlyList<string>? namedPeople = null)
     {
         var options = new NytkaOptions { Stt = { Url = "http://stt.test/v1/audio/transcriptions" } };
         configure?.Invoke(options.Stt);
-        return new TranscriptionClient(new HttpClient(_stt.CreateHandler()), Options.Create(options));
+        return new TranscriptionClient(
+            new HttpClient(_stt.CreateHandler()), Options.Create(options), _ => Task.FromResult(namedPeople ?? []));
     }
 
     [Fact]
@@ -44,6 +45,54 @@ public class TranscriptionClientTests
         var request = Assert.Single(_stt.Requests);
         Assert.Null(request.Authorization);
         Assert.Equal(["response_format"], request.Fields.Keys);
+    }
+
+    [Fact]
+    public async Task Sends_the_vocabulary_as_the_prompt()
+    {
+        await Client(s => s.Vocabulary = "Nytka, Opus").TranscribeAsync([1], default);
+
+        Assert.Equal("Nytka, Opus", Assert.Single(_stt.Requests).Fields["prompt"]);
+    }
+
+    [Fact]
+    public async Task Splits_the_vocabulary_on_commas_and_newlines()
+    {
+        await Client(s => s.Vocabulary = "Nytka,Opus\nSilero, ,\n").TranscribeAsync([1], default);
+
+        Assert.Equal("Nytka, Opus, Silero", Assert.Single(_stt.Requests).Fields["prompt"]);
+    }
+
+    [Fact]
+    public async Task Adds_the_names_of_named_people_to_the_prompt()
+    {
+        await Client(s => s.Vocabulary = "Nytka", namedPeople: ["Anna", "Bodhi"]).TranscribeAsync([1], default);
+
+        Assert.Equal("Nytka, Anna, Bodhi", Assert.Single(_stt.Requests).Fields["prompt"]);
+    }
+
+    [Fact]
+    public async Task Deduplicates_the_vocabulary_and_the_named_people_without_case()
+    {
+        await Client(s => s.Vocabulary = "anna, Nytka", namedPeople: ["Anna", "Nytka"]).TranscribeAsync([1], default);
+
+        Assert.Equal("anna, Nytka", Assert.Single(_stt.Requests).Fields["prompt"]);
+    }
+
+    [Fact]
+    public async Task Caps_the_prompt_to_a_reasonable_length()
+    {
+        await Client(s => s.Vocabulary = string.Join(",", Enumerable.Range(0, 300).Select(i => $"word{i}"))).TranscribeAsync([1], default);
+
+        Assert.True(Assert.Single(_stt.Requests).Fields["prompt"].Length <= 1000);
+    }
+
+    [Fact]
+    public async Task Leaves_out_the_prompt_with_no_vocabulary_and_no_named_people()
+    {
+        await Client().TranscribeAsync([1], default);
+
+        Assert.DoesNotContain("prompt", Assert.Single(_stt.Requests).Fields.Keys);
     }
 
     [Fact]

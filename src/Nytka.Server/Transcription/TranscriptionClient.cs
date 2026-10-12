@@ -5,15 +5,21 @@ using Microsoft.Extensions.Options;
 
 namespace Nytka.Server.Transcription;
 
+/// <summary>The named people to spell out for the transcription endpoint, alongside <c>stt.vocabulary</c>.</summary>
+public delegate Task<IReadOnlyList<string>> NamedPeopleLookup(CancellationToken ct);
+
 /// <summary>
 /// Talks to an OpenAI-compatible transcription endpoint (<c>POST /v1/audio/transcriptions</c>, or a
 /// whisper.cpp-style <c>/inference</c>, which takes the same <c>file</c> field).
 /// </summary>
-public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> options)
+public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> options, NamedPeopleLookup namedPeople)
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(120);
 
     private const int MaxSpeakerLength = 64;
+
+    /// <summary>The OpenAI transcription API's own limit is 244 tokens; this stays well under it in characters.</summary>
+    private const int MaxVocabularyLength = 1000;
 
     public async Task<TranscriptionResult> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
@@ -34,6 +40,11 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
             form.Add(new StringContent(stt.Language), "language");
         }
 
+        if (await BuildVocabularyAsync(stt.Vocabulary, ct) is { Length: > 0 } vocabulary)
+        {
+            form.Add(new StringContent(vocabulary), "prompt");
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Post, stt.Url) { Content = form };
         if (!string.IsNullOrWhiteSpace(stt.ApiKey))
         {
@@ -48,6 +59,23 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
 
         return Parse(await response.Content.ReadAsStringAsync(ct));
     }
+
+    /// <summary>
+    /// <paramref name="vocabulary"/> (<c>stt.vocabulary</c>, comma- or newline-separated) and the names of named
+    /// people, deduplicated and joined with <c>, </c> as the OpenAI transcription API's spelling hint; capped to
+    /// <see cref="MaxVocabularyLength"/> characters. Empty with nothing to hint.
+    /// </summary>
+    private async Task<string> BuildVocabularyAsync(string? vocabulary, CancellationToken ct)
+    {
+        var words = ParseWords(vocabulary).Concat(await namedPeople(ct)).Distinct(StringComparer.OrdinalIgnoreCase);
+        var joined = string.Join(", ", words);
+        return joined.Length <= MaxVocabularyLength ? joined : joined[..MaxVocabularyLength];
+    }
+
+    private static IEnumerable<string> ParseWords(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(['\n', ','], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     /// <summary>
     /// Reads <c>text</c> and <c>segments[].start/end/text/speaker</c>. Missing or odd fields are skipped

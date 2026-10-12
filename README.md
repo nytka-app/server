@@ -159,6 +159,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Stt__ApiKey` | no | | env only | Sent as a bearer token; OpenAI and Groq need it |
 | `Nytka__Stt__Model` | no | | editable | Sent as `model`; OpenAI and Groq need it |
 | `Nytka__Stt__Language` | no | `auto` | editable | `auto` lets the endpoint detect the language; or a language tag such as `uk` or `en`, sent as `language` (providers usually want a two-letter ISO 639-1 code) |
+| `Nytka__Stt__Vocabulary` | no | empty | editable | Comma- or newline-separated words sent as `prompt`, a spelling hint for names and jargon ([Transcription endpoints](#transcription-endpoints)); named people's names are added automatically. Capped to 1000 characters; never logged |
 | `Nytka__Conversations__Gap` | no | `00:02:00` | editable | Silence that ends a conversation, `hh:mm:ss`, from 30 seconds to 1 hour |
 | `Nytka__Audio__RetentionDays` | no | `14` | editable | Days to keep speech audio and [context ranges](#context-from-the-phone), 0 to 3650; `0` deletes audio once transcribed and ranges a day after they end |
 | `Nytka__Mute__Windows` | no | `[]` | editable | JSON list of weekly windows whose audio is dropped by capture time before transcription, at most 50, such as `[{"days":[1,2,3,4,5],"start":"09:30","end":"10:00"}]`. `days` are ISO weekdays of the start day (1 Monday to 7 Sunday), `start` and `end` are local `HH:mm`; an end at or before the start crosses midnight. Uses `Nytka__User__TimeZone` |
@@ -246,7 +247,9 @@ hint, last use and revocation.
 
 The server sends each batch of speech as a WAV file (16 kHz, mono, 16-bit) in `multipart/form-data`
 with `response_format=verbose_json`, and reads `text` and `segments`. The endpoint must support
-`verbose_json`:
+`verbose_json`. With `Nytka__Stt__Vocabulary` set or named people on record, it also sends `prompt`:
+the endpoint's own spelling hint, `Nytka__Stt__Vocabulary`'s words and named people's names, joined
+with `, ` and capped to 1000 characters; left out when there is nothing to hint.
 
 | Provider | `Nytka__Stt__Url` | `Nytka__Stt__Model` |
 |---|---|---|

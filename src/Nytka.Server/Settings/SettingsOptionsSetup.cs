@@ -19,6 +19,7 @@ public sealed class SettingsOptionsSetup(SettingsService settings) : IPostConfig
         options.Stt.ApiKey = settings.Get("stt.apiKey", table);
         options.Stt.Model = settings.Get("stt.model", table);
         options.Stt.Language = settings.Get("stt.language", table);
+        options.Stt.Vocabulary = settings.Get("stt.vocabulary", table);
         options.Conversations.Gap = Duration(settings.Get("conversations.gap", table), options.Conversations.Gap);
         options.Audio.RetentionDays = settings.Get("audio.retentionDays", table) is { } days
             ? int.Parse(days, CultureInfo.InvariantCulture)

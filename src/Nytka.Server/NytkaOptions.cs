@@ -24,6 +24,8 @@ public sealed class NytkaOptions
         public string? Model { get; set; }
 
         public string? Language { get; set; }
+
+        public string? Vocabulary { get; set; }
     }
 
     public sealed class ConversationOptions
