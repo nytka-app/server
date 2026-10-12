@@ -12,6 +12,22 @@ Status: what is shipped and what comes next, milestone by milestone, is in the
 [roadmap](ROADMAP.md). Each spec in `docs/specs/` says what it does and does not do. Milestones have
 names and release numbers come from release-please, so the two differ.
 
+## How Nytka compares
+
+Facts as of 2026-10, checked against each project's own README or store listing. "Unknown" means the
+project's own docs do not say.
+
+| | Nytka | [Omi](https://github.com/BasedHardware/omi) (official app) | [Chronicle](https://github.com/SimpleOpenSoftware/chronicle) | [LocusTether](https://github.com/thecloudcowboy/locus-tether) |
+|---|---|---|---|---|
+| Self-host effort | Docker Compose | Firebase, Google Cloud Storage, Pinecone, Redis, OpenAI, no Compose file | Docker + MongoDB | CUDA, Docker, Ollama, Syncthing |
+| Choose your models | any OpenAI-compatible endpoint | fixed providers with your keys | yes | Ollama only |
+| Usage quotas | none | 300 min and 30 questions a month free | none | none |
+| Offline sync from the pendant | yes | yes | unknown | no |
+| Tags | yes | no | unknown | no |
+| Raw audio export | yes | no | unknown | zip |
+| TV and media kept out of people | yes | no | no | no |
+| iOS | no | yes | yes | no |
+
 ## Install in 15 minutes
 
 For a person with an Omi pendant and a computer or small server that stays on. The times add up to
