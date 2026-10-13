@@ -242,7 +242,7 @@ needs none.
 | Scope | May call |
 |---|---|
 | `admin` | Everything. The app needs it, and refuses a `read` token. |
-| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories, people and search. |
+| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories, people, search and the [calendar feed](#calendar-feed). |
 
 A valid token with too little scope gets `403`. A missing, unknown or revoked one gets `401`. A new
 endpoint is closed to `read` until it is marked.
@@ -935,6 +935,24 @@ Nextcloud and most others have one). Nothing is fetched while it is empty.
   carries `{ id, title, startsAt, people: [{ id, name }], text }`. A brief goes with its event, and with a
   person you delete.
 
+## Calendar feed
+
+`GET /api/v1/calendar.ics` serves an RFC 5545 calendar back out: the events of your [calendar
+feed](#calendar-briefs) that have not ended yet, each as a `VEVENT`, soonest first. Tasks carry no due date
+(see [Tasks](#tasks)), so no `VTODO` is written; the day they do, this feed is where they would appear. The
+calendar is at most as fresh as the feed's own 15-minute fetch. Content type is `text/calendar`; every line
+is CRLF-terminated and folded at 75 octets per [RFC 5545 §3.1](https://www.rfc-editor.org/rfc/rfc5545), and
+every `SUMMARY` is escaped for a literal backslash, comma, semicolon and newline. Each item carries a `UID`
+(stable across fetches, one occurrence of a recurring event included) and a `DTSTAMP` of the moment the feed
+was built.
+
+**The query-token risk.** A calendar app cannot set an `Authorization` header, so this one route also accepts
+the token as `?token=` in the subscription URL you give it. Only do this with a `read` token, made for this
+feed alone, so you can revoke it without touching anything else. The token then lives in the calendar app's
+own storage and sync, and in the access logs of anything between it and your server (a reverse proxy, your
+calendar provider's own servers if it polls the URL on your behalf); treat the URL itself as a secret, the same
+as the ICS address in `Nytka__Calendar__IcsUrl`.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries, memories, and
@@ -1291,7 +1309,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1370,6 +1388,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation or person: `204`; `404` and `409` as accept |
 | DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
+| GET | `/api/v1/calendar.ics` | read | An RFC 5545 calendar (`text/calendar`), the [calendar feed](#calendar-feed)'s events not over yet as `VEVENT`; also takes the token as `?token=` (see [Calendar feed](#calendar-feed) for the risk) |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
