@@ -75,9 +75,6 @@ rm -f .env.bak
 echo "Starting Postgres, the server and the local speech-to-text and language model (first start pulls their images)..."
 docker compose up -d --wait
 
-echo "Pulling the local language model ($local_llm_model, about 1.3 GB; first run only, needs network)..."
-docker compose exec -T llm-local ollama pull "$local_llm_model"
-
 echo
 echo "Nytka is up at http://127.0.0.1:8080/healthz"
 echo
@@ -88,3 +85,13 @@ echo "Local speech-to-text and language models are slower and less accurate than
 echo "provider (Groq, OpenAI). To switch, edit ${dir}/.env (README: 'Transcription endpoints',"
 echo "'The language model') and run 'docker compose up -d' again."
 echo "Next: give the phone an HTTPS address (README, 'Install in 15 minutes', step 4)."
+
+# After the secrets and the token are shown, so a failed or slow pull (it needs network, unlike
+# the rest of this script) never hides them: a retry is just this line, run by hand.
+echo
+echo "Pulling the local language model ($local_llm_model, about 1.3 GB; first run only, needs network)..."
+if ! docker compose exec -T llm-local ollama pull "$local_llm_model"; then
+  echo "Could not pull $local_llm_model; retry with:" >&2
+  echo "  cd ${dir} && docker compose exec llm-local ollama pull $local_llm_model" >&2
+  exit 1
+fi
