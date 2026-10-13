@@ -28,6 +28,11 @@ public sealed record ConversationCounts(int Imported, int AlreadyImported, int O
 
 public sealed record ImportResult(ConversationCounts Conversations, int Segments, ImportCounts Tasks, ImportCounts Memories);
 
+public sealed record TranscriptFileSegment(DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text);
+
+/// <summary>A parsed transcript file (NYTKA-69): one conversation, its segments already ordered.</summary>
+public sealed record TranscriptImport(DateTimeOffset StartedAt, DateTimeOffset EndedAt, IReadOnlyList<TranscriptFileSegment> Segments);
+
 /// <summary>
 /// Writes an Omi export (<c>conversations.source = 'omi'</c>) in one transaction. A conversation that overlaps one
 /// of Nytka's own in time is left out and counted, unless <c>importOverlapping</c>: the same talk may have been
@@ -186,4 +191,51 @@ public sealed class ImportStore(NpgsqlDataSource dataSource)
     }
 
     private static ImportCounts Add(ImportCounts a, ImportCounts b) => new(a.Imported + b.Imported, a.Skipped + b.Skipped);
+
+    public const string FileSource = "import";
+
+    /// <summary>
+    /// Writes a transcript file (NYTKA-69) as one conversation, source 'import', in one transaction. There is no
+    /// stable id to dedupe by, so every call creates a new conversation. ai_through_segment_id is set so
+    /// enrichment never queues itself for it; /enrich can still be called on demand.
+    /// </summary>
+    public async Task<(Guid Id, int Segments)> ImportTranscriptAsync(TranscriptImport parsed, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+
+        var id = Guid.CreateVersion7(parsed.StartedAt);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into conversations (id, started_at, ended_at, status, ai_status, source, created_at, updated_at)
+            values (@id, @StartedAt, @EndedAt, 'closed', 'done', @source, @now, @now)
+            """,
+            new { id, parsed.StartedAt, parsed.EndedAt, source = FileSource, now }, transaction, cancellationToken: ct));
+
+        var throughSegmentId = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
+            """
+            with rows as (
+                insert into segments (conversation_id, started_at, ended_at, text)
+                select @id, s.started_at, s.ended_at, s.text
+                from unnest(@starts, @ends, @texts) with ordinality as s(started_at, ended_at, text, ord)
+                order by s.ord
+                returning id)
+            select max(id) from rows
+            """,
+            new
+            {
+                id,
+                starts = parsed.Segments.Select(s => s.StartedAt.UtcDateTime).ToArray(),
+                ends = parsed.Segments.Select(s => s.EndedAt.UtcDateTime).ToArray(),
+                texts = parsed.Segments.Select(s => s.Text).ToArray(),
+            },
+            transaction, cancellationToken: ct));
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update conversations set ai_through_segment_id = @throughSegmentId where id = @id",
+            new { id, throughSegmentId }, transaction, cancellationToken: ct));
+
+        await transaction.CommitAsync(ct);
+        return (id, parsed.Segments.Count);
+    }
 }
