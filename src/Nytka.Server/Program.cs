@@ -123,6 +123,7 @@ api.MapContext();
 api.MapSpeech();
 api.MapDigests();
 api.MapExport();
+api.MapObsidianExport();
 api.MapVoice();
 api.MapVoiceGroups();
 api.MapReview();

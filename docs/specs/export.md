@@ -16,6 +16,8 @@ from Omi and comes out of Nytka, with no vendor in between.
    builds the document.
 5. A `read` token or none gets `403` or `401`.
 6. The format is documented here and in the README, field by field.
+7. `GET /api/v1/export/obsidian` with an admin token answers a ZIP of Markdown notes for an Obsidian vault: one per
+   conversation and one per person, file names safe on Windows, macOS and Linux.
 
 ## Format
 
@@ -78,6 +80,37 @@ token and their secrets sign deliveries.
 | Call | Scope | Effect |
 |---|---|---|
 | `GET /api/v1/export` | admin | `200 application/x-ndjson` as above. An error after the first byte cannot change the status, so a file without its `end` line is incomplete. |
+| `GET /api/v1/export/obsidian` | admin | `200 application/zip` as below. |
+
+## Obsidian export
+
+`GET /api/v1/export/obsidian` answers a ZIP (`application/zip`, file name
+`nytka-obsidian-<yyyyMMdd-HHmmss>.zip`) built for dropping into an Obsidian vault: a Markdown note per
+conversation under `Conversations/` and a Markdown note per person under `People/`. Unlike the NDJSON
+export there is no settings, task, memory, bookmark or digest line: a conversation's own tasks are on
+its note, and a person's own facts are on theirs.
+
+A **conversation** note's front matter has `date` (the day it started, UTC, `yyyy-MM-dd`), `tags` and
+`people` (the names of everyone but the wearer who spoke in it, sorted), each a YAML list of quoted
+strings. The body is a `# ` heading with the conversation's title (the user's, else the generated one,
+else "Untitled conversation"), its started/ended times (UTC), a `## Summary` section, a `## Tasks`
+section with one `- [ ]` or `- [x]` line per live task (left out when there are none), and a
+`## Transcript` section with one `**HH:mm:ss** <speaker>: <text>` line per segment, oldest first; the
+time is the segment's UTC capture time and the speaker is the label of
+[your-voice.md](your-voice.md#which-label-wins) (`Wearer`, the linked person's name, or the provider's
+own label).
+
+A **person** note's front matter has `tags` (sorted). The body is a `# ` heading with the person's name,
+a `## Facts` section with one `- ` line per live fact, and a `## Conversations` section with one
+`- [[<conversation file name>|<date> — <title>]]` wiki link per conversation they spoke in (newest
+first), so opening a person in Obsidian backlinks every conversation they were part of.
+
+**File names.** A conversation's file name is `<date> <sanitized title> <8 hex characters of its id>.md`;
+a person's is `<sanitized name> <8 hex characters of its id>.md`. Sanitizing replaces any of
+`< > : " / \ | ? *` or a control character with a space, collapses runs of spaces, drops a trailing dot
+or space (Windows keeps neither), and prefixes a reserved device name (`CON`, `COM1`, `LPT1`, and so on)
+with `_`; an empty result becomes `untitled`. The trailing id makes every file name unique without a
+pass over the whole export first, so two conversations titled alike, on the same day, never collide.
 
 ## Re-importing
 
