@@ -68,18 +68,29 @@ public static class TokenEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        var now = time.GetUtcNow();
-        var id = Guid.CreateVersion7(now);
-        var secret = TokenSecret.Generate();
-        if (!await tokens.CreateAsync(id, name!, request!.Scope!, TokenSecret.Hash(secret), TokenSecret.Hint(secret), now, ct))
+        var created = await CreateNamedTokenAsync(tokens, time, name!, request!.Scope!, ct);
+        if (created is null)
         {
             return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "A token with this name is already in use.");
         }
 
         http.HttpContext!.Response.Headers.CacheControl = "no-store";
-        return Results.Json(
-            new CreatedToken(id, name!, request.Scope!, TokenSecret.Hint(secret), now.UtcDateTime, null, null, secret),
-            statusCode: StatusCodes.Status201Created);
+        return Results.Json(created, statusCode: StatusCodes.Status201Created);
+    }
+
+    /// <summary>Mints a named token: null when the name is already in use by an active token.</summary>
+    internal static async Task<CreatedToken?> CreateNamedTokenAsync(
+        TokenStore tokens, TimeProvider time, string name, string scope, CancellationToken ct)
+    {
+        var now = time.GetUtcNow();
+        var id = Guid.CreateVersion7(now);
+        var secret = TokenSecret.Generate();
+        if (!await tokens.CreateAsync(id, name, scope, TokenSecret.Hash(secret), TokenSecret.Hint(secret), now, ct))
+        {
+            return null;
+        }
+
+        return new CreatedToken(id, name, scope, TokenSecret.Hint(secret), now.UtcDateTime, null, null, secret);
     }
 
     private static async Task<IResult> ListAsync(TokenStore tokens, CancellationToken ct) =>

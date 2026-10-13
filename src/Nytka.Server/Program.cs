@@ -108,6 +108,7 @@ api.MapStatus();
 api.MapDiagnostics();
 api.MapCoverage();
 api.MapTokens();
+api.MapPairing();
 api.MapSettings();
 api.MapTasks();
 api.MapNotes();
