@@ -49,4 +49,12 @@ public static class AuthExtensions
     /// </summary>
     public static T AllowRead<T>(this T builder, bool anyMethod = false)
         where T : IEndpointConventionBuilder => builder.WithMetadata(anyMethod ? AllowReadMetadata.Any : AllowReadMetadata.Safe);
+
+    /// <summary>
+    /// Also admits the bearer token as a <c>?token=</c> query parameter on this route, for a client that cannot set
+    /// headers (see <see cref="AllowQueryTokenMetadata"/> for the risk this trades for that). The header still wins
+    /// and still works; a route without this stays header-only.
+    /// </summary>
+    public static T AllowQueryToken<T>(this T builder)
+        where T : IEndpointConventionBuilder => builder.WithMetadata(AllowQueryTokenMetadata.Instance);
 }
