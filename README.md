@@ -259,6 +259,29 @@ The answer holds the token, `nyt_` and 43 characters, in `token`. Copy it now: n
 again. `DELETE /api/v1/tokens/{id}` revokes it, and `GET /api/v1/tokens` lists all of them with their
 hint, last use and revocation.
 
+### Pairing by QR code
+
+`POST /api/v1/pair` mints a fresh `admin` token (the app refuses `read`, see the table above) and
+hands it back as a QR code, so a phone can scan it instead of someone typing the server's address
+and the token by hand. It needs an `admin` token to call, same as `POST /api/v1/tokens`.
+
+```bash
+curl -X POST https://nytka.example.com/api/v1/pair \
+  -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name": "phone", "url": "https://nytka.example.com"}'
+```
+
+The answer is `{ id, name, createdAt, token, payload, qrCodePng }`. `token` is shown once, like any
+other new token; `payload` is the same thing as text:
+
+```
+nytka://pair?url=<server url, percent-encoded>&token=<the new token>
+```
+
+`qrCodePng` is that payload as a QR code, PNG bytes encoded as base64. The Android app scans the
+code, decodes the `nytka://pair` URI, and uses `url` and `token` exactly as if they had been typed
+into the **Server** step of first run (see the [Android app guide](docs/guide/android-app.md)).
+
 ## Transcription endpoints
 
 The server sends each batch of speech as a WAV file (16 kHz, mono, 16-bit) in `multipart/form-data`
@@ -1315,6 +1338,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |
 | DELETE | `/api/v1/tokens/{id}` | admin | Revokes it: `204` |
+| POST | `/api/v1/pair` | admin | Body `{ name, url }`; `201` with `{ id, name, createdAt, token, payload, qrCodePng }`: a fresh `admin` token, shown once, and the same [pairing QR code](#pairing-by-qr-code) as text (`payload`) and as a PNG (`qrCodePng`, base64); `409` for a name in use |
 | GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai`, `user` or `omi`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
