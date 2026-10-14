@@ -101,7 +101,7 @@ tool requires authorization."), caught by the MCP host's authorization filters
 | `complete_task` | `id` | Marks the task done; a tool error for an unknown id |
 | `create_memory` | `text` (1 to 300 characters) | A tool error when a live memory already holds the same fact |
 
-Each matches `create_task`'s and `create_memory`'s REST counterparts (`PATCH /api/v1/tasks/{id}` for
+`complete_task` and `create_memory` match their REST counterparts (`PATCH /api/v1/tasks/{id}` for
 completing, `POST /api/v1/memories` for a memory); `create_task` has no REST counterpart, since REST
 still has no way to add a task by hand (see [Tasks](../../README.md#tasks)). A hand-made task is
 marked `edited`, so a later summary never removes or rewrites it, and `create_task` raises
