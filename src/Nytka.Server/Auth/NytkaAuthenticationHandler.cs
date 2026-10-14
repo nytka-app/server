@@ -9,10 +9,11 @@ using Nytka.Storage;
 namespace Nytka.Server.Auth;
 
 /// <summary>
-/// Reads <c>Authorization: Bearer &lt;token&gt;</c>: the environment's admin token (compared in
-/// constant time, never stored) or a named token, looked up by its hash on every request, so a revoked
-/// one fails at once. The result carries the token's scope as a <c>scope</c> claim. The environment
-/// token is tried first and needs no database, so a broken one cannot lock you out.
+/// Reads <c>Authorization: Bearer &lt;token&gt;</c>, or a <c>?token=</c> query parameter where
+/// <see cref="ReadToken"/>'s route allows it: the environment's admin token (compared in constant time, never
+/// stored) or a named token, looked up by its hash on every request, so a revoked one fails at once. The result
+/// carries the token's scope as a <c>scope</c> claim. The environment token is tried first and needs no database,
+/// so a broken one cannot lock you out.
 /// </summary>
 public sealed class NytkaAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> schemeOptions,
@@ -31,8 +32,8 @@ public sealed class NytkaAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        var header = Request.Headers.Authorization.ToString();
-        if (!header.StartsWith(Bearer, StringComparison.OrdinalIgnoreCase) || header[Bearer.Length..].Trim() is not { Length: > 0 } token)
+        var token = ReadToken();
+        if (token is not { Length: > 0 })
         {
             return AuthenticateResult.NoResult();
         }
@@ -50,6 +51,27 @@ public sealed class NytkaAuthenticationHandler(
         }
 
         return AuthenticateResult.Fail("Unknown or revoked token.");
+    }
+
+    /// <summary>
+    /// The <c>Authorization</c> header, or, only for a route carrying <see cref="AllowQueryTokenMetadata"/>, the
+    /// <c>token</c> query parameter when the header is absent.
+    /// </summary>
+    private string? ReadToken()
+    {
+        var header = Request.Headers.Authorization.ToString();
+        if (header.StartsWith(Bearer, StringComparison.OrdinalIgnoreCase) && header[Bearer.Length..].Trim() is { Length: > 0 } fromHeader)
+        {
+            return fromHeader;
+        }
+
+        if (Context.GetEndpoint()?.Metadata.GetMetadata<AllowQueryTokenMetadata>() is not null
+            && Request.Query["token"].ToString() is { Length: > 0 } fromQuery)
+        {
+            return fromQuery;
+        }
+
+        return null;
     }
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
