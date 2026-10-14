@@ -10,7 +10,9 @@ public static class McpExtensions
     {
         services.AddSingleton<McpQueries>();
         // Stateless, so no session and no GET stream. WithToolsFromAssembly lets later tool classes register themselves.
-        services.AddMcpServer().WithHttpTransport(options => options.Stateless = true).WithToolsFromAssembly();
+        // AddAuthorizationFilters enforces each tool's [Authorize] metadata (NytkaScopeRequirement, same as REST):
+        // it hides a tool tools/list would otherwise list, and refuses tools/call, for a caller it fails.
+        services.AddMcpServer().WithHttpTransport(options => options.Stateless = true).WithToolsFromAssembly().AddAuthorizationFilters();
         return services;
     }
 
