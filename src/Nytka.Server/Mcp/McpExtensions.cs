@@ -1,5 +1,6 @@
 using Nytka.Server.Auth;
 using Nytka.Storage;
+using Switchknife.McpGuard;
 
 namespace Nytka.Server.Mcp;
 
@@ -26,20 +27,7 @@ public static class McpExtensions
         app.MapMcp("/mcp")
             .RequireNytkaAuth()
             .AllowRead(anyMethod: true)
-            .Add(builder =>
-            {
-                var next = builder.RequestDelegate!;
-                builder.RequestDelegate = context =>
-                {
-                    if (context.Request.Headers.ContainsKey("Origin"))
-                    {
-                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                        return Task.CompletedTask;
-                    }
-
-                    return next(context);
-                };
-            });
+            .RejectOrigin();
 
         // The stateless transport maps POST only; without this a read token would get 403 for GET and DELETE.
         app.MapMethods("/mcp", [HttpMethods.Get, HttpMethods.Delete], () => Results.StatusCode(StatusCodes.Status405MethodNotAllowed))
