@@ -1176,7 +1176,7 @@ through OAuth cannot connect.
 | `list_tags` | `query?` (names starting with it) | `{ items: [{ name, conversations, people, uses }] }`, most used first, as `GET /api/v1/tags` (see [Tags](#tags)) |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
-Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
+These twelve are read-only (`readOnlyHint`), declare an output schema and return their result as
 structured content and as JSON text. A tool returns the fields its REST endpoint returns, with the
 limits and defaults in the table (`search` has no `offset`). Pass `nextBefore` as `before` to read the
 next page. An unknown id is a tool error ("No such conversation."); a malformed id, time, status or
@@ -1185,6 +1185,21 @@ speaker label when there is none: `[HH:mm:ss] Speaker: text`; a [media](#speech-
 60,000 characters into parts. `part` picks one (from 1; one outside `1` to `parts` is `-32602`),
 `parts` counts them and `truncated` is true while a later part exists, so a client reads the rest with
 `part: 2`, `3` and so on. Only the first 20 parts are read. `transcript` is null when it is false.
+
+**Write tools (Plane NYTKA-81) need an `admin` token.**
+
+| Tool | Input | Output |
+|---|---|---|
+| `create_task` | `conversationId` (UUID), `text` (1 to 200 characters), `kind?` (`commitment`, the default, `idea` or `waiting_on`), `personId?` (UUID) | the created [Task](#tasks); a tool error for an unknown conversation or person, or a conversation that already has a task with this text |
+| `complete_task` | `id` (a task id) | the completed Task, as `PATCH /api/v1/tasks/{id}` with `{ done: true }`; a tool error for an unknown id |
+| `create_memory` | `text` (1 to 300 characters) | the created [Memory](#memories), as `POST /api/v1/memories`; a tool error when a live memory already holds the fact |
+
+A `read` token's `tools/list` never names these three, and calling one with a `read` token is
+JSON-RPC error `-32600` ("Access forbidden: This tool requires authorization."): the MCP host's
+authorization filters check the same [`admin`-or-`read` scope](#tokens-and-scopes) REST does, before
+the tool runs. `create_task` has no REST counterpart, since REST still has no way to add a task by
+hand (see [Tasks](#tasks)); a task it creates is marked `edited`, so a later summary never removes or
+rewrites it, and it raises `task.created` only for a `commitment`, matching a summary's tasks.
 
 **Connect a client.** Give it the URL and a `read` token (see [Tokens and scopes](#tokens-and-scopes)).
 In Claude Code:
