@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/nytka-app/server/compare/v0.25.0...v0.26.0) (2026-10-14)
+
+
+### Features
+
+* skip a task that matches an open one from an earlier conversation ([#118](https://github.com/nytka-app/server/issues/118)) ([53bfc93](https://github.com/nytka-app/server/commit/53bfc93a41d0a5bf09b5c7a4251e839e9c1c742e))
+
 ## [0.25.0](https://github.com/nytka-app/server/compare/v0.24.0...v0.25.0) (2026-10-06)
 
 
