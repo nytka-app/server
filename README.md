@@ -832,6 +832,53 @@ The answer counts what happened:
   is not an Omi export or a time has no offset, `413` above 100 MB. Needs an admin token. Nothing from
   the file reaches a log or an error.
 
+## Importing other sources
+
+Besides an Omi export, Nytka takes two kinds of file from anywhere else, both admin token, both at
+most 100 MB: a plain transcript, and an audio file that is run through the same VAD and
+transcription pipeline as a live capture. A Limitless export is not supported: Limitless (now owned
+by Meta) has not published its export format, and nothing in this repository or its dependencies
+documents it either.
+
+### Transcript files
+
+```bash
+curl -sS -X POST "$NYTKA_URL/api/v1/import/transcript?format=srt&startedAt=2026-03-01T09:00:00Z" \
+  -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" \
+  --data-binary @transcript.srt
+```
+
+- `format` is `srt`, `vtt` or `txt`. `startedAt` (a time with a UTC offset) is where the file's own
+  times, if any, start counting from.
+- SRT and VTT each become one conversation, source `"import"`, with one segment per cue, timed at
+  `startedAt` plus the cue's own offset. A VTT file needs its `WEBVTT` header; `NOTE` blocks are
+  skipped in both formats.
+- TXT has no times of its own: the whole file becomes one conversation with a single segment, at
+  `startedAt`.
+- The answer is `{ conversationId, segments }`. Posting the same file again makes another
+  conversation: there is no id to dedupe transcript imports by.
+- `400` for a file that does not parse as the given format, or a `startedAt` with no UTC offset;
+  `413` above 100 MB.
+
+### Audio files
+
+```bash
+curl -sS -X POST "$NYTKA_URL/api/v1/import/audio?startedAt=2026-03-01T09:00:00Z" \
+  -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" \
+  -H "Content-Type: audio/wav" \
+  --data-binary @recording.wav
+```
+
+- Body: 16 kHz mono 16-bit WAV (`audio/wav`) or mono Ogg Opus (`audio/ogg`); `startedAt` (a time with
+  a UTC offset) is the capture time of the file's first sample, since the file carries no clock of
+  its own: every later sample is timed as if it played back without a gap.
+- The file is decoded, re-encoded to the pendant's own chunk format and queued through the ordinary
+  `process-session` job, so VAD, transcription and conversation assignment run exactly as they would
+  for a live capture; the resulting conversation is indistinguishable from one the pendant sent.
+- The answer is `202 { sessionId, durationMs }`.
+- `415` for any other content type, `400` for a WAV that is not 16 kHz mono 16-bit or holds no audio,
+  `413` above 100 MB.
+
 ## Export
 
 `GET /api/v1/export` (admin token) streams everything Nytka holds for you as NDJSON, one JSON object
@@ -1300,6 +1347,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations?before=&since=&tag=&media=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, mediaShare, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `mediaShare` the share (0 to 1) of the conversation's speech time whose [speech kind](#speech-kind) is `media`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](#tags) (`400` for a name that is none); `media` is `hide` (leaves out those with a `mediaShare` of 0.8 or more) or `only` (keeps just those), else `400`; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource, speechKind, speechGuess, speechScore, speechSignals, speechMarked }`, `isUserSource` being `manual`, `voice`, `provider` or null, see [Your voice](#your-voice); `speechKind` the [speech kind](#speech-kind) that applies (`person`, `media`, `call` or null), `speechGuess` Nytka's guess (also `unsure`) with its `speechScore` and `speechSignals` (a list, empty when none), `speechMarked` true when your mark decides) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
+| POST | `/api/v1/import/transcript?format=&startedAt=` | admin | Body: an SRT, VTT or TXT transcript; see [Importing other sources](#importing-other-sources); `200 { conversationId, segments }`; `400` for a body that does not parse, or a `startedAt` with no UTC offset; `413` above 100 MB |
+| POST | `/api/v1/import/audio?startedAt=` | admin | Body: a WAV or Ogg Opus file; see [Importing other sources](#importing-other-sources); `202 { sessionId, durationMs }`; `415` for an unsupported content type, `400` for bad audio, `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
 | POST | `/api/v1/speech/backfill?force=` | admin | Queues `classify-speech` for closed conversations with unguessed lines (`force=true`: also those guessed by an older `speech_version`). `200 { queued, remaining }`: at most 500 are queued per call, `remaining` counts the rest; nothing is queued while `Nytka__Speech__Mode` is `off`; see [Speech kind](#speech-kind) |
