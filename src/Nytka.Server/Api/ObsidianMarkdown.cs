@@ -11,7 +11,8 @@ namespace Nytka.Server.Api;
 /// </summary>
 public static class ObsidianMarkdown
 {
-    private static readonly char[] InvalidFileNameChars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+    // Windows forbids the first nine; Obsidian reads # ^ [ ] in a link target as a heading, a block or the end of the link.
+    private static readonly char[] InvalidFileNameChars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*', '#', '^', '[', ']'];
 
     private static readonly HashSet<string> ReservedFileNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -21,7 +22,8 @@ public static class ObsidianMarkdown
     };
 
     /// <summary>
-    /// A name safe as a file's base name on Windows, macOS and Linux: none of <c>&lt;&gt;:"/\|?*</c> or a control
+    /// A name safe as a file's base name on Windows, macOS and Linux and as an Obsidian link target: none of
+    /// <c>&lt;&gt;:"/\|?*#^[]</c> or a control
     /// character, no trailing dot or space (Windows keeps neither), not a reserved device name, not empty, at most
     /// <paramref name="maxLength"/> characters.
     /// </summary>
@@ -73,7 +75,7 @@ public static class ObsidianMarkdown
         body.Append("tags: ").Append(YamlList(conversation.Tags)).Append('\n');
         body.Append("people: ").Append(YamlList(conversation.People)).Append('\n');
         body.Append("---\n\n");
-        body.Append("# ").Append(conversation.Title ?? "Untitled conversation").Append("\n\n");
+        body.Append("# ").Append(OneLine(conversation.Title ?? "Untitled conversation")).Append("\n\n");
         body.Append(CultureInfo.InvariantCulture, $"**Started:** {conversation.StartedAt:yyyy-MM-dd HH:mm:ss} UTC\n");
         body.Append(CultureInfo.InvariantCulture, $"**Ended:** {conversation.EndedAt:yyyy-MM-dd HH:mm:ss} UTC\n\n");
 
@@ -111,7 +113,7 @@ public static class ObsidianMarkdown
         body.Append("---\n");
         body.Append("tags: ").Append(YamlList(person.Tags)).Append('\n');
         body.Append("---\n\n");
-        body.Append("# ").Append(person.Name).Append("\n\n");
+        body.Append("# ").Append(OneLine(person.Name)).Append("\n\n");
 
         body.Append("## Facts\n\n");
         if (person.Facts.Count == 0)
@@ -136,7 +138,7 @@ public static class ObsidianMarkdown
             foreach (var conversation in person.Conversations)
             {
                 var stem = ConversationStem(conversation.Id, conversation.StartedAt, conversation.Title);
-                var alias = $"{conversation.StartedAt:yyyy-MM-dd} — {conversation.Title ?? "Untitled conversation"}";
+                var alias = $"{conversation.StartedAt:yyyy-MM-dd} — {OneLine(conversation.Title ?? "Untitled conversation").Replace('|', ' ').Replace('[', '(').Replace(']', ')')}";
                 body.Append("- [[").Append(stem).Append('|').Append(alias).Append("]]\n");
             }
         }
@@ -146,5 +148,9 @@ public static class ObsidianMarkdown
 
     /// <summary>A YAML flow sequence of double-quoted strings, safe for any value (escapes `\` and `"`).</summary>
     private static string YamlList(IReadOnlyList<string> values) =>
-        "[" + string.Join(", ", values.Select(v => "\"" + v.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")) + "]";
+        "[" + string.Join(", ", values.Select(v => "\"" + OneLine(v).Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")) + "]";
+
+    /// <summary>A value that must stay on one line (a heading, a link alias, a front matter string): line breaks become spaces.</summary>
+    private static string OneLine(string value) =>
+        value.Contains('\n') || value.Contains('\r') ? string.Join(' ', value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)) : value;
 }

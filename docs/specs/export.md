@@ -17,7 +17,7 @@ from Omi and comes out of Nytka, with no vendor in between.
 5. A `read` token or none gets `403` or `401`.
 6. The format is documented here and in the README, field by field.
 7. `GET /api/v1/export/obsidian` with an admin token answers a ZIP of Markdown notes for an Obsidian vault: one per
-   conversation and one per person, file names safe on Windows, macOS and Linux.
+   conversation and one per person, file names safe on Windows, macOS and Linux and usable in an Obsidian link (`#`, `^`, `[` and `]` are not).
 
 ## Format
 
@@ -107,7 +107,7 @@ first), so opening a person in Obsidian backlinks every conversation they were p
 
 **File names.** A conversation's file name is `<date> <sanitized title> <8 hex characters of its id>.md`;
 a person's is `<sanitized name> <8 hex characters of its id>.md`. Sanitizing replaces any of
-`< > : " / \ | ? *` or a control character with a space, collapses runs of spaces, drops a trailing dot
+`< > : " / \ | ? * # ^ [ ]` or a control character with a space, collapses runs of spaces, drops a trailing dot
 or space (Windows keeps neither), and prefixes a reserved device name (`CON`, `COM1`, `LPT1`, and so on)
 with `_`; an empty result becomes `untitled`. The trailing id makes every file name unique without a
 pass over the whole export first, so two conversations titled alike, on the same day, never collide.
