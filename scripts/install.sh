@@ -42,8 +42,15 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+# docker-compose.yml names its project "nytka", so a second install would reuse the first one's
+# Postgres volume, whose password this script is about to replace.
+if docker volume inspect nytka_postgres-data >/dev/null 2>&1; then
+  echo "A Nytka install already exists on this Docker host (volume nytka_postgres-data); this script only sets up a new one." >&2
+  exit 1
+fi
+
 if [ -e "$dir" ]; then
-  echo "$dir already exists; remove it or choose another directory: $0 <directory>" >&2
+  echo "$dir already exists; remove it or choose another directory (bash -s -- <directory>)." >&2
   exit 1
 fi
 mkdir -p "$dir"
@@ -61,15 +68,16 @@ postgres_password=$(openssl rand -hex 24)
 # Generate the two required secrets and wire the local profile's Nytka__Stt__Url and
 # Nytka__Llm__BaseUrl, so the stack starts without an account or a key. Nothing here is printed:
 # the admin token is shown once, at the end; the Postgres password never is.
-sed -i.bak \
-  -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${postgres_password}|" \
-  -e "s|^Nytka__AdminToken=.*|Nytka__AdminToken=${admin_token}|" \
-  -e "s|^Nytka__Stt__Url=.*|Nytka__Stt__Url=http://stt-local:8000/v1/audio/transcriptions|" \
-  -e "s|^# Nytka__Llm__BaseUrl=.*|Nytka__Llm__BaseUrl=http://llm-local:11434/v1|" \
-  -e "s|^# Nytka__Llm__Model=.*|Nytka__Llm__Model=${local_llm_model}|" \
-  -e "s|^# Nytka__Llm__JsonMode=schema|Nytka__Llm__JsonMode=object|" \
-  -e "s|^# COMPOSE_PROFILES=local|COMPOSE_PROFILES=local|" \
-  .env
+# The sed script goes in on stdin, so the secrets never appear in a process list.
+sed -i.bak -f /dev/stdin .env <<SED
+s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${postgres_password}|
+s|^Nytka__AdminToken=.*|Nytka__AdminToken=${admin_token}|
+s|^Nytka__Stt__Url=.*|Nytka__Stt__Url=http://stt-local:8000/v1/audio/transcriptions|
+s|^# Nytka__Llm__BaseUrl=.*|Nytka__Llm__BaseUrl=http://llm-local:11434/v1|
+s|^# Nytka__Llm__Model=.*|Nytka__Llm__Model=${local_llm_model}|
+s|^# Nytka__Llm__JsonMode=schema|Nytka__Llm__JsonMode=object|
+s|^# COMPOSE_PROFILES=local|COMPOSE_PROFILES=local|
+SED
 rm -f .env.bak
 
 echo "Starting Postgres, the server and the local speech-to-text and language model (first start pulls their images)..."

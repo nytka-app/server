@@ -234,7 +234,7 @@ you copy without thinking would lock its setting.
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
 | `COMPOSE_PROFILES` | no | empty | | `local` starts the no-key speech-to-text and language model containers too |
-| `NYTKA_STT_LOCAL_VERSION` | no | `0.6.6-cpu` | | Image tag of the local profile's speech-to-text server |
+| `NYTKA_STT_LOCAL_VERSION` | no | `0.5.0-cpu` | | Image tag of the local profile's speech-to-text server |
 | `NYTKA_STT_LOCAL_MODEL` | no | `Systran/faster-whisper-small` | | Hugging Face faster-whisper model the local profile downloads on first use |
 | `NYTKA_LLM_LOCAL_VERSION` | no | `0.3.14` | | Image tag of the local profile's language model server (Ollama) |
 

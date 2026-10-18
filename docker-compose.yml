@@ -96,16 +96,17 @@ services:
   # minutes"). Off unless COMPOSE_PROFILES=local is set or `docker compose --profile local ...` is
   # used; scripts/install.sh does both. Slower and less accurate than a hosted provider.
   stt-local:
-    image: "fedirz/faster-whisper-server:${NYTKA_STT_LOCAL_VERSION:-0.6.6-cpu}"
+    image: "fedirz/faster-whisper-server:${NYTKA_STT_LOCAL_VERSION:-0.5.0-cpu}"
     profiles: ["local"]
     restart: unless-stopped
     environment:
       # A Hugging Face faster-whisper repo id; the server downloads it on the first request.
-      WHISPER_MODEL: "${NYTKA_STT_LOCAL_MODEL:-Systran/faster-whisper-small}"
+      WHISPER__MODEL: "${NYTKA_STT_LOCAL_MODEL:-Systran/faster-whisper-small}"
     volumes:
-      - stt-local-data:/home/ubuntu/.cache/huggingface
+      - stt-local-data:/root/.cache/huggingface
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      # The image has no curl.
+      test: ["CMD", "python3.12", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       interval: 10s
       timeout: 5s
       retries: 10
