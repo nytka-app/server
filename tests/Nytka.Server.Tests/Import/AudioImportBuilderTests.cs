@@ -114,4 +114,12 @@ public sealed class AudioImportBuilderTests
         Assert.Equal(frames.Count, read.Frames.Count);
         Assert.Equal(frames.Select(f => f.Payload.ToArray()), read.Frames.Select(f => f.Payload.ToArray()));
     }
+
+    [Fact]
+    public void A_wav_longer_than_an_hour_is_refused()
+    {
+        var wav = WavWriter.Write(new short[AudioImportBuilder.MaxSamples + 1], Timeline.SampleRate);
+
+        Assert.Throws<AudioImportException>(() => AudioImportBuilder.Decode("audio/wav", wav));
+    }
 }

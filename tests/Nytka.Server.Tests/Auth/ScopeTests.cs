@@ -36,6 +36,8 @@ public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
         { "GET", "/api/v1/tokens" },
         { "POST", "/api/v1/tokens" },
         { "DELETE", "/api/v1/tokens/018f0000-0000-7000-8000-000000000000" },
+        { "POST", "/api/v1/import/transcript" },
+        { "POST", "/api/v1/import/audio" },
         { "DELETE", "/api/v1/conversations/018f0000-0000-7000-8000-000000000000" },
         { "GET", "/api/v1/conversations/018f0000-0000-7000-8000-000000000000/transcriptions" },
     };

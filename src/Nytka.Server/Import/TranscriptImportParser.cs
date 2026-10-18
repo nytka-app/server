@@ -17,6 +17,12 @@ public static partial class TranscriptImportParser
     /// <summary>Offsets past this many hours are refused as malformed rather than silently accepted.</summary>
     private const int MaxHours = 999;
 
+    /// <summary>
+    /// A segment's text is cut into pieces of at most this many characters: the search indexer builds one
+    /// <c>tsvector</c> per segment, and Postgres refuses one past 1 MB, which would stall indexing for every row.
+    /// </summary>
+    public const int MaxSegmentChars = 20_000;
+
     public static TranscriptImport ParseTxt(string text, DateTimeOffset startedAt)
     {
         var trimmed = StripBom(text).Trim();
@@ -25,7 +31,7 @@ public static partial class TranscriptImportParser
             throw new TranscriptImportException("The file holds no text.");
         }
 
-        return new TranscriptImport(startedAt, startedAt, [new TranscriptFileSegment(startedAt, startedAt, trimmed)]);
+        return new TranscriptImport(startedAt, startedAt, Split(new TranscriptFileSegment(startedAt, startedAt, trimmed)).ToList());
     }
 
     public static TranscriptImport ParseSrt(string text, DateTimeOffset startedAt) =>
@@ -72,7 +78,7 @@ public static partial class TranscriptImportParser
             var text = string.Join('\n', block.Skip(timing + 1)).Trim();
             if (text.Length > 0)
             {
-                segments.Add(new TranscriptFileSegment(start, end, text));
+                segments.AddRange(Split(new TranscriptFileSegment(start, end, text)));
             }
         }
 
@@ -151,5 +157,30 @@ public static partial class TranscriptImportParser
         return blocks;
     }
 
-    private static string StripBom(string text) => text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
+    /// <summary>Cuts a long text at the last whitespace within <see cref="MaxSegmentChars"/>, every piece with the segment's times.</summary>
+    private static IEnumerable<TranscriptFileSegment> Split(TranscriptFileSegment segment)
+    {
+        var text = segment.Text;
+        while (text.Length > MaxSegmentChars)
+        {
+            var cut = text.LastIndexOfAny([' ', '\n', '\t'], MaxSegmentChars - 1);
+            cut = cut > 0 ? cut : MaxSegmentChars;
+            if (char.IsHighSurrogate(text[cut - 1]))
+            {
+                cut--;
+            }
+
+            yield return segment with { Text = text[..cut].TrimEnd() };
+            text = text[cut..].TrimStart();
+        }
+
+        if (text.Length > 0)
+        {
+            yield return segment with { Text = text };
+        }
+    }
+
+    /// <summary>Drops a leading byte order mark and every NUL, which Postgres refuses in a text column.</summary>
+    private static string StripBom(string text) =>
+        (text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text).Replace("\0", "");
 }

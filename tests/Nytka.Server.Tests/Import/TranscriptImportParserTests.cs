@@ -131,4 +131,39 @@ public sealed class TranscriptImportParserTests
 
         Assert.Equal(parsed.Segments[0].StartedAt, parsed.Segments[0].EndedAt);
     }
+
+    [Fact]
+    public void A_text_over_the_segment_limit_is_cut_at_a_space_with_the_same_times()
+    {
+        var text = string.Join(' ', Enumerable.Repeat("word", TranscriptImportParser.MaxSegmentChars));
+
+        var parsed = TranscriptImportParser.ParseTxt(text, StartedAt);
+
+        Assert.True(parsed.Segments.Count > 1);
+        Assert.All(parsed.Segments, s =>
+        {
+            Assert.InRange(s.Text.Length, 1, TranscriptImportParser.MaxSegmentChars);
+            Assert.Equal(StartedAt, s.StartedAt);
+        });
+        Assert.Equal(text, string.Join(' ', parsed.Segments.Select(s => s.Text)));
+    }
+
+    [Fact]
+    public void A_word_longer_than_the_limit_is_cut_without_splitting_a_surrogate_pair()
+    {
+        var text = new string('a', TranscriptImportParser.MaxSegmentChars - 1) + "😀" + new string('b', 10);
+
+        var parsed = TranscriptImportParser.ParseTxt(text, StartedAt);
+
+        Assert.Equal(2, parsed.Segments.Count);
+        Assert.Equal(text, string.Concat(parsed.Segments.Select(s => s.Text)));
+    }
+
+    [Fact]
+    public void NUL_characters_are_dropped()
+    {
+        var parsed = TranscriptImportParser.ParseTxt("he\0llo", StartedAt);
+
+        Assert.Equal("hello", Assert.Single(parsed.Segments).Text);
+    }
 }
