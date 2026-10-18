@@ -17,6 +17,9 @@ public static class PairingEndpoints
         return api;
     }
 
+    /// <summary>Keeps the payload, with its percent-encoded URL, inside what a QR code at level M can hold.</summary>
+    private const int MaxUrlLength = 500;
+
     public sealed record PairRequest(string? Name, string? Url);
 
     /// <summary>
@@ -38,9 +41,9 @@ public static class PairingEndpoints
         }
 
         var url = request?.Url?.Trim();
-        if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var parsed) || parsed.Scheme is not ("http" or "https"))
+        if (string.IsNullOrEmpty(url) || url.Length > MaxUrlLength || !Uri.TryCreate(url, UriKind.Absolute, out var parsed) || parsed.Scheme is not ("http" or "https"))
         {
-            errors["url"] = ["Must be an absolute http or https URL."];
+            errors["url"] = [$"Must be an absolute http or https URL of at most {MaxUrlLength} characters."];
         }
 
         if (errors.Count > 0)

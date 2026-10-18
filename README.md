@@ -271,7 +271,7 @@ curl -X POST https://nytka.example.com/api/v1/pair \
   -d '{"name": "phone", "url": "https://nytka.example.com"}'
 ```
 
-The answer is `{ id, name, createdAt, token, payload, qrCodePng }`. `token` is shown once, like any
+The answer is `{ id, name, createdAt, token, payload, qrCodePng }`; `url` is at most 500 characters, so the code stays readable. `token` is shown once, like any
 other new token; `payload` is the same thing as text:
 
 ```
@@ -1338,7 +1338,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |
 | DELETE | `/api/v1/tokens/{id}` | admin | Revokes it: `204` |
-| POST | `/api/v1/pair` | admin | Body `{ name, url }`; `201` with `{ id, name, createdAt, token, payload, qrCodePng }`: a fresh `admin` token, shown once, and the same [pairing QR code](#pairing-by-qr-code) as text (`payload`) and as a PNG (`qrCodePng`, base64); `409` for a name in use |
+| POST | `/api/v1/pair` | admin | Body `{ name, url }`, `url` an absolute http or https URL of at most 500 characters; `201` with `{ id, name, createdAt, token, payload, qrCodePng }`: a fresh `admin` token, shown once, and the same [pairing QR code](#pairing-by-qr-code) as text (`payload`) and as a PNG (`qrCodePng`, base64); `409` for a name in use |
 | GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai`, `user` or `omi`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
