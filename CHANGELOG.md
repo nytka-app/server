@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.26.0](https://github.com/nytka-app/server/compare/v0.25.0...v0.26.0) (2026-10-18)
+
+
+### Features
+
+* iCal feed of the calendar's events at /api/v1/calendar.ics (NYTKA-78) ([#126](https://github.com/nytka-app/server/issues/126)) ([0129ca0](https://github.com/nytka-app/server/commit/0129ca0fb15f820731654cd5daf4f4af122b5989))
+* import transcript (SRT, VTT, TXT) and audio files (NYTKA-69) ([#125](https://github.com/nytka-app/server/issues/125)) ([5705328](https://github.com/nytka-app/server/commit/5705328ae91764b18e502ed15b149ffe0cdada94))
+* Markdown export for Obsidian (NYTKA-79) ([#128](https://github.com/nytka-app/server/issues/128)) ([c5cfe19](https://github.com/nytka-app/server/commit/c5cfe197c3e1914ab844d06eadf736f655353e80))
+* one-command install and a no-key local profile (NYTKA-54, NYTKA-70) ([#127](https://github.com/nytka-app/server/issues/127)) ([c53e855](https://github.com/nytka-app/server/commit/c53e85515de296a4e634b8cec0c24a888b4b5097))
+* QR pairing endpoint that mints an admin token (NYTKA-71) ([#124](https://github.com/nytka-app/server/issues/124)) ([3a6a225](https://github.com/nytka-app/server/commit/3a6a2256e878a32327b0d9ab83a08c9485438125))
+* skip a task that matches an open one from an earlier conversation ([#118](https://github.com/nytka-app/server/issues/118)) ([53bfc93](https://github.com/nytka-app/server/commit/53bfc93a41d0a5bf09b5c7a4251e839e9c1c742e))
+
 ## [0.25.0](https://github.com/nytka-app/server/compare/v0.24.0...v0.25.0) (2026-10-06)
 
 
