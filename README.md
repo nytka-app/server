@@ -909,6 +909,20 @@ short. Times are UTC, ids are stable between exports.
 - Nytka cannot import its own export yet. Every field is specified in
   [docs/specs/export.md](docs/specs/export.md).
 
+`GET /api/v1/export/obsidian` (admin token) answers a ZIP of Markdown notes for an Obsidian vault:
+
+```bash
+curl -sS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" "$NYTKA_URL/api/v1/export/obsidian" -o nytka-obsidian.zip
+```
+
+One note per conversation under `Conversations/` (front matter with `date`, `tags`, `people`; a
+heading with the title; the summary; tasks as `- [ ]`/`- [x]` checkboxes; the transcript as
+`**HH:mm:ss** <speaker>: <text>` lines, UTC) and one per person under `People/` (front matter with
+`tags`; their facts; their conversations as `[[wiki links]]`, newest first). File names are safe on
+Windows, macOS and Linux: forbidden characters become spaces, a trailing dot or space is dropped, a
+reserved device name is prefixed with `_`, and 8 hex characters of the row's id keep every name
+unique. Field by field: [docs/specs/export.md](docs/specs/export.md#obsidian-export).
+
 ## Bookmarks
 
 A bookmark marks a moment: a single tap on the pendant, or a tap in the app, sends `POST
@@ -1412,6 +1426,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
 | GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](#export) |
+| GET | `/api/v1/export/obsidian` | admin | A ZIP (`application/zip`) of Markdown notes for an Obsidian vault, one per conversation and one per person; see [Export](#export) |
 | GET | `/api/v1/search?q=&kinds=&tag=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name) |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
