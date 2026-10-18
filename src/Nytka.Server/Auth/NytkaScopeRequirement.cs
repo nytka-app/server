@@ -47,6 +47,21 @@ public sealed class AllowReadMetadata
     public bool AnyMethod { get; }
 }
 
+/// <summary>
+/// Marks an endpoint that also accepts its bearer token as a <c>?token=</c> query parameter, for a client (a
+/// calendar app) that cannot set the <c>Authorization</c> header; <see cref="AuthExtensions.AllowQueryToken{T}"/>
+/// adds it. Every other route still needs the header: a query parameter sits in server logs, browser history and
+/// the referrer of a page it links from, so this stays an explicit, named exception rather than a general fallback.
+/// </summary>
+public sealed class AllowQueryTokenMetadata
+{
+    public static readonly AllowQueryTokenMetadata Instance = new();
+
+    private AllowQueryTokenMetadata()
+    {
+    }
+}
+
 public sealed class NytkaScopeHandler : AuthorizationHandler<NytkaScopeRequirement>
 {
     protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, NytkaScopeRequirement requirement)

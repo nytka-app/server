@@ -39,14 +39,37 @@ says what is not counted.
 - A Linux, macOS or Windows machine with [Docker Compose](https://docs.docker.com/compose/install/)
   that runs while you wear the pendant. A VPS or a home server is best; a laptop that sleeps loses
   nothing, because the app keeps the audio and uploads it later, but conversations then appear late.
-- A transcription account. The cheapest working choice is [Groq](https://console.groq.com): a free
-  tier covers 28,800 seconds of audio a day for `whisper-large-v3-turbo` (check the current limits
-  there). The server drops silence before it sends anything, so a day of wearing stays far below
-  that. OpenAI's `whisper-1` also works and is paid by the minute. Create an API key and keep it.
+- A transcription account, unless you use the no-key local profile below. The cheapest working
+  hosted choice is [Groq](https://console.groq.com): a free tier covers 28,800 seconds of audio a
+  day for `whisper-large-v3-turbo` (check the current limits there). The server drops silence
+  before it sends anything, so a day of wearing stays far below that. OpenAI's `whisper-1` also
+  works and is paid by the minute. Create an API key and keep it.
 - A way for the phone to reach the server over HTTPS. The easiest is [Tailscale](https://tailscale.com):
   the server machine and the phone both join your tailnet, and the next section gives the server an
   `https://` address with a real certificate. A domain with a reverse proxy works too.
 - The pendant charged, on consumer firmware 3.0.x, and an Android 12+ phone.
+
+**Fastest: one command, no account, no key**
+
+On a Linux or macOS host with Docker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nytka-app/server/main/scripts/install.sh | bash
+```
+
+This creates `./nytka`, writes `docker-compose.yml` and a `.env` with a generated admin token and
+Postgres password (never printed, except the admin token once at the end), and starts the stack
+with the `local` Compose profile: a speech-to-text server
+([faster-whisper-server](https://github.com/fedirz/faster-whisper-server)) and a language model
+server ([Ollama](https://ollama.com)) running alongside Postgres and the server, wired through
+`Nytka__Stt__Url` and `Nytka__Llm__BaseUrl` like any other endpoint. The first run needs no
+transcription account and no API key, at the cost that **local models are slower and less accurate
+than a hosted provider**: expect a longer wait for a transcript and for a summary, and more
+mistakes in both, especially outside English. Switch to a hosted provider any time by editing
+`.env` ([Configuration](#configuration)) and running `docker compose up -d` again. Either way,
+continue at [step 4](#4-give-the-phone-an-https-address-3-minutes-with-tailscale) below.
+
+**With a hosted transcription account, step by step**
 
 **1. Download the Compose file and the settings template (1 minute)**
 
@@ -146,8 +169,8 @@ the same key works; pick a chat model from its list). Back up the `postgres-data
   codec is wrong. Offline sync needs firmware 3.0.20 or later.
 - The Ukrainian search dictionary: an extra download with a licence prompt
   ([Ukrainian search](#ukrainian-search-optional)).
-- A local transcription model: it needs a machine with enough CPU or GPU and setup time that
-  depends on the model.
+- Tuning a local transcription or language model for speed or accuracy: the `local` profile above
+  gets you running without an account, not a model picked and sized for your machine.
 - Evaluating the result: summaries only show once a conversation has closed and a model is set,
   and a week of wear is what shows whether it fits you.
 
@@ -210,6 +233,10 @@ you copy without thinking would lock its setting.
 | `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
+| `COMPOSE_PROFILES` | no | empty | | `local` starts the no-key speech-to-text and language model containers too |
+| `NYTKA_STT_LOCAL_VERSION` | no | `0.5.0-cpu` | | Image tag of the local profile's speech-to-text server |
+| `NYTKA_STT_LOCAL_MODEL` | no | `Systran/faster-whisper-small` | | Hugging Face faster-whisper model the local profile downloads on first use |
+| `NYTKA_LLM_LOCAL_VERSION` | no | `0.3.14` | | Image tag of the local profile's language model server (Ollama) |
 
 Model names take up to 128 characters. Values travel as strings, as an environment variable carries
 them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`, its `source` (`env`,
@@ -242,7 +269,7 @@ needs none.
 | Scope | May call |
 |---|---|
 | `admin` | Everything. The app needs it, and refuses a `read` token. |
-| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories, people and search. |
+| `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](#api) table: info, conversations, tasks, memories, people, search and the [calendar feed](#calendar-feed). |
 
 A valid token with too little scope gets `403`. A missing, unknown or revoked one gets `401`. A new
 endpoint is closed to `read` until it is marked.
@@ -258,6 +285,29 @@ curl -X POST https://nytka.example.com/api/v1/tokens \
 The answer holds the token, `nyt_` and 43 characters, in `token`. Copy it now: nothing shows it
 again. `DELETE /api/v1/tokens/{id}` revokes it, and `GET /api/v1/tokens` lists all of them with their
 hint, last use and revocation.
+
+### Pairing by QR code
+
+`POST /api/v1/pair` mints a fresh `admin` token (the app refuses `read`, see the table above) and
+hands it back as a QR code, so a phone can scan it instead of someone typing the server's address
+and the token by hand. It needs an `admin` token to call, same as `POST /api/v1/tokens`.
+
+```bash
+curl -X POST https://nytka.example.com/api/v1/pair \
+  -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name": "phone", "url": "https://nytka.example.com"}'
+```
+
+The answer is `{ id, name, createdAt, token, payload, qrCodePng }`; `url` is at most 500 characters, so the code stays readable. `token` is shown once, like any
+other new token; `payload` is the same thing as text:
+
+```
+nytka://pair?url=<server url, percent-encoded>&token=<the new token>
+```
+
+`qrCodePng` is that payload as a QR code, PNG bytes encoded as base64. The Android app scans the
+code, decodes the `nytka://pair` URI, and uses `url` and `token` exactly as if they had been typed
+into the **Server** step of first run (see the [Android app guide](docs/guide/android-app.md)).
 
 ## Transcription endpoints
 
@@ -907,6 +957,20 @@ short. Times are UTC, ids are stable between exports.
 - Nytka cannot import its own export yet. Every field is specified in
   [docs/specs/export.md](docs/specs/export.md).
 
+`GET /api/v1/export/obsidian` (admin token) answers a ZIP of Markdown notes for an Obsidian vault:
+
+```bash
+curl -sS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" "$NYTKA_URL/api/v1/export/obsidian" -o nytka-obsidian.zip
+```
+
+One note per conversation under `Conversations/` (front matter with `date`, `tags`, `people`; a
+heading with the title; the summary; tasks as `- [ ]`/`- [x]` checkboxes; the transcript as
+`**HH:mm:ss** <speaker>: <text>` lines, UTC) and one per person under `People/` (front matter with
+`tags`; their facts; their conversations as `[[wiki links]]`, newest first). File names are safe on
+Windows, macOS and Linux: forbidden characters become spaces, a trailing dot or space is dropped, a
+reserved device name is prefixed with `_`, and 8 hex characters of the row's id keep every name
+unique. Field by field: [docs/specs/export.md](docs/specs/export.md#obsidian-export).
+
 ## Bookmarks
 
 A bookmark marks a moment: a single tap on the pendant, or a tap in the app, sends `POST
@@ -982,6 +1046,25 @@ Nextcloud and most others have one). Nothing is fetched while it is empty.
   `brief` (`{ id, text, createdAt }`), or null before it is made or when nobody matches. The `brief.ready` webhook
   carries `{ id, title, startsAt, people: [{ id, name }], text }`. A brief goes with its event, and with a
   person you delete.
+
+## Calendar feed
+
+`GET /api/v1/calendar.ics` serves an RFC 5545 calendar back out: the events of your [calendar
+feed](#calendar-briefs) that have not ended yet, each as a `VEVENT`, soonest first. Tasks carry no due date
+(see [Tasks](#tasks)), so no `VTODO` is written; the day they do, this feed is where they would appear. The
+calendar is at most as fresh as the feed's own 15-minute fetch. Content type is `text/calendar`; every line
+is CRLF-terminated and folded at 75 octets per [RFC 5545 §3.1](https://www.rfc-editor.org/rfc/rfc5545), and
+every `SUMMARY` is escaped for a literal backslash, comma, semicolon and newline. Each item carries a `UID`
+(stable across fetches, one occurrence of a recurring event included) and a `DTSTAMP` of the moment the feed
+was built.
+
+**The query-token risk.** A calendar app cannot set an `Authorization` header, so this one route also accepts
+the token as `?token=` in the subscription URL you give it. Only a `read` token works there (an `admin`
+one, the environment's included, answers `401`); make one for this feed alone, so you can revoke it
+without touching anything else. The token then lives in the calendar app's
+own storage and sync, and in the access logs of anything between it and your server (a reverse proxy, your
+calendar provider's own servers if it polls the URL on your behalf); treat the URL itself as a secret, the same
+as the ICS address in `Nytka__Calendar__IcsUrl`.
 
 ## Search
 
@@ -1224,7 +1307,7 @@ through OAuth cannot connect.
 | `list_tags` | `query?` (names starting with it) | `{ items: [{ name, conversations, people, uses }] }`, most used first, as `GET /api/v1/tags` (see [Tags](#tags)) |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
-Every tool is read-only (`readOnlyHint`), declares an output schema and returns its result as
+These twelve are read-only (`readOnlyHint`), declare an output schema and return their result as
 structured content and as JSON text. A tool returns the fields its REST endpoint returns, with the
 limits and defaults in the table (`search` has no `offset`). Pass `nextBefore` as `before` to read the
 next page. An unknown id is a tool error ("No such conversation."); a malformed id, time, status or
@@ -1233,6 +1316,21 @@ speaker label when there is none: `[HH:mm:ss] Speaker: text`; a [media](#speech-
 60,000 characters into parts. `part` picks one (from 1; one outside `1` to `parts` is `-32602`),
 `parts` counts them and `truncated` is true while a later part exists, so a client reads the rest with
 `part: 2`, `3` and so on. Only the first 20 parts are read. `transcript` is null when it is false.
+
+**Write tools (Plane NYTKA-81) need an `admin` token.**
+
+| Tool | Input | Output |
+|---|---|---|
+| `create_task` | `conversationId` (UUID), `text` (1 to 200 characters), `kind?` (`commitment`, the default, `idea` or `waiting_on`), `personId?` (UUID) | the created [Task](#tasks); a tool error for an unknown conversation or person, or a conversation that already has a task with this text |
+| `complete_task` | `id` (a task id) | the completed Task, as `PATCH /api/v1/tasks/{id}` with `{ done: true }`; a tool error for an unknown id |
+| `create_memory` | `text` (1 to 300 characters) | the created [Memory](#memories), as `POST /api/v1/memories`; a tool error when a live memory already holds the fact |
+
+A `read` token's `tools/list` never names these three, and calling one with a `read` token is
+JSON-RPC error `-32600` ("Access forbidden: This tool requires authorization."): the MCP host's
+authorization filters check the same [`admin`-or-`read` scope](#tokens-and-scopes) REST does, before
+the tool runs. `create_task` has no REST counterpart, since REST still has no way to add a task by
+hand (see [Tasks](#tasks)); a task it creates is marked `edited`, so a later summary never removes or
+rewrites it, and it raises `task.created` only for a `commitment`, matching a summary's tasks.
 
 **Connect a client.** Give it the URL and a `read` token (see [Tokens and scopes](#tokens-and-scopes)).
 In Claude Code:
@@ -1339,7 +1437,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `speech-kind` ([speech kinds](#speech-kind) on lines) and `context-ranges` (the server takes [context ranges](#context-from-the-phone)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1365,6 +1463,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |
 | DELETE | `/api/v1/tokens/{id}` | admin | Revokes it: `204` |
+| POST | `/api/v1/pair` | admin | Body `{ name, url }`, `url` an absolute http or https URL of at most 500 characters; `201` with `{ id, name, createdAt, token, payload, qrCodePng }`: a fresh `admin` token, shown once, and the same [pairing QR code](#pairing-by-qr-code) as text (`payload`) and as a PNG (`qrCodePng`, base64); `409` for a name in use |
 | GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai`, `user` or `omi`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
@@ -1377,6 +1476,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/digests/{id}` | read | One digest, as in the list |
 | POST | `/api/v1/digests/run?date=` | admin | Queues a run for that local date that replaces its digest; `202 { localDate }`, `400` for a missing, malformed or future date, `409` without a model |
 | GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](#export) |
+| GET | `/api/v1/export/obsidian` | admin | A ZIP (`application/zip`) of Markdown notes for an Obsidian vault, one per conversation and one per person; see [Export](#export) |
 | GET | `/api/v1/search?q=&kinds=&tag=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name) |
 | POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
 | GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
@@ -1420,6 +1520,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation or person: `204`; `404` and `409` as accept |
 | DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
+| GET | `/api/v1/calendar.ics` | read | An RFC 5545 calendar (`text/calendar`), the [calendar feed](#calendar-feed)'s events not over yet as `VEVENT`; also takes a `read` token as `?token=` (see [Calendar feed](#calendar-feed) for the risk) |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 

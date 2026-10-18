@@ -442,9 +442,90 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("create_task")]
+    [InlineData("complete_task")]
+    public async Task Write_tools_are_hidden_from_a_read_token(string tool)
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+
+        var tools = await client.ListToolsAsync();
+
+        Assert.DoesNotContain(tool, tools.Select(t => t.Name));
+    }
+
+    [Theory]
+    [InlineData("create_task")]
+    [InlineData("complete_task")]
+    public async Task A_read_token_cannot_call_a_write_tool(string tool)
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("read"));
+        var arguments = tool == "create_task"
+            ? new Dictionary<string, object?> { ["conversationId"] = Conversation, ["text"] = "Buy milk" }
+            : new Dictionary<string, object?> { ["id"] = "018f0000-0000-7000-8000-0000000000a1" };
+
+        var error = await Assert.ThrowsAsync<McpProtocolException>(() => client.CallToolAsync(tool, arguments).AsTask());
+
+        Assert.Equal(McpErrorCode.InvalidRequest, error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task An_admin_token_sees_and_can_call_create_task_and_complete_task()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("admin"));
+
+        var tools = (await client.ListToolsAsync()).Select(t => t.Name).ToList();
+        Assert.Contains("create_task", tools);
+        Assert.Contains("complete_task", tools);
+
+        var created = Structured(await client.CallToolAsync(
+            "create_task", new Dictionary<string, object?> { ["conversationId"] = Conversation, ["text"] = "Buy milk" }));
+        Assert.Equal("Buy milk", created.GetProperty("text").GetString());
+        Assert.Equal(Conversation, created.GetProperty("conversationId").GetGuid());
+        Assert.False(created.GetProperty("done").GetBoolean());
+        Assert.Equal("commitment", created.GetProperty("kind").GetString());
+
+        var completed = Structured(await client.CallToolAsync(
+            "complete_task", new Dictionary<string, object?> { ["id"] = created.GetProperty("id").GetGuid() }));
+        Assert.True(completed.GetProperty("done").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Create_task_rejects_an_unknown_conversation_or_person_and_a_repeated_text()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("admin"));
+
+        var noConversation = await client.CallToolAsync(
+            "create_task", new Dictionary<string, object?> { ["conversationId"] = Guid.NewGuid(), ["text"] = "Buy milk" });
+        var noPerson = await client.CallToolAsync(
+            "create_task",
+            new Dictionary<string, object?> { ["conversationId"] = Conversation, ["text"] = "Call back", ["personId"] = Guid.NewGuid() });
+        var duplicate = await client.CallToolAsync(
+            "create_task", new Dictionary<string, object?> { ["conversationId"] = Conversation, ["text"] = "Open one" });
+
+        Assert.True(noConversation.IsError);
+        Assert.Equal("No such conversation.", Assert.IsType<TextContentBlock>(Assert.Single(noConversation.Content)).Text);
+        Assert.True(noPerson.IsError);
+        Assert.Equal("No such person.", Assert.IsType<TextContentBlock>(Assert.Single(noPerson.Content)).Text);
+        Assert.True(duplicate.IsError);
+    }
+
+    [Fact]
+    public async Task Complete_task_with_an_unknown_id_is_a_tool_error()
+    {
+        await using var client = await ConnectAsync(_server.CreateClientWithScope("admin"));
+
+        var result = await client.CallToolAsync("complete_task", new Dictionary<string, object?> { ["id"] = Guid.NewGuid() });
+
+        Assert.True(result.IsError);
+        Assert.Equal("No such task.", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+    }
+
+    [Theory]
     [InlineData("list_conversations")]
     [InlineData("get_conversation")]
     [InlineData("list_tasks")]
+    [InlineData("create_task")]
+    [InlineData("complete_task")]
     public async Task Calling_a_tool_without_a_token_is_401(string tool)
     {
         var body = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"TOOL","arguments":{}}}""";

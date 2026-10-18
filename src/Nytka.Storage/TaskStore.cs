@@ -21,6 +21,12 @@ public sealed record PersonChange(Guid? PersonId);
 /// <summary>What <see cref="TaskStore.UpdateAsync"/> did.</summary>
 public sealed record TaskUpdate(TaskRow Task, bool Completed);
 
+/// <summary>What stopped <see cref="TaskStore.CreateAsync"/> from adding the task, if anything.</summary>
+public enum TaskCreateProblem { None, NoConversation, NoPerson, Duplicate }
+
+/// <summary>What <see cref="TaskStore.CreateAsync"/> did: the task, or which <see cref="TaskCreateProblem"/> it hit.</summary>
+public sealed record TaskCreated(TaskRow? Task, TaskCreateProblem Problem);
+
 /// <summary>Tasks taken from a summary (<c>tasks</c>).</summary>
 public sealed class TaskStore(NpgsqlDataSource dataSource)
 {
@@ -138,6 +144,47 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         var task = await connection.QuerySingleAsync<TaskRow>(new CommandDefinition(
             Select + "\nwhere t.id = @id", new { id }, transaction, cancellationToken: ct));
         return new TaskUpdate(task, completed);
+    }
+
+    /// <summary>
+    /// Adds a task by hand, inside the caller's transaction, marked <c>edited</c> so a later summary never
+    /// removes or rewrites it. <see cref="TaskCreateProblem.NoConversation"/> or <see cref="TaskCreateProblem.NoPerson"/>
+    /// when either id does not exist; <see cref="TaskCreateProblem.Duplicate"/> when the conversation already
+    /// has a task with this fingerprint.
+    /// </summary>
+    public async Task<TaskCreated> CreateAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, string text, string fingerprint,
+        Guid? personId, string kind, DateTimeOffset now, CancellationToken ct)
+    {
+        if (await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                "select id from conversations where id = @conversationId for share",
+                new { conversationId }, transaction, cancellationToken: ct)) is null)
+        {
+            return new TaskCreated(null, TaskCreateProblem.NoConversation);
+        }
+
+        if (personId is not null && await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                "select id from people where id = @personId", new { personId }, transaction, cancellationToken: ct)) is null)
+        {
+            return new TaskCreated(null, TaskCreateProblem.NoPerson);
+        }
+
+        var id = Guid.CreateVersion7(now);
+        var inserted = await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, edited, created_at, updated_at)
+            values (@id, @conversationId, @text, @fingerprint, @personId, @kind, true, @now, @now)
+            on conflict (conversation_id, fingerprint) do nothing
+            """,
+            new { id, conversationId, text, fingerprint, personId, kind, now }, transaction, cancellationToken: ct));
+        if (inserted == 0)
+        {
+            return new TaskCreated(null, TaskCreateProblem.Duplicate);
+        }
+
+        var task = await connection.QuerySingleAsync<TaskRow>(new CommandDefinition(
+            Select + "\nwhere t.id = @id", new { id }, transaction, cancellationToken: ct));
+        return new TaskCreated(task, TaskCreateProblem.None);
     }
 
     /// <summary>Marks the task deleted and keeps the row as a tombstone, so a later summary does not bring it back.</summary>

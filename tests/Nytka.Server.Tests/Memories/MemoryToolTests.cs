@@ -3,7 +3,10 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Npgsql;
+using Nytka.Server.Events;
 using Nytka.Server.Memories;
+using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Memories;
 
@@ -16,7 +19,7 @@ public sealed class MemoryToolTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static Guid Id(int n) => Guid.Parse($"018f0000-0000-7000-8000-0000000000{n:x2}");
 
-    private MemoryTools Tools => new(Server.Get<Nytka.Storage.MemoryStore>());
+    private MemoryTools Tools => new(Server.Get<MemoryStore>(), Server.Get<NpgsqlDataSource>(), Server.Get<IEventPublisher>(), Server.Get<TimeProvider>());
 
     private async Task SeedAsync()
     {
@@ -128,5 +131,47 @@ public sealed class MemoryToolTests(PostgresFixture db) : MemoryTestBase(db)
         var error = await Assert.ThrowsAsync<McpProtocolException>(() => Tools.ListMemoriesAsync(before: "nope"));
 
         Assert.Equal(McpErrorCode.InvalidParams, error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Create_memory_is_hidden_from_and_refused_for_a_read_token()
+    {
+        await using var client = await ConnectAsync(Server.CreateClientWithScope("read"));
+
+        var tools = await client.ListToolsAsync();
+        Assert.DoesNotContain("create_memory", tools.Select(t => t.Name));
+
+        var error = await Assert.ThrowsAsync<McpProtocolException>(() =>
+            client.CallToolAsync("create_memory", new Dictionary<string, object?> { ["text"] = "Allergic to peanuts" }).AsTask());
+        Assert.Equal(McpErrorCode.InvalidRequest, error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task An_admin_token_sees_and_can_call_create_memory()
+    {
+        await using var client = await ConnectAsync(Server.CreateClientWithScope("admin"));
+
+        var tools = (await client.ListToolsAsync()).Select(t => t.Name).ToList();
+        Assert.Contains("create_memory", tools);
+
+        var result = Structured(await client.CallToolAsync(
+            "create_memory", new Dictionary<string, object?> { ["text"] = "Allergic to peanuts" }));
+
+        Assert.Equal("Allergic to peanuts", result.GetProperty("text").GetString());
+        Assert.Equal("user", result.GetProperty("source").GetString());
+        Assert.Equal(1, await Memories());
+    }
+
+    [Fact]
+    public async Task Create_memory_rejects_an_empty_text_and_a_repeated_fact()
+    {
+        var empty = await Assert.ThrowsAsync<McpProtocolException>(() => Tools.CreateMemoryAsync("   "));
+        var ok = await Tools.CreateMemoryAsync("Allergic to peanuts");
+        var repeated = await Tools.CreateMemoryAsync("allergic, to PEANUTS!");
+
+        Assert.Equal(McpErrorCode.InvalidParams, empty.ErrorCode);
+        Assert.NotEqual(true, ok.IsError);
+        Assert.True(repeated.IsError);
+        Assert.Equal("A memory already holds this fact.", Assert.IsType<TextContentBlock>(Assert.Single(repeated.Content)).Text);
     }
 }

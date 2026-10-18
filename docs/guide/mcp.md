@@ -1,6 +1,6 @@
 ---
 title: "MCP reference"
-description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs and all twelve read-only tools."
+description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs, the twelve read-only tools and the three write tools an admin token unlocks."
 order: 4
 section: "Reference"
 ---
@@ -66,8 +66,8 @@ way. Behind a reverse proxy, pass `/mcp` and that header through unchanged.
 
 ## Tools
 
-All twelve tools are read-only (`ReadOnly = true` in the source), declare an output schema and
-return structured content plus JSON text. The names below match the `McpServerTool` attributes in
+Twelve tools are read-only (`ReadOnly = true` in the source), declare an output schema and return
+structured content plus JSON text. The names below match the `McpServerTool` attributes in
 `src/Nytka.Server/Mcp/`.
 
 | Tool | Input |
@@ -86,6 +86,26 @@ return structured content plus JSON text. The names below match the `McpServerTo
 | `ask` | `question` (1 to 500 characters) |
 
 Defaults are in parentheses. Times are ISO 8601 with an offset, or a date.
+
+### Write tools (admin only)
+
+Three tools write (Plane NYTKA-81) and need an `admin` token: a `read` token's `tools/list` never
+names them, and calling one with a `read` token is JSON-RPC error `-32600` ("Access forbidden: This
+tool requires authorization."), caught by the MCP host's authorization filters
+(`AddAuthorizationFilters` in `McpExtensions.AddNytkaMcp`) before the tool runs, the same
+[`admin`-or-`read` scope check](../../README.md#tokens-and-scopes) REST uses.
+
+| Tool | Input | Notes |
+|---|---|---|
+| `create_task` | `conversationId`, `text` (1 to 200 characters), `kind?` (`commitment` by default, `idea`, `waiting_on`), `personId?` | A tool error for an unknown conversation or person, or a conversation that already has a task with this text |
+| `complete_task` | `id` | Marks the task done; a tool error for an unknown id |
+| `create_memory` | `text` (1 to 300 characters) | A tool error when a live memory already holds the same fact |
+
+`complete_task` and `create_memory` match their REST counterparts (`PATCH /api/v1/tasks/{id}` for
+completing, `POST /api/v1/memories` for a memory); `create_task` has no REST counterpart, since REST
+still has no way to add a task by hand (see [Tasks](../../README.md#tasks)). A hand-made task is
+marked `edited`, so a later summary never removes or rewrites it, and `create_task` raises
+`task.created` only for a `commitment`, matching how a summary's tasks do.
 
 ### Paging
 

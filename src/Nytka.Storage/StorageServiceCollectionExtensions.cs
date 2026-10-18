@@ -35,6 +35,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<BookmarkStore>();
         services.AddSingleton<DigestStore>();
         services.AddSingleton<ExportStore>();
+        services.AddSingleton<ObsidianExportStore>();
         services.AddSingleton<VoiceStore>();
         services.AddSingleton<NameSuggestionStore>();
         services.AddSingleton<VoiceGroupStore>();
