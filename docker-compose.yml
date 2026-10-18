@@ -91,5 +91,41 @@ services:
       retries: 3
       start_period: 20s
 
+  # The `local` profile: a speech-to-text server and a language model server that need no account
+  # and no API key, for Nytka__Stt__Url and Nytka__Llm__BaseUrl to point at (README, "Install in 15
+  # minutes"). Off unless COMPOSE_PROFILES=local is set or `docker compose --profile local ...` is
+  # used; scripts/install.sh does both. Slower and less accurate than a hosted provider.
+  stt-local:
+    image: "fedirz/faster-whisper-server:${NYTKA_STT_LOCAL_VERSION:-0.5.0-cpu}"
+    profiles: ["local"]
+    restart: unless-stopped
+    environment:
+      # A Hugging Face faster-whisper repo id; the server downloads it on the first request.
+      WHISPER__MODEL: "${NYTKA_STT_LOCAL_MODEL:-Systran/faster-whisper-small}"
+    volumes:
+      - stt-local-data:/root/.cache/huggingface
+    healthcheck:
+      # The image has no curl.
+      test: ["CMD", "python3.12", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  llm-local:
+    image: "ollama/ollama:${NYTKA_LLM_LOCAL_VERSION:-0.3.14}"
+    profiles: ["local"]
+    restart: unless-stopped
+    volumes:
+      - llm-local-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
 volumes:
   postgres-data:
+  stt-local-data:
+  llm-local-data:

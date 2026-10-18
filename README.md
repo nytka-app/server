@@ -39,14 +39,37 @@ says what is not counted.
 - A Linux, macOS or Windows machine with [Docker Compose](https://docs.docker.com/compose/install/)
   that runs while you wear the pendant. A VPS or a home server is best; a laptop that sleeps loses
   nothing, because the app keeps the audio and uploads it later, but conversations then appear late.
-- A transcription account. The cheapest working choice is [Groq](https://console.groq.com): a free
-  tier covers 28,800 seconds of audio a day for `whisper-large-v3-turbo` (check the current limits
-  there). The server drops silence before it sends anything, so a day of wearing stays far below
-  that. OpenAI's `whisper-1` also works and is paid by the minute. Create an API key and keep it.
+- A transcription account, unless you use the no-key local profile below. The cheapest working
+  hosted choice is [Groq](https://console.groq.com): a free tier covers 28,800 seconds of audio a
+  day for `whisper-large-v3-turbo` (check the current limits there). The server drops silence
+  before it sends anything, so a day of wearing stays far below that. OpenAI's `whisper-1` also
+  works and is paid by the minute. Create an API key and keep it.
 - A way for the phone to reach the server over HTTPS. The easiest is [Tailscale](https://tailscale.com):
   the server machine and the phone both join your tailnet, and the next section gives the server an
   `https://` address with a real certificate. A domain with a reverse proxy works too.
 - The pendant charged, on consumer firmware 3.0.x, and an Android 12+ phone.
+
+**Fastest: one command, no account, no key**
+
+On a Linux or macOS host with Docker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nytka-app/server/main/scripts/install.sh | bash
+```
+
+This creates `./nytka`, writes `docker-compose.yml` and a `.env` with a generated admin token and
+Postgres password (never printed, except the admin token once at the end), and starts the stack
+with the `local` Compose profile: a speech-to-text server
+([faster-whisper-server](https://github.com/fedirz/faster-whisper-server)) and a language model
+server ([Ollama](https://ollama.com)) running alongside Postgres and the server, wired through
+`Nytka__Stt__Url` and `Nytka__Llm__BaseUrl` like any other endpoint. The first run needs no
+transcription account and no API key, at the cost that **local models are slower and less accurate
+than a hosted provider**: expect a longer wait for a transcript and for a summary, and more
+mistakes in both, especially outside English. Switch to a hosted provider any time by editing
+`.env` ([Configuration](#configuration)) and running `docker compose up -d` again. Either way,
+continue at [step 4](#4-give-the-phone-an-https-address-3-minutes-with-tailscale) below.
+
+**With a hosted transcription account, step by step**
 
 **1. Download the Compose file and the settings template (1 minute)**
 
@@ -146,8 +169,8 @@ the same key works; pick a chat model from its list). Back up the `postgres-data
   codec is wrong. Offline sync needs firmware 3.0.20 or later.
 - The Ukrainian search dictionary: an extra download with a licence prompt
   ([Ukrainian search](#ukrainian-search-optional)).
-- A local transcription model: it needs a machine with enough CPU or GPU and setup time that
-  depends on the model.
+- Tuning a local transcription or language model for speed or accuracy: the `local` profile above
+  gets you running without an account, not a model picked and sized for your machine.
 - Evaluating the result: summaries only show once a conversation has closed and a model is set,
   and a week of wear is what shows whether it fits you.
 
@@ -210,6 +233,10 @@ you copy without thinking would lock its setting.
 | `Nytka__Voice__ModelPath` | no | `Models/nemo_en_titanet_small.onnx` | env only | The speaker model; a relative path is read from beside the server's binaries. The image carries the model |
 | `NYTKA_BIND`, `NYTKA_PORT` | no | `127.0.0.1`, `8080` | | Where Compose publishes the server |
 | `NYTKA_VERSION` | no | `latest` | | Image tag, such as `0.4.1` |
+| `COMPOSE_PROFILES` | no | empty | | `local` starts the no-key speech-to-text and language model containers too |
+| `NYTKA_STT_LOCAL_VERSION` | no | `0.5.0-cpu` | | Image tag of the local profile's speech-to-text server |
+| `NYTKA_STT_LOCAL_MODEL` | no | `Systran/faster-whisper-small` | | Hugging Face faster-whisper model the local profile downloads on first use |
+| `NYTKA_LLM_LOCAL_VERSION` | no | `0.3.14` | | Image tag of the local profile's language model server (Ollama) |
 
 Model names take up to 128 characters. Values travel as strings, as an environment variable carries
 them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`, its `source` (`env`,
