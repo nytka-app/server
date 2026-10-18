@@ -32,7 +32,7 @@ public sealed class NytkaAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        var token = ReadToken();
+        var (token, fromQuery) = ReadToken();
         if (token is not { Length: > 0 })
         {
             return AuthenticateResult.NoResult();
@@ -42,12 +42,12 @@ public sealed class NytkaAuthenticationHandler(
         var hash = TokenSecret.Hash(token);
         if (CryptographicOperations.FixedTimeEquals(hash, SHA256.HashData(Encoding.UTF8.GetBytes(options.CurrentValue.AdminToken))))
         {
-            return Succeed("environment", NytkaScopes.Admin);
+            return fromQuery ? QueryTokenRefused() : Succeed("environment", NytkaScopes.Admin);
         }
 
         if (await tokens.AuthenticateAsync(hash, time.GetUtcNow(), Context.RequestAborted) is { } identity)
         {
-            return Succeed(identity.Name, identity.Scope);
+            return fromQuery && identity.Scope != NytkaScopes.Read ? QueryTokenRefused() : Succeed(identity.Name, identity.Scope);
         }
 
         return AuthenticateResult.Fail("Unknown or revoked token.");
@@ -55,24 +55,27 @@ public sealed class NytkaAuthenticationHandler(
 
     /// <summary>
     /// The <c>Authorization</c> header, or, only for a route carrying <see cref="AllowQueryTokenMetadata"/>, the
-    /// <c>token</c> query parameter when the header is absent.
+    /// <c>token</c> query parameter when the header is absent. A token from the query is accepted only if its
+    /// scope is <c>read</c>: a URL leaks more easily than a header, so it never carries <c>admin</c>.
     /// </summary>
-    private string? ReadToken()
+    private (string? Token, bool FromQuery) ReadToken()
     {
         var header = Request.Headers.Authorization.ToString();
         if (header.StartsWith(Bearer, StringComparison.OrdinalIgnoreCase) && header[Bearer.Length..].Trim() is { Length: > 0 } fromHeader)
         {
-            return fromHeader;
+            return (fromHeader, false);
         }
 
         if (Context.GetEndpoint()?.Metadata.GetMetadata<AllowQueryTokenMetadata>() is not null
             && Request.Query["token"].ToString() is { Length: > 0 } fromQuery)
         {
-            return fromQuery;
+            return (fromQuery, true);
         }
 
-        return null;
+        return (null, false);
     }
+
+    private static AuthenticateResult QueryTokenRefused() => AuthenticateResult.Fail("A token in the query must have the read scope.");
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
     {

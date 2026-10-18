@@ -116,6 +116,23 @@ public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_calendar_feed_takes_a_read_token_in_the_query_but_never_an_admin_one()
+    {
+        var read = _server.CreateClientWithScope("read").DefaultRequestHeaders.Authorization!.Parameter!;
+        var admin = _server.CreateClientWithScope("admin").DefaultRequestHeaders.Authorization!.Parameter!;
+        var anonymous = _server.CreateClient();
+
+        var ok = await anonymous.GetAsync($"/api/v1/calendar.ics?token={read}");
+
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Equal("text/calendar", ok.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/calendar.ics?token={admin}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/calendar.ics?token={NytkaApiFactory.Token}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _server.CreateAuthorizedClient().GetAsync("/api/v1/calendar.ics")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/tasks?token={read}")).StatusCode);
+    }
+
+    [Fact]
     public async Task A_revoked_token_gets_401_on_its_next_request()
     {
         var client = _server.CreateClientWithScope("read");
@@ -315,7 +332,8 @@ public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
         var token = await NewToken("read");
 
         Assert.Equal(HttpStatusCode.OK, await GetQuery("/query-token", token));
-        Assert.Equal(HttpStatusCode.OK, await GetQuery("/query-token", NytkaApiFactory.Token));
+        Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/query-token", NytkaApiFactory.Token));
+        Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/query-token", await NewToken("admin")));
         Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/read", token));
     }
 

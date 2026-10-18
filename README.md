@@ -947,8 +947,9 @@ every `SUMMARY` is escaped for a literal backslash, comma, semicolon and newline
 was built.
 
 **The query-token risk.** A calendar app cannot set an `Authorization` header, so this one route also accepts
-the token as `?token=` in the subscription URL you give it. Only do this with a `read` token, made for this
-feed alone, so you can revoke it without touching anything else. The token then lives in the calendar app's
+the token as `?token=` in the subscription URL you give it. Only a `read` token works there (an `admin`
+one, the environment's included, answers `401`); make one for this feed alone, so you can revoke it
+without touching anything else. The token then lives in the calendar app's
 own storage and sync, and in the access logs of anything between it and your server (a reverse proxy, your
 calendar provider's own servers if it polls the URL on your behalf); treat the URL itself as a secret, the same
 as the ICS address in `Nytka__Calendar__IcsUrl`.
@@ -1388,7 +1389,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation or person: `204`; `404` and `409` as accept |
 | DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
-| GET | `/api/v1/calendar.ics` | read | An RFC 5545 calendar (`text/calendar`), the [calendar feed](#calendar-feed)'s events not over yet as `VEVENT`; also takes the token as `?token=` (see [Calendar feed](#calendar-feed) for the risk) |
+| GET | `/api/v1/calendar.ics` | read | An RFC 5545 calendar (`text/calendar`), the [calendar feed](#calendar-feed)'s events not over yet as `VEVENT`; also takes a `read` token as `?token=` (see [Calendar feed](#calendar-feed) for the risk) |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
