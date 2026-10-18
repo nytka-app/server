@@ -117,6 +117,23 @@ public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_calendar_feed_takes_a_read_token_in_the_query_but_never_an_admin_one()
+    {
+        var read = _server.CreateClientWithScope("read").DefaultRequestHeaders.Authorization!.Parameter!;
+        var admin = _server.CreateClientWithScope("admin").DefaultRequestHeaders.Authorization!.Parameter!;
+        var anonymous = _server.CreateClient();
+
+        var ok = await anonymous.GetAsync($"/api/v1/calendar.ics?token={read}");
+
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Equal("text/calendar", ok.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/calendar.ics?token={admin}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/calendar.ics?token={NytkaApiFactory.Token}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _server.CreateAuthorizedClient().GetAsync("/api/v1/calendar.ics")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/tasks?token={read}")).StatusCode);
+    }
+
+    [Fact]
     public async Task A_revoked_token_gets_401_on_its_next_request()
     {
         var client = _server.CreateClientWithScope("read");
@@ -212,6 +229,7 @@ public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
         _app.MapPost("/rpc", () => "rpc").RequireNytkaAuth().AllowRead(anyMethod: true);
         _app.MapGet("/admin", () => "admin").RequireNytkaAuth();
         _app.MapGet("/read", () => "read").RequireNytkaAuth().AllowRead();
+        _app.MapGet("/query-token", () => "read").RequireNytkaAuth().AllowRead().AllowQueryToken();
         var closed = _app.MapGroup("/closed").RequireNytkaAuth();
         closed.MapGet("/admin", () => "admin");
         closed.MapGet("/read", () => "read").AllowRead();
@@ -308,4 +326,26 @@ public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, await Get("/healthz", null));
         Assert.Equal(HttpStatusCode.OK, await Get("/anon", null));
     }
+
+    [Fact]
+    public async Task AllowQueryToken_admits_a_token_as_a_query_parameter_but_only_on_its_own_route()
+    {
+        var token = await NewToken("read");
+
+        Assert.Equal(HttpStatusCode.OK, await GetQuery("/query-token", token));
+        Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/query-token", NytkaApiFactory.Token));
+        Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/query-token", await NewToken("admin")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/read", token));
+    }
+
+    [Fact]
+    public async Task AllowQueryToken_still_accepts_the_header_and_an_empty_or_missing_query_token_fails()
+    {
+        Assert.Equal(HttpStatusCode.OK, await Get("/query-token", await NewToken("read")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await Get("/query-token", null));
+        Assert.Equal(HttpStatusCode.Unauthorized, await GetQuery("/query-token", ""));
+    }
+
+    private async Task<HttpStatusCode> GetQuery(string path, string? token) =>
+        (await _client.GetAsync($"{path}?token={Uri.EscapeDataString(token ?? "")}")).StatusCode;
 }

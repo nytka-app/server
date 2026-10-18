@@ -128,6 +128,7 @@ api.MapVoice();
 api.MapVoiceGroups();
 api.MapReview();
 api.MapBriefs();
+api.MapCalendarFeed();
 app.MapNytkaMcp();
 
 app.Run();

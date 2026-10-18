@@ -134,6 +134,15 @@ public sealed class CalendarStore(NpgsqlDataSource dataSource)
             new { id, uid, startsAt, personIds = personIds.ToArray(), text, now }, transaction, cancellationToken: ct)) == 1;
     }
 
+    /// <summary>Occurrences not over yet, soonest first: the <c>calendar.ics</c> feed, which paginates on its own.</summary>
+    public async Task<IReadOnlyList<CalendarOccurrence>> FeedAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<EventRow>(new CommandDefinition(
+            $"{SelectEvent} where e.ends_at > @now order by e.starts_at, e.uid", new { now }, cancellationToken: ct)))
+            .Select(r => r.ToOccurrence()).ToList();
+    }
+
     /// <summary>Occurrences not over yet that start no later than <paramref name="until"/>, soonest first, each with its brief.</summary>
     public async Task<IReadOnlyList<UpcomingEvent>> UpcomingAsync(DateTimeOffset now, DateTimeOffset until, CancellationToken ct)
     {
