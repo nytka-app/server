@@ -98,13 +98,12 @@ tool requires authorization."), caught by the MCP host's authorization filters
 
 | Tool | Input | Notes |
 |---|---|---|
-| `create_task` | `conversationId`, `text` (1 to 200 characters), `kind?` (`commitment` by default, `idea`, `waiting_on`), `personId?` | A tool error for an unknown conversation or person, or a conversation that already has a task with this text |
+| `create_task` | `text` (1 to 200 characters), `conversationId?`, `kind?` (`commitment` by default, `idea`, `waiting_on`), `personId?`, `due?` (ISO 8601) | A tool error for an unknown conversation or person, or a conversation that already has a task with this text |
 | `complete_task` | `id` | Marks the task done; a tool error for an unknown id |
 | `create_memory` | `text` (1 to 300 characters) | A tool error when a live memory already holds the same fact |
 
-`complete_task` and `create_memory` match their REST counterparts (`PATCH /api/v1/tasks/{id}` for
-completing, `POST /api/v1/memories` for a memory); `create_task` has no REST counterpart, since REST
-still has no way to add a task by hand (see [Tasks](../../README.md#tasks)). A hand-made task is
+`complete_task`, `create_task` and `create_memory` match their REST counterparts (`PATCH /api/v1/tasks/{id}` for
+completing, `POST /api/v1/memories` for a memory, `POST /api/v1/tasks` for a task; see [Tasks](../../README.md#tasks)). A hand-made task is
 marked `edited`, so a later summary never removes or rewrites it, and `create_task` raises
 `task.created` only for a `commitment`, matching how a summary's tasks do.
 

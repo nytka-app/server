@@ -334,13 +334,26 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
     public async Task<PersonWrite> UpdateAsync(Guid id, string? name, bool setNote, string? note, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
         try
         {
-            return await connection.ExecuteAsync(new CommandDefinition(
+            var before = await connection.QuerySingleOrDefaultAsync<(string Name, bool Named)?>(new CommandDefinition(
+                "select name, named from people where id = @id for update", new { id }, transaction, cancellationToken: ct));
+            if (before is null)
+            {
+                return PersonWrite.NotFound;
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition(
                 "update people set name = coalesce(cast(@name as text), name), named = named or cast(@name as text) is not null, note = case when @setNote then cast(@note as text) else note end where id = @id",
-                new { id, name, setNote, note }, cancellationToken: ct)) == 1
-                ? PersonWrite.Ok
-                : PersonWrite.NotFound;
+                new { id, name, setNote, note }, transaction, cancellationToken: ct));
+            if (name is not null && before.Value.Named)
+            {
+                await NameSpelling.RespellAsync(connection, transaction, id, before.Value.Name, name, ct);
+            }
+
+            await transaction.CommitAsync(ct);
+            return PersonWrite.Ok;
         }
         catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
         {
@@ -420,6 +433,14 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
         if (found != 2)
         {
             return PersonWrite.NotFound;
+        }
+
+        var names = (await connection.QueryAsync<(Guid Id, string Name, bool Named)>(new CommandDefinition(
+            "select id, name, named from people where id in (@id, @intoId)", new { id, intoId }, transaction, cancellationToken: ct))).ToList();
+        if (names.Single(n => n.Id == id) is { Named: true } merged)
+        {
+            // Before the segments move: the merged person's conversations are found by their own links.
+            await NameSpelling.RespellAsync(connection, transaction, id, merged.Name, names.Single(n => n.Id == intoId).Name, ct);
         }
 
         await connection.ExecuteAsync(new CommandDefinition(

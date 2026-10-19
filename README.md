@@ -735,9 +735,13 @@ never hold transcript text or a response body.
 
 ## Tasks
 
-A task is something the wearer committed to do, taken from a summary. Its text carries its deadline: there
-are no due dates and no hand-made tasks. Tick, reopen, edit or delete a task in the Tasks tab, or with
-`PATCH` and `DELETE` on `/api/v1/tasks/{id}`. A later summary never adds a deleted task again with the same wording, and
+A task is something the wearer committed to do, taken from a summary, or added by hand with `POST /api/v1/tasks`
+(`{ text, due?, conversationId?, personId? }`; a hand-made task needs no conversation, so its `conversationId`,
+`conversationTitle` and `conversationStartedAt` are `null`). A task may have a due date, `due`: ISO 8601 text such as
+`2026-10-24T15:00:00Z`, where a bare date means that day at 00:00 UTC, and `null` when nobody gave a deadline. A summary sets
+it only when the speaker named a date for that task, and the server drops one that falls before the conversation or more than
+366 days after it; it never makes a deadline up. Tick, reopen, edit or delete a task in the Tasks tab, or with
+`PATCH` and `DELETE` on `/api/v1/tasks/{id}` (`PATCH` sets or clears `due`). A later summary never adds a deleted task again with the same wording, and
 never removes or rewrites one you touched. `GET /api/v1/tasks` lists open or done tasks, newest
 first, with the title and day of their conversation.
 
@@ -1059,8 +1063,8 @@ Nextcloud and most others have one). Nothing is fetched while it is empty.
 ## Calendar feed
 
 `GET /api/v1/calendar.ics` serves an RFC 5545 calendar back out: the events of your [calendar
-feed](#calendar-briefs) that have not ended yet, each as a `VEVENT`, soonest first. Tasks carry no due date
-(see [Tasks](#tasks)), so no `VTODO` is written; the day they do, this feed is where they would appear. The
+feed](#calendar-briefs) that have not ended yet, each as a `VEVENT`, soonest first. Tasks have a due date
+(see [Tasks](#tasks)), but no `VTODO` is written yet; this feed is where they would appear. The
 calendar is at most as fresh as the feed's own 15-minute fetch. Content type is `text/calendar`; every line
 is CRLF-terminated and folded at 75 octets per [RFC 5545 §3.1](https://www.rfc-editor.org/rfc/rfc5545), and
 every `SUMMARY` is escaped for a literal backslash, comma, semicolon and newline. Each item carries a `UID`
@@ -1220,7 +1224,7 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 | Event | Sent when | `data` |
 |---|---|---|
 | `conversation.ready` | A summary was stored, the first one and every re-run | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text }], tags }` |
-| `task.created` | A summary produced a new commitment | the task, as `GET /api/v1/tasks` shows it, without `personId` and `personName` |
+| `task.created` | A summary produced a new commitment | the task, as `GET /api/v1/tasks` shows it, without `personId`, `personName` and `kind`, and with `due` |
 | `task.completed` | A task was completed | the task |
 | `memory.created` | A memory was added, by extraction or by hand | `{ id, text, conversationId }` |
 | `bookmark.created` | A bookmark was added | `{ id, at, note, source }` |
@@ -1304,7 +1308,7 @@ through OAuth cannot connect.
 | Tool | Input | Output |
 |---|---|---|
 | `list_conversations` | `since?`, `before?` (ISO 8601 with an offset, or a date), `tag?`, `limit?` (1 to 50, default 20) | `{ items: [{ id, startedAt, endedAt, title, summary, preview, mediaShare, tags }], nextBefore }` |
-| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName }], transcript, truncated, part, parts, tags }` |
+| `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName, due }], transcript, truncated, part, parts, tags }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `kind?` (`commitment`, the default, `idea`, `waiting_on` or `all`), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_notes` | `topic?`, `conversationId?`, `before?` (a note id), `limit?` (1 to 200, default 50) | `{ items: [Note], nextBefore }`, newest first (see [Notes](#notes)) |
 | `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
@@ -1331,15 +1335,14 @@ speaker label when there is none: `[HH:mm:ss] Speaker: text`; a [media](#speech-
 
 | Tool | Input | Output |
 |---|---|---|
-| `create_task` | `conversationId` (UUID), `text` (1 to 200 characters), `kind?` (`commitment`, the default, `idea` or `waiting_on`), `personId?` (UUID) | the created [Task](#tasks); a tool error for an unknown conversation or person, or a conversation that already has a task with this text |
+| `create_task` | `text` (1 to 200 characters), `conversationId?` (UUID), `kind?` (`commitment`, the default, `idea` or `waiting_on`), `personId?` (UUID), `due?` (ISO 8601) | the created [Task](#tasks); a tool error for an unknown conversation or person, or a conversation that already has a task with this text |
 | `complete_task` | `id` (a task id) | the completed Task, as `PATCH /api/v1/tasks/{id}` with `{ done: true }`; a tool error for an unknown id |
 | `create_memory` | `text` (1 to 300 characters) | the created [Memory](#memories), as `POST /api/v1/memories`; a tool error when a live memory already holds the fact |
 
 A `read` token's `tools/list` never names these three, and calling one with a `read` token is
 JSON-RPC error `-32600` ("Access forbidden: This tool requires authorization."): the MCP host's
 authorization filters check the same [`admin`-or-`read` scope](#tokens-and-scopes) REST does, before
-the tool runs. `create_task` has no REST counterpart, since REST still has no way to add a task by
-hand (see [Tasks](#tasks)); a task it creates is marked `edited`, so a later summary never removes or
+the tool runs. `create_task` matches `POST /api/v1/tasks` (see [Tasks](#tasks)); a task it creates is marked `edited`, so a later summary never removes or
 rewrites it, and it raises `task.created` only for a `commitment`, matching a summary's tasks.
 
 **Connect a client.** Give it the URL and a `read` token (see [Tokens and scopes](#tokens-and-scopes)).
@@ -1447,7 +1450,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `ledger` (`GET /api/v1/people/{id}/ledger` exists), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `ledger` (`GET /api/v1/people/{id}/ledger` exists), `task-create` (`POST /api/v1/tasks`, and tasks have a `due` and may have no conversation), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1466,9 +1469,10 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
 | GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
 | GET | `/api/v1/conversations/{id}/audio/index` | read | `{ durationMs, runs: [{ offsetMs, startedAt, endedAt }] }`: each stretch of continuous capture and where it starts in the stream; `404` as above |
-| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind }`; `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea`, `waiting_on` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind, due }` (the conversation fields are `null` for a task made by hand); `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea`, `waiting_on` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
 | GET | `/api/v1/notes?topic=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a note is `{ id, conversationId, conversationTitle, conversationStartedAt, topic, points, createdAt }`; `topic` is a name (`400` for one that is none); `limit` defaults to 50, caps at 200 |
-| PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done?, personId? }`, `text` 1 to 200 characters, `personId` a person id or `null` (`404` for an unknown person); DELETE answers `204` |
+| POST | `/api/v1/tasks` | admin | body `{ text, due?, conversationId?, personId? }`, `text` 1 to 200 characters, `due` ISO 8601 or `null` (`400` otherwise); answers `201` with the task, kind `commitment`, marked edited; `404` for an unknown conversation or person, `409` when the conversation already has a task with this text |
+| PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done?, personId?, due? }`, `text` 1 to 200 characters, `personId` a person id or `null` (`404` for an unknown person), `due` ISO 8601 or `null` to clear it; DELETE answers `204` |
 | GET, PATCH | `/api/v1/settings` | admin | GET: `{ items: [{ key, type, value, isSet, source, locked, default }] }`. PATCH body `{ values: { "<key>": value or null } }`, all or nothing, `null` restores the default; `400` for an unknown key or a bad value, `409` for a locked key or any API key |
 | POST | `/api/v1/tokens` | admin | Body `{ name, scope }`; `201` with the token's fields and `token`, shown once; `409` for a name in use |
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |
@@ -1500,7 +1504,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/voice/segments?since=&until=&limit=` | admin | `{ items, nextSince }`, oldest first, for choosing a threshold: `{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }`, no text; `since` keeps segments that started after it; `limit` defaults to 500, caps at 5000 |
 | PATCH | `/api/v1/segments/{id}` | admin | Body `{ isUser?, personId?, speechKind? }`, at least one: `isUser` is `true` ("this is me"), `false` or `null` (clears the mark); `personId` is a person, or `null` to clear the segment's own person, see [Speaker labels](#transcription-endpoints); `speechKind` is `person`, `media`, `call` or `null` (clears your mark) on any line, yours included, see [Speech kind](#speech-kind); `200` with the segment as a conversation shows it; `404` for an unknown segment or person |
 | GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
-| PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has |
+| PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has; a rename also [respells](docs/specs/name-spelling.md) the old name in the generated titles and summaries of the person's conversations and in their open tasks you did not edit (whole name, any case; no case endings), never your own titles or transcripts |
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named, waitingOn: [Task] }`; `404` for an unknown person |
 | GET | `/api/v1/people/{id}/ledger` | read | The [promise ledger](#promise-ledger): `{ personId, personName, owedByMe: { open: [Task], done: [Task] }, owedToMe: { open, done } }`, newest 100 per list; `404` for an unknown person |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, role, named, personId, confidence, sameName, evidence: { segmentId, startedAt, text } }` (`sameName`: pending suggestions with the same name, any case, itself included), `target` being `speaker`, `label`, `group` (`groupId` is the voice group) or `person` (the voice of a person known only by a [role](#roles); `personId` is that person); `role` is a tag name or null, and `named` false means the role alone, `name` being its display form; see [People](#people) |

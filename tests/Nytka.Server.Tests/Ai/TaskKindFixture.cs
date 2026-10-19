@@ -52,7 +52,7 @@ public static class TaskKindFixture
         Cases.Where(c => c.Kind == kind && c.Owner == owner);
 
     public static IReadOnlyList<AnswerItem> Items(IEnumerable<Case> cases) =>
-        [.. cases.Select(c => new AnswerItem(c.Text, c.Kind, c.Owner, c.Person, c.Topic))];
+        [.. cases.Select(c => new AnswerItem(c.Text, c.Kind, c.Owner, c.Person, c.Topic, null))];
 
     public static FakeLlm.Item[] Labelled(IEnumerable<Case> cases) =>
         [.. cases.Select(c => new FakeLlm.Item(c.Text, c.Kind, c.Owner, c.Person, c.Topic))];

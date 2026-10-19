@@ -23,7 +23,8 @@ as before. A promise of the person that names no known person is not in anyone's
 
 1. `GET /api/v1/people/{id}/ledger` (read scope) answers `{ personId, personName, owedByMe: { open, done }, owedToMe: { open, done } }`.
    Each entry is a task as `GET /api/v1/tasks` shows it, so it carries `conversationId`, `conversationTitle` and
-   `conversationStartedAt` (when it was said), `createdAt` and `doneAt`. `404` for an unknown person.
+   `conversationStartedAt` (when it was said), `createdAt` and `doneAt`. A task made by hand
+   (`POST /api/v1/tasks`) may have no conversation; its conversation fields are null. `404` for an unknown person.
 2. `open` lists newest first, at most 100. `done` lists most recently done first, at most 100. Deleted tasks never show.
 3. The MCP tool `get_ledger` takes `id` or `name` (one of the two, like `get_person`) and returns the same body; a tool error
    ("No such person.") for an unknown one.

@@ -11,13 +11,13 @@ public sealed record McpConversationRow(
     public IReadOnlyList<string> Tags { get; init; } = [];
 }
 
-public sealed record McpTaskRow(Guid Id, string Text, bool Done, Guid? PersonId, string? PersonName);
+public sealed record McpTaskRow(Guid Id, string Text, bool Done, Guid? PersonId, string? PersonName, DateTime? Due);
 
 public sealed record McpSegmentRow(DateTime StartedAt, string? Speaker, string Text);
 
 public sealed record McpTaskItem(
-    Guid Id, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, string Text, bool Done,
-    DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind);
+    Guid Id, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt, string Text, bool Done,
+    DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due);
 
 /// <summary>
 /// The SQL behind the MCP tools: read-only, written against the final schema (migrations 0003 and 0004), so
@@ -83,7 +83,7 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<McpTaskRow>(new CommandDefinition(
             """
-            select t.id as Id, t.text as Text, t.done as Done, t.person_id as PersonId, p.name as PersonName
+            select t.id as Id, t.text as Text, t.done as Done, t.person_id as PersonId, p.name as PersonName, t.due_at as Due
             from tasks t left join people p on p.id = t.person_id
             where t.conversation_id = @id and t.deleted_at is null and t.kind = 'commitment'
             order by t.id
@@ -123,9 +123,10 @@ public sealed class McpQueries(NpgsqlDataSource dataSource)
             """
             select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                    c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
-                   t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind
+                   t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind,
+                   t.due_at as Due
             from tasks t
-            join conversations c on c.id = t.conversation_id
+            left join conversations c on c.id = t.conversation_id
             left join people p on p.id = t.person_id
             where t.deleted_at is null
               and t.done = @done

@@ -11,7 +11,7 @@ public sealed record ConversationAnswer(string Title, string Summary, IReadOnlyL
 /// <see cref="Nytka.Storage.TaskKinds"/> values; <paramref name="Person"/> is a name from the people the user message lists, or null;
 /// <paramref name="Topic"/> names the subject of an advice item and is null for any other kind. <see cref="ItemClassifier"/> decides what is kept.
 /// </summary>
-public sealed record AnswerItem(string Text, string Kind, string Owner, string? Person, string? Topic);
+public sealed record AnswerItem(string Text, string Kind, string Owner, string? Person, string? Topic, string? Due);
 
 /// <summary>The messages and the schema of the <c>enrich-conversation</c> call. Server code, not a setting.</summary>
 public static class ConversationPrompt
@@ -24,11 +24,12 @@ public static class ConversationPrompt
           "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
                           "tags": { "type": "array", "items": { "type": "string" } },
                           "items": { "type": "array", "items": {
-                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic"],
+                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due"],
                             "properties": { "text": { "type": "string" },
                                             "kind": { "type": "string", "enum": ["commitment", "idea", "advice", "noise"] },
                                             "owner": { "type": "string", "enum": ["wearer", "other"] },
-                                            "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] } } } } } }
+                                            "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] },
+                                            "due": { "type": ["string", "null"] } } } } } }
         """;
 
     public const int MaxTitle = 80;
@@ -69,7 +70,7 @@ public static class ConversationPrompt
               Kind "idea": something worth trying, building or looking into that was floated and nobody took on.
               Kind "advice": a tip, rule or lesson on how to do something well, from a coach, a lesson, a video or a friend: know-how, not something the wearer promised. Give every advice item a topic of one to three words that names the subject, and the same topic to every tip on that subject.
               Kind "noise": any other item-like line: a remark, a feeling, a topic to think about, something already done, a line you cannot restate as a clear action (a vague "this stuff", an unintelligible phrase) and anything taken from media or a script.
-              Set owner to "wearer" when the item is the wearer's to do, try or learn, and to "other" when it is another person's to do, such as what other people said they would do: only a commitment of another person is kept, as something the wearer waits on. Set a person to the name of the person an item is owed to or who asked for it, or for a commitment with owner "other" the person who promised it, copied exactly from the "People" list in the user message, and to null when no listed person fits or there is no list. Set topic to null unless the kind is advice. Return at most {MaxItems} items, none when there are none.
+              Set owner to "wearer" when the item is the wearer's to do, try or learn, and to "other" when it is another person's to do, such as what other people said they would do: only a commitment of another person is kept, as something the wearer waits on. Set a person to the name of the person an item is owed to or who asked for it, or for a commitment with owner "other" the person who promised it, copied exactly from the "People" list in the user message, and to null when no listed person fits or there is no list. Set topic to null unless the kind is advice. Set due to a date in the form YYYY-MM-DD only when a speaker named a deadline for that very item ("by Friday", "on the 24th", "tomorrow"), worked out from the Date line of the user message; a vague "soon" or "later", a date you would have to guess and every item without a stated deadline get null. Never infer a deadline from the kind of task. Return at most {MaxItems} items, none when there are none.
               Examples: "Send Anna the contract by Friday", said by the wearer, is a commitment. "Maybe build a small app that sorts the day's photos" is an idea. "Keep a relaxed grip on the paddle", said by a coach, is advice with the topic "table tennis". "Make this stuff tomorrow" is noise, because nothing says what "this stuff" is.
               """;
         var tags = suggestTags && !brief
@@ -94,7 +95,7 @@ public static class ConversationPrompt
         string outputLanguage, string timeZone = UserTimeZone.Default, bool suggestTags = true, bool mediaLines = false) =>
         System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines)
         + "\n\nThe transcript was too long for one request, so it was described in consecutive parts. "
-        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person and topic, and dropping duplicates and items a later part shows as done.";
+        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic and due, and dropping duplicates and items a later part shows as done.";
 
     /// <summary>The date line: the conversation's local date and weekday, so the model can resolve "Friday".</summary>
     public static string DateLine(DateTimeOffset startedAt, TimeZoneInfo? zone = null) => "Date: " + LocalDate(startedAt, zone);

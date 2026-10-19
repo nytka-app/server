@@ -30,12 +30,13 @@ public sealed class McpTaskWriteTools(NpgsqlDataSource dataSource, TaskStore tas
     };
 
     [McpServerTool(Name = "create_task", UseStructuredContent = true, OutputSchemaType = typeof(McpTaskItem))]
-    [Description("Adds a task to a conversation by hand. Requires an admin token.")]
+    [Description("Adds a task by hand, to a conversation or on its own. Requires an admin token.")]
     public async Task<CallToolResult> CreateTaskAsync(
-        [Description("The conversation's id (UUID).")] string conversationId,
         [Description("The task's text, 1 to 200 characters.")] string text,
+        [Description("The conversation's id (UUID); a task needs none.")] string? conversationId = null,
         [Description("commitment (the default), idea or waiting_on.")] string? kind = null,
         [Description("The person it is owed to or who asked for it (UUID).")] string? personId = null,
+        [Description("The due date or time, ISO 8601 (2026-10-24 or 2026-10-24T15:00:00Z).")] string? due = null,
         CancellationToken ct = default)
     {
         var storedKind = kind ?? TaskKinds.Commitment;
@@ -56,12 +57,15 @@ public sealed class McpTaskWriteTools(NpgsqlDataSource dataSource, TaskStore tas
             return Error("text must contain a letter or a digit.");
         }
 
-        var cId = ParseId(conversationId, nameof(conversationId));
+        var cId = conversationId is null ? (Guid?)null : ParseId(conversationId, nameof(conversationId));
+        var dueAt = TaskEndpoints.TryParseDue(due, out var parsedDue)
+            ? parsedDue
+            : throw new McpProtocolException("due must be an ISO 8601 date or time.", McpErrorCode.InvalidParams);
         var pId = personId is null ? (Guid?)null : ParseId(personId, nameof(personId));
 
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
-        var created = await tasks.CreateAsync(connection, transaction, cId, trimmed, fingerprint, pId, storedKind, time.GetUtcNow(), ct);
+        var created = await tasks.CreateAsync(connection, transaction, cId, trimmed, fingerprint, pId, storedKind, dueAt, time.GetUtcNow(), ct);
         if (created.Problem != TaskCreateProblem.None)
         {
             return Error(created.Problem switch
@@ -90,7 +94,7 @@ public sealed class McpTaskWriteTools(NpgsqlDataSource dataSource, TaskStore tas
         var taskId = ParseId(id, nameof(id));
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
-        var update = await tasks.UpdateAsync(connection, transaction, taskId, null, true, null, time.GetUtcNow(), ct);
+        var update = await tasks.UpdateAsync(connection, transaction, taskId, null, true, null, null, time.GetUtcNow(), ct);
         if (update is null)
         {
             return Error("No such task.");
@@ -107,7 +111,7 @@ public sealed class McpTaskWriteTools(NpgsqlDataSource dataSource, TaskStore tas
 
     private static McpTaskItem ToItem(TaskRow task) => new(
         task.Id, task.ConversationId, task.ConversationTitle, task.ConversationStartedAt, task.Text, task.Done,
-        task.DoneAt, task.CreatedAt, task.PersonId, task.PersonName, task.Kind);
+        task.DoneAt, task.CreatedAt, task.PersonId, task.PersonName, task.Kind, task.Due);
 
     private static CallToolResult Ok<T>(T value)
     {

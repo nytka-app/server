@@ -114,8 +114,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                     """
                     select t.id as Id, t.conversation_id as ConversationId,
                            coalesce(c.title, c.ai_title) as ConversationTitle, c.started_at as ConversationStartedAt,
-                           t.text as Text, t.done as Done, t.done_at as DoneAt, t.created_at as CreatedAt
-                    from tasks t join conversations c on c.id = t.conversation_id
+                           t.text as Text, t.done as Done, t.done_at as DoneAt, t.created_at as CreatedAt, t.due_at as Due
+                    from tasks t left join conversations c on c.id = t.conversation_id
                     where t.id = @id and t.deleted_at is null
                     """,
                     new { id = e.SubjectId }, transaction, cancellationToken: ct));
@@ -215,8 +215,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private sealed record TaskRef(Guid Id, string Text);
 
     private sealed record TaskData(
-        Guid Id, Guid ConversationId, string? ConversationTitle, DateTime ConversationStartedAt, string Text, bool Done,
-        DateTime? DoneAt, DateTime CreatedAt);
+        Guid Id, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt, string Text, bool Done,
+        DateTime? DoneAt, DateTime CreatedAt, DateTime? Due);
 
     private sealed record MemoryData(Guid Id, string Text, Guid? ConversationId);
 

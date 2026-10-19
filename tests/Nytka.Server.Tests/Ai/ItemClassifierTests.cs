@@ -11,8 +11,8 @@ public class ItemClassifierTests
 
     private static ClassifiedItems Classify(params AnswerItem[] items) => ItemClassifier.Classify(items, PersonNamed);
 
-    private static AnswerItem Item(string text, string kind = TaskKinds.Commitment, string owner = TaskKinds.Wearer, string? person = null, string? topic = null) =>
-        new(text, kind, owner, person, topic);
+    private static AnswerItem Item(string text, string kind = TaskKinds.Commitment, string owner = TaskKinds.Wearer, string? person = null, string? topic = null, string? due = null) =>
+        new(text, kind, owner, person, topic, due);
 
     [Fact]
     public void Only_the_wearers_commitments_become_commitment_tasks()
