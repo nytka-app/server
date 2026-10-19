@@ -82,6 +82,7 @@ structured content plus JSON text. The names below match the `McpServerTool` att
 | `search` | `query`, `kinds?`, `tag?`, `limit?` (1 to 30, 10) |
 | `list_people` | `tag?` |
 | `get_person` | `id` or `name` |
+| `get_ledger` | `id` or `name` |
 | `list_tags` | `query?` |
 | `ask` | `question` (1 to 500 characters) |
 
