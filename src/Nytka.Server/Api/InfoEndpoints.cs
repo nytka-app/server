@@ -49,6 +49,7 @@ public static class InfoEndpoints
         features.Add("context-ranges");
         features.Add("task-kinds");
         features.Add("waiting-on");
+        features.Add("task-create");
         features.Add("calendar-feed");
 
         return features;

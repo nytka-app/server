@@ -118,7 +118,9 @@ public sealed class EnrichConversationHandler(
             throw;
         }
 
-        switch (await StoreAsync(conversationId, answer, people, through, segments.Count, ct))
+        switch (await StoreAsync(
+                conversationId, answer, people, through, segments.Count,
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(conversation.StartedAt), zone).DateTime), ct))
         {
             case EnrichmentStore.Stale:
                 // A late batch or a merge changed the conversation during the call: read it again once it is closed.
@@ -179,12 +181,12 @@ public sealed class EnrichConversationHandler(
     /// <summary>Stores the result, reconciles the tasks and notes, records what was dropped and publishes the events, in one transaction.</summary>
     private async Task<EnrichmentStore> StoreAsync(
         Guid conversationId, ConversationAnswer answer, IReadOnlyList<TaskPerson> people, long? through, int segmentCount,
-        CancellationToken ct)
+        DateOnly conversationDate, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var title = ConversationPrompt.Cut(answer.Title, ConversationPrompt.MaxTitle);
         var summary = ConversationPrompt.Cut(answer.Summary, ConversationPrompt.MaxSummary);
-        var classified = ItemClassifier.Classify(answer.Items, name => PersonNamed(people, name));
+        var classified = ItemClassifier.Classify(answer.Items, name => PersonNamed(people, name), conversationDate);
 
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);

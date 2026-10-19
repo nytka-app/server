@@ -161,8 +161,9 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
     [InlineData("""{"title":"t","summary":3,"items":[],"tags":[]}""")]
     [InlineData("""{"title":"t","summary":"s","items":["Call Ben"],"tags":[]}""")] // the old shape: strings
     [InlineData("""{"title":"t","summary":"s","tasks":[{"text":"Call Ben","person":null}],"tags":[]}""")] // the shape before kinds: items is required
-    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","person":null}],"tags":[]}""")] // topic is required
-    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","topic":null}],"tags":[]}""")] // person is required
+    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","person":null,"due":null}],"tags":[]}""")] // topic is required
+    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","topic":null,"due":null}],"tags":[]}""")] // person is required
+    [InlineData("""{"title":"t","summary":"s","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","person":null,"topic":null}],"tags":[]}""")] // due is required
     public async Task A_broken_answer_fails_the_attempt(string answer)
     {
         var id = await Seed(Talk);
@@ -808,4 +809,41 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         release.SetResult(FakeLlm.DefaultAnswer);
         Assert.Equal(1, await ai.WaitAsync(TimeSpan.FromSeconds(30)));
     }
+
+    [Fact]
+    public async Task A_stated_due_date_is_stored_and_one_nobody_said_stays_null()
+    {
+        var id = await Seed(Talk, Talk);
+        Llm.Respond = _ => FakeLlm.AnswerItems(
+            "t", "s",
+            new FakeLlm.Item("Send Anna the contract", TaskKinds.Commitment, Due: "2026-10-02"),
+            new FakeLlm.Item("Call Ben", TaskKinds.Commitment),
+            new FakeLlm.Item("Buy milk", TaskKinds.Commitment, Due: "2026-09-01"), // before the conversation: not a real deadline
+            new FakeLlm.Item("Water the plants", TaskKinds.Commitment, Due: "soon"));
+
+        await TickAndRun();
+
+        var due = await Db.QueryAsync<DueRow>("select text as Text, due_at as Due from tasks where conversation_id = @id order by text", new { id });
+        Assert.Equal(
+            [new DueRow("Buy milk", null), new DueRow("Call Ben", null), new DueRow("Send Anna the contract", new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc)), new DueRow("Water the plants", null)],
+            due);
+    }
+
+    [Fact]
+    public async Task A_later_summary_never_changes_the_due_date_of_a_task_the_user_edited()
+    {
+        var id = await Seed(Talk, Talk);
+        Llm.Respond = _ => FakeLlm.AnswerItems("t", "s", new FakeLlm.Item("Send Anna the contract", TaskKinds.Commitment, Due: "2026-10-02"));
+        await TickAndRun();
+        var taskId = await Db.ScalarAsync<Guid>("select id from tasks");
+        (await Server.CreateAuthorizedClient().PatchAsJsonAsync($"/api/v1/tasks/{taskId}", new { due = "2026-12-24" })).EnsureSuccessStatusCode();
+
+        Llm.Respond = _ => FakeLlm.AnswerItems("t", "s", new FakeLlm.Item("Send Anna the contract", TaskKinds.Commitment, Due: "2026-10-05"));
+        await AddSegment(id, Talk, Now.AddMinutes(-4));
+        await TickAndRun();
+
+        Assert.Equal(new DateTime(2026, 12, 24, 0, 0, 0, DateTimeKind.Utc), await Db.ScalarAsync<DateTime>("select due_at from tasks"));
+    }
+
+    private sealed record DueRow(string Text, DateTime? Due);
 }

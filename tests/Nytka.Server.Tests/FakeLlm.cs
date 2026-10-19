@@ -12,7 +12,7 @@ namespace Nytka.Server.Tests;
 public sealed class FakeLlm : ILlmClient
 {
     public const string DefaultAnswer =
-        """{"title":"Lunch with Anna","summary":"They talked about the trip.","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","person":null,"topic":null},{"text":"Buy milk","kind":"commitment","owner":"wearer","person":null,"topic":null}],"tags":[]}""";
+        """{"title":"Lunch with Anna","summary":"They talked about the trip.","items":[{"text":"Call Ben","kind":"commitment","owner":"wearer","person":null,"topic":null,"due":null},{"text":"Buy milk","kind":"commitment","owner":"wearer","person":null,"topic":null,"due":null}],"tags":[]}""";
 
     private readonly List<LlmRequest> _requests = [];
 
@@ -47,7 +47,7 @@ public sealed class FakeLlm : ILlmClient
         JsonSerializer.Serialize(new
         {
             title, summary,
-            items = items.Select(i => new { text = i.Text, kind = i.Kind, owner = i.Owner, person = i.Person, topic = i.Topic }),
+            items = items.Select(i => new { text = i.Text, kind = i.Kind, owner = i.Owner, person = i.Person, topic = i.Topic, due = i.Due }),
             tags = Array.Empty<string>(),
         });
 
@@ -56,7 +56,7 @@ public sealed class FakeLlm : ILlmClient
         JsonSerializer.Serialize(new { title, summary, items = Array.Empty<string>(), tags });
 
     /// <summary>One labelled item of an answer.</summary>
-    public sealed record Item(string Text, string Kind, string Owner = TaskKinds.Wearer, string? Person = null, string? Topic = null);
+    public sealed record Item(string Text, string Kind, string Owner = TaskKinds.Wearer, string? Person = null, string? Topic = null, string? Due = null);
 
     public Task<string> CompleteJsonAsync(LlmRequest request, CancellationToken ct)
     {
