@@ -45,31 +45,46 @@ public sealed class PeopleTools(PeopleStore people)
         [Description("The person's name, in any case.")] string? name = null,
         CancellationToken ct = default)
     {
-        if ((id is null) == (name is null))
-        {
-            throw new McpProtocolException("Give either id or name.", McpErrorCode.InvalidParams);
-        }
-
-        Guid? personId = null;
-        if (id is not null)
-        {
-            personId = Guid.TryParse(id, out var parsed)
-                ? parsed
-                : throw new McpProtocolException("id must be a UUID.", McpErrorCode.InvalidParams);
-        }
-        else
-        {
-            personId = (await people.ListAsync(ct)).FirstOrDefault(p => string.Equals(p.Name, name!.Trim(), StringComparison.OrdinalIgnoreCase))?.Id;
-        }
-
+        var personId = await ResolveAsync(id, name, ct);
         if (personId is null || await people.ViewAsync(personId.Value, ct) is not { } view)
         {
-            return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = "No such person." }] };
+            return NoSuchPerson;
         }
 
         return Ok(new McpPerson(
             view.Id, view.Name, view.Note, view.CreatedAt, view.LastSeenAt, view.Voices, view.Conversations, view.Facts, view.OpenTasks, view.Tags,
             view.Named, view.WaitingOn));
+    }
+
+    [McpServerTool(Name = "get_ledger", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LedgerView))]
+    [Description("Reads what the wearer owes one person (owedByMe) and what that person owes the wearer (owedToMe), each as open and done promises with the conversation and the time they were said. Give the id or the name, not both.")]
+    public async Task<CallToolResult> GetLedgerAsync(
+        [Description("The person's id (UUID).")] string? id = null,
+        [Description("The person's name, in any case.")] string? name = null,
+        CancellationToken ct = default)
+    {
+        var personId = await ResolveAsync(id, name, ct);
+        return personId is null || await people.LedgerAsync(personId.Value, ct) is not { } ledger ? NoSuchPerson : Ok(ledger);
+    }
+
+    private static readonly CallToolResult NoSuchPerson =
+        new() { IsError = true, Content = [new TextContentBlock { Text = "No such person." }] };
+
+    private async Task<Guid?> ResolveAsync(string? id, string? name, CancellationToken ct)
+    {
+        if ((id is null) == (name is null))
+        {
+            throw new McpProtocolException("Give either id or name.", McpErrorCode.InvalidParams);
+        }
+
+        if (id is not null)
+        {
+            return Guid.TryParse(id, out var parsed)
+                ? parsed
+                : throw new McpProtocolException("id must be a UUID.", McpErrorCode.InvalidParams);
+        }
+
+        return (await people.ListAsync(ct)).FirstOrDefault(p => string.Equals(p.Name, name!.Trim(), StringComparison.OrdinalIgnoreCase))?.Id;
     }
 
     private static CallToolResult Ok<T>(T value)

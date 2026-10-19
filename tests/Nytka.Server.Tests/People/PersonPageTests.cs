@@ -56,13 +56,14 @@ public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
             """,
             new { id = Guid.CreateVersion7(), person, text, deleted, at = T0 });
 
-    private Task AddTask(Guid conversation, Guid? person, string text, bool done = false, bool deleted = false, string kind = "commitment") =>
+    private Task AddTask(Guid conversation, Guid? person, string text, bool done = false, bool deleted = false, string kind = "commitment", int doneMinutes = 0) =>
         db.ExecuteAsync(
             """
-            insert into tasks (id, conversation_id, text, fingerprint, done, deleted_at, person_id, kind, created_at, updated_at)
-            values (@id, @conversation, @text, @text, @done, case when @deleted then @at end, @person, @kind, @at, @at)
+            insert into tasks (id, conversation_id, text, fingerprint, done, done_at, deleted_at, person_id, kind, created_at, updated_at)
+            values (@id, @conversation, @text, @text, @done, case when @done then @at + make_interval(mins => @doneMinutes) end,
+                    case when @deleted then @at end, @person, @kind, @at, @at)
             """,
-            new { id = Guid.CreateVersion7(), conversation, person, text, done, deleted, kind, at = T0 });
+            new { id = Guid.CreateVersion7(), conversation, person, text, done, deleted, kind, doneMinutes, at = T0 });
 
     private async Task<JsonElement> View(Guid id) => await Client.GetFromJsonAsync<JsonElement>($"/api/v1/people/{id}");
 
@@ -132,6 +133,86 @@ public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("Anna", waiting.GetProperty("personName").GetString());
         Assert.Equal("Bring jars", Assert.Single(page.GetProperty("openTasks").EnumerateArray()).GetProperty("text").GetString());
         Assert.Equal("Book the cabin", Assert.Single((await View(olena)).GetProperty("waitingOn").EnumerateArray()).GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task The_ledger_splits_what_I_owe_a_person_from_what_they_owe_me_open_and_done()
+    {
+        var anna = await Person("Anna");
+        var olena = await Person("Olena");
+        var conversation = await SearchSeed.ConversationAsync(db.DataSource, T0, aiTitle: "Market");
+        await AddTask(conversation, anna, "Bring jars");
+        await AddTask(conversation, anna, "Returned the basket", done: true, doneMinutes: 1);
+        await AddTask(conversation, anna, "Lent the ladder", done: true, doneMinutes: 5);
+        await AddTask(conversation, anna, "Send the contract", kind: "waiting_on");
+        await AddTask(conversation, anna, "Sent the receipt", done: true, kind: "waiting_on");
+        await AddTask(conversation, anna, "Forgot it", deleted: true, kind: "waiting_on");
+        await AddTask(conversation, anna, "Try the new cafe", kind: "idea");
+        await AddTask(conversation, olena, "Book the cabin", kind: "waiting_on");
+
+        var ledger = await Client.GetFromJsonAsync<JsonElement>($"/api/v1/people/{anna}/ledger");
+
+        Assert.Equal("Anna", ledger.GetProperty("personName").GetString());
+        static IEnumerable<string?> Texts(JsonElement side, string list) =>
+            side.GetProperty(list).EnumerateArray().Select(t => t.GetProperty("text").GetString());
+        var byMe = ledger.GetProperty("owedByMe");
+        var toMe = ledger.GetProperty("owedToMe");
+        Assert.Equal(["Bring jars"], Texts(byMe, "open"));
+        Assert.Equal(["Lent the ladder", "Returned the basket"], Texts(byMe, "done"));
+        Assert.Equal(["Send the contract"], Texts(toMe, "open"));
+        Assert.Equal(["Sent the receipt"], Texts(toMe, "done"));
+        var said = byMe.GetProperty("open")[0];
+        Assert.Equal(conversation, said.GetProperty("conversationId").GetGuid());
+        Assert.Equal("Market", said.GetProperty("conversationTitle").GetString());
+        Assert.Equal(T0, said.GetProperty("conversationStartedAt").GetDateTime().ToUniversalTime());
+        Assert.Equal(HttpStatusCode.NotFound, (await Client.GetAsync($"/api/v1/people/{Guid.NewGuid()}/ledger")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Waiting_on_rows_stay_out_of_the_default_task_list_and_the_info_lists_the_ledger()
+    {
+        var anna = await Person("Anna");
+        var conversation = await SearchSeed.ConversationAsync(db.DataSource, T0);
+        await AddTask(conversation, anna, "Bring jars");
+        await AddTask(conversation, anna, "Send the contract", kind: "waiting_on");
+
+        var tasks = await Client.GetFromJsonAsync<JsonElement>("/api/v1/tasks");
+        var info = await Client.GetFromJsonAsync<JsonElement>("/api/v1/info");
+
+        Assert.Equal("Bring jars", Assert.Single(tasks.GetProperty("items").EnumerateArray()).GetProperty("text").GetString());
+        Assert.Contains("ledger", info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+    }
+
+    [Fact]
+    public async Task The_export_carries_waiting_on_rows_with_their_person()
+    {
+        var anna = await Person("Anna");
+        var conversation = await SearchSeed.ConversationAsync(db.DataSource, T0);
+        await AddTask(conversation, anna, "Send the contract", kind: "waiting_on");
+
+        var body = await Client.GetStringAsync("/api/v1/export");
+
+        var line = body.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonDocument.Parse(l).RootElement)
+            .Single(l => l.GetProperty("type").GetString() == "task");
+        Assert.Equal("waiting_on", line.GetProperty("kind").GetString());
+        Assert.Equal(anna, line.GetProperty("personId").GetGuid());
+    }
+
+    [Fact]
+    public async Task get_ledger_answers_as_REST_does_and_reports_an_unknown_person()
+    {
+        var anna = await Person("Anna");
+        var conversation = await SearchSeed.ConversationAsync(db.DataSource, T0);
+        await AddTask(conversation, anna, "Send the contract", kind: "waiting_on");
+        var rest = await Client.GetFromJsonAsync<JsonElement>($"/api/v1/people/{anna}/ledger");
+        await using var client = await ConnectAsync();
+
+        var byName = (await client.CallToolAsync("get_ledger", new Dictionary<string, object?> { ["name"] = "aNNa" })).StructuredContent!.Value;
+
+        Assert.Equal(rest.GetProperty("owedToMe").GetProperty("open")[0].GetProperty("text").GetString(),
+            byName.GetProperty("owedToMe").GetProperty("open")[0].GetProperty("text").GetString());
+        Assert.True((await client.CallToolAsync("get_ledger", new Dictionary<string, object?> { ["name"] = "Nobody" })).IsError);
+        await Assert.ThrowsAsync<McpProtocolException>(() => client.CallToolAsync("get_ledger").AsTask());
     }
 
     [Fact]

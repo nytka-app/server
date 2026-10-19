@@ -791,6 +791,15 @@ summary replaces the ones you did not touch, and another person's idea, advice o
 `GET /api/v1/info` lists `waiting-on` under `features`. Tasks from before this version appear after their conversation
 is summarized again (`POST /api/v1/conversations/{id}/enrich`).
 
+## Promise ledger
+
+`GET /api/v1/people/{id}/ledger` (MCP `get_ledger`) answers what is open and done between you and one person: `owedByMe` are your
+commitments linked to them, `owedToMe` the [waiting on](#waiting-on) items they owe you. Each list has `open` (newest first) and `done`
+(most recently done first), up to 100 each, and each entry is a [task](#tasks) with the conversation and the time it was said
+(`conversationId`, `conversationTitle`, `conversationStartedAt`). It reads existing rows and changes none; the export already carries them.
+A promise that names no known person is not in anyone's ledger. `GET /api/v1/info` lists `ledger` under `features`.
+Spec: `docs/specs/promise-ledger.md`.
+
 ## Notes
 
 A note is the advice of one conversation on one topic: the tips of a coaching session about table tennis are the
@@ -1308,6 +1317,7 @@ through OAuth cannot connect.
 | `search` | `query`, `kinds?` (a list of `conversation`, `memory` and `person`), `tag?`, `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |
 | `list_people` | `tag?` | `{ items: [{ id, name, lastSeenAt, facts, tags, named }] }`, most recently heard first, then by name; `facts` counts live facts; `named` is false for a person known only by a [role](#roles) |
 | `get_person` | `id` (UUID) or `name` (any case), one of the two | the [person page](#person-page) as `GET /api/v1/people/{id}` returns it, without `hasVoiceprint` and `voiceprintSamples`; a tool error ("No such person.") for an unknown one |
+| `get_ledger` | `id` (UUID) or `name` (any case), one of the two | the [promise ledger](#promise-ledger) as `GET /api/v1/people/{id}/ledger` returns it; a tool error ("No such person.") for an unknown one |
 | `list_tags` | `query?` (names starting with it) | `{ items: [{ name, conversations, people, uses }] }`, most used first, as `GET /api/v1/tags` (see [Tags](#tags)) |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](#ask)); a tool error when no model is set or it fails |
 
@@ -1440,7 +1450,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `task-create` (`POST /api/v1/tasks`, and tasks have a `due` and may have no conversation), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `ledger` (`GET /api/v1/people/{id}/ledger` exists), `task-create` (`POST /api/v1/tasks`, and tasks have a `due` and may have no conversation), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
@@ -1496,6 +1506,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/people?tag=` | read | `{ items }` by name: `{ id, name, note, createdAt, voices, segments, lastSeenAt, factCount, tags, named }`; `tag` keeps people with that [tag](#tags) (`400` for a name that is none); `lastSeenAt` is the newest segment of the person, as on the [person page](#person-page), null when never heard; `factCount` counts their live [facts](#facts-about-people) |
 | PATCH | `/api/v1/people/{id}` | admin | Body `{ name?, note? }`, at least one: `name` 1 to 80 characters (and sets `named` to true), `note` up to 500, `null` clears it; `200` with the person, `409` for a name another person has; a rename also [respells](docs/specs/name-spelling.md) the old name in the generated titles and summaries of the person's conversations and in their open tasks you did not edit (whole name, any case; no case endings), never your own titles or transcripts |
 | GET | `/api/v1/people/{id}` | read | The [person page](#person-page): `{ id, name, note, createdAt, lastSeenAt, voices, hasVoiceprint, voiceprintSamples, conversations: [{ id, title, startedAt }], facts: [Fact], openTasks: [Task], tags, named, waitingOn: [Task] }`; `404` for an unknown person |
+| GET | `/api/v1/people/{id}/ledger` | read | The [promise ledger](#promise-ledger): `{ personId, personName, owedByMe: { open: [Task], done: [Task] }, owedToMe: { open, done } }`, newest 100 per list; `404` for an unknown person |
 | GET | `/api/v1/people/suggestions?status=` | read | `{ items }`, newest first, at most 200; `status` is `pending` (default), `accepted` or `rejected`; an item is `{ id, conversationId, target, speakerId, groupId, name, role, named, personId, confidence, sameName, evidence: { segmentId, startedAt, text } }` (`sameName`: pending suggestions with the same name, any case, itself included), `target` being `speaker`, `label`, `group` (`groupId` is the voice group) or `person` (the voice of a person known only by a [role](#roles); `personId` is that person); `role` is a tag name or null, and `named` false means the role alone, `name` being its display form; see [People](#people) |
 | POST | `/api/v1/people/suggestions/{id}/accept` | admin | Names the voice, the batch's segments or the voice group (as its card is named), creates the person known by a [role](#roles), or renames or merges the person of a `person` target; `200` with the person; `404` for an unknown suggestion; `409` when it is no longer pending |
 | POST | `/api/v1/people/suggestions/accept-by-name` `{ name }` | admin | Accepts every pending suggestion of that name (any case) for a voice, label or voice group as accept does, in one transaction, so the name is one person; role-only and `person` suggestions stay; `200` with `{ person, accepted, skipped }` (`skipped`: no longer applies, as a voice that belongs to someone else); `404` when none is pending; `400` for a missing or blank name; `409` when the pending ones disagree; see [People](#people) |

@@ -79,6 +79,12 @@ public enum SegmentLink { Ok, NoSegment, NoPerson }
 
 public sealed record UnnamedVoice(string SpeakerId, string? Label, int Segments, DateTime LastSeenAt);
 
+/// <summary>One side of a person's ledger: the open and the done promises.</summary>
+public sealed record LedgerSide(IReadOnlyList<TaskRow> Open, IReadOnlyList<TaskRow> Done);
+
+/// <summary>What the wearer owes a person and what the person owes the wearer (docs/specs/promise-ledger.md).</summary>
+public sealed record LedgerView(Guid PersonId, string PersonName, LedgerSide OwedByMe, LedgerSide OwedToMe);
+
 /// <summary>People: names given to the voices a transcription provider tells apart (<c>people</c>, <c>person_voices</c>).</summary>
 public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore facts, TaskStore tasks)
 {
@@ -131,6 +137,27 @@ public sealed class PeopleStore(NpgsqlDataSource dataSource, PersonFactStore fac
                 summaries.GetValueOrDefault(p.Id)?.LastSeenAt, summaries.GetValueOrDefault(p.Id)?.Facts ?? 0,
                 tags.GetValueOrDefault(p.Id) ?? [], p.Named))
             .ToList();
+    }
+
+    /// <summary>The person's promises both ways, newest 100 per list, or null for an unknown person.</summary>
+    public async Task<LedgerView?> LedgerAsync(Guid id, CancellationToken ct)
+    {
+        string? name;
+        await using (var connection = await dataSource.OpenConnectionAsync(ct))
+        {
+            name = await connection.QuerySingleOrDefaultAsync<string>(new CommandDefinition(
+                "select name from people where id = @id", new { id }, cancellationToken: ct));
+        }
+
+        if (name is null)
+        {
+            return null;
+        }
+
+        async Task<LedgerSide> Side(string kind) =>
+            new(await tasks.ForPersonAsync(id, kind, false, ViewTasks, ct), await tasks.ForPersonAsync(id, kind, true, ViewTasks, ct));
+
+        return new LedgerView(id, name, await Side(TaskKinds.Commitment), await Side(TaskKinds.WaitingOn));
     }
 
     public async Task<PersonRow?> GetAsync(Guid id, CancellationToken ct) =>

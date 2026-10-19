@@ -91,6 +91,20 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
+    /// <summary>
+    /// A person's tasks of one <paramref name="kind"/>, open or done, deleted ones left out: newest first, or the most recently
+    /// done first for done ones (docs/specs/promise-ledger.md).
+    /// </summary>
+    public async Task<IReadOnlyList<TaskRow>> ForPersonAsync(Guid personId, string kind, bool done, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
+            Select + "\nwhere t.person_id = @personId and t.done = @done and t.deleted_at is null and t.kind = @kind " +
+            "order by case when @done then t.done_at end desc nulls last, t.id desc limit @limit",
+            new { personId, kind, done, limit }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     /// <summary>A conversation's commitments in creation order, deleted ones left out.</summary>
     public async Task<IReadOnlyList<TaskRow>> ForConversationAsync(Guid conversationId, CancellationToken ct)
     {
