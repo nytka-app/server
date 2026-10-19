@@ -1,3 +1,4 @@
+using System.Globalization;
 using Nytka.Storage;
 
 namespace Nytka.Server.Ai;
@@ -16,6 +17,7 @@ public static class ItemClassifier
 {
     public const int MaxIdeas = 10;
     public const int MaxWaitingOn = 10;
+    public const int MaxDueDays = 366;
     public const int MaxNotes = 5;
     public const int MaxNotePoints = 10;
     public const int MaxDropped = ConversationPrompt.MaxItems;
@@ -24,7 +26,11 @@ public static class ItemClassifier
     public const string GeneralTopic = "general";
 
     /// <summary><paramref name="personNamed"/> maps a name the model gave to a person it may link, or null.</summary>
-    public static ClassifiedItems Classify(IReadOnlyList<AnswerItem> items, Func<string?, Guid?> personNamed)
+    /// <summary>
+    /// <paramref name="from"/> is the conversation's local date: an item's due date is kept only when it is a <c>YYYY-MM-DD</c> date from
+    /// then up to <see cref="MaxDueDays"/> days later, and with no <paramref name="from"/> none is kept, so a deadline is never made up.
+    /// </summary>
+    public static ClassifiedItems Classify(IReadOnlyList<AnswerItem> items, Func<string?, Guid?> personNamed, DateOnly? from = null)
     {
         var tasks = new List<AiTask>();
         var notes = new Dictionary<string, List<string>>();
@@ -52,7 +58,7 @@ public static class ItemClassifier
             if (kind == TaskKinds.Commitment && ownerKnown && owner == TaskKinds.Other && waitingOn < MaxWaitingOn)
             {
                 waitingOn++;
-                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn));
+                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn, Due(item.Due, from)));
                 continue;
             }
 
@@ -70,11 +76,11 @@ public static class ItemClassifier
             {
                 case TaskKinds.Commitment when commitments < ConversationPrompt.MaxTasks:
                     commitments++;
-                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Commitment));
+                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Commitment, Due(item.Due, from)));
                     break;
                 case TaskKinds.Idea when ideas < MaxIdeas:
                     ideas++;
-                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Idea));
+                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Idea, Due(item.Due, from)));
                     break;
                 case TaskKinds.Advice:
                     var topic = TagName.Normalize(item.Topic) ?? GeneralTopic;
@@ -99,4 +105,11 @@ public static class ItemClassifier
 
         return new ClassifiedItems(tasks, [.. notes.Select(n => new AiNote(n.Key, n.Value))], dropped);
     }
+
+    private static DateTime? Due(string? text, DateOnly? from) =>
+        from is { } start
+        && DateOnly.TryParseExact(text?.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var due)
+        && due >= start && due <= start.AddDays(MaxDueDays)
+            ? DateTime.SpecifyKind(due.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)
+            : null;
 }
