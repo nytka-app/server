@@ -122,4 +122,28 @@ public sealed class AudioImportBuilderTests
 
         Assert.Throws<AudioImportException>(() => AudioImportBuilder.Decode("audio/wav", wav));
     }
+
+    /// <summary>
+    /// A packet never decodes to fewer samples than <see cref="OpusPacketDecoder.MinSamplesPerPacket"/> (Opus's own
+    /// shortest frame, 2.5 ms), so a stream with more packets than this could never fit the 1-hour cap either way:
+    /// mirrors the bound <see cref="AudioImportBuilder"/> passes to <c>OggOpusReader.ReadPackets</c> so it stops
+    /// before materialising every one of them.
+    /// </summary>
+    private static int MaxPacketsOverTheHourCap => AudioImportBuilder.MaxSamples / OpusPacketDecoder.MinSamplesPerPacket + 1;
+
+    [Fact]
+    public void An_ogg_file_with_more_tiny_packets_than_the_hour_cap_allows_is_refused_as_the_same_400()
+    {
+        var packet = (ReadOnlyMemory<byte>)new byte[] { 1 };
+        var packets = new List<ReadOnlyMemory<byte>>(MaxPacketsOverTheHourCap + 1);
+        for (var i = 0; i <= MaxPacketsOverTheHourCap; i++)
+        {
+            packets.Add(packet);
+        }
+
+        var ogg = OggOpusWriter.Write(packets, serial: 1);
+
+        var error = Assert.Throws<AudioImportException>(() => AudioImportBuilder.Decode(AudioImportBuilder.OggMediaType, ogg));
+        Assert.Equal("The audio is longer than 1 hour.", error.Message);
+    }
 }
