@@ -105,6 +105,16 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
+    /// <summary>Open commitments with a due date, soonest due first: the <c>calendar.ics</c> feed's <c>VTODO</c>s.</summary>
+    public async Task<IReadOnlyList<TaskRow>> OpenWithDueAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
+            Select + "\nwhere t.kind = @kind and t.done = false and t.deleted_at is null and t.due_at is not null order by t.due_at, t.id",
+            new { kind = TaskKinds.Commitment }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     /// <summary>A conversation's commitments in creation order, deleted ones left out.</summary>
     public async Task<IReadOnlyList<TaskRow>> ForConversationAsync(Guid conversationId, CancellationToken ct)
     {

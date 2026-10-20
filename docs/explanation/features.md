@@ -590,8 +590,8 @@ Nextcloud and most others have one). Nothing is fetched while it is empty.
 ## Calendar feed
 
 `GET /api/v1/calendar.ics` serves an RFC 5545 calendar back out: the events of your [calendar
-feed](#calendar-briefs) that have not ended yet, each as a `VEVENT`, soonest first. Tasks have a due date
-(see [Tasks](#tasks)), but no `VTODO` is written yet; this feed is where they would appear. The
+feed](#calendar-briefs) that have not ended yet, each as a `VEVENT`, soonest first, and your open
+[tasks](#tasks) that carry a due date, each as a `VTODO` with `DUE`. The
 calendar is at most as fresh as the feed's own 15-minute fetch. Content type is `text/calendar`; every line
 is CRLF-terminated and folded at 75 octets per [RFC 5545 §3.1](https://www.rfc-editor.org/rfc/rfc5545), and
 every `SUMMARY` is escaped for a literal backslash, comma, semicolon and newline. Each item carries a `UID`
@@ -604,7 +604,9 @@ one, the environment's included, answers `401`); make one for this feed alone, s
 without touching anything else. The token then lives in the calendar app's
 own storage and sync, and in the access logs of anything between it and your server (a reverse proxy, your
 calendar provider's own servers if it polls the URL on your behalf); treat the URL itself as a secret, the same
-as the ICS address in `Nytka__Calendar__IcsUrl`.
+as the ICS address in `Nytka__Calendar__IcsUrl`. The response carries `Cache-Control: no-store` and
+`Referrer-Policy: no-referrer`, so a cache does not keep the token-bearing URL and a browser never sends it
+onward in a `Referer` header.
 
 ## Search
 

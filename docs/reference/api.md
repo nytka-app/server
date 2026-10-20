@@ -99,7 +99,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | POST | `/api/v1/tags/suggestions/{id}/reject` | admin | Keeps the proposal as rejected, so the tag is not proposed again for that conversation or person: `204`; `404` and `409` as accept |
 | DELETE | `/api/v1/tags/{name}` | admin | Removes the tag from every conversation and person: `204`; `404` for an unknown tag |
 | GET | `/api/v1/briefs/upcoming?minutes=` | read | `{ items }`, soonest first: the [calendar events](../explanation/features.md#calendar-briefs) not over yet that start within `minutes` (1 to 1440, default 60, clamped): `{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } or null }`; `personId` is the person whose name equals the attendee's, else null |
-| GET | `/api/v1/calendar.ics` | read | An RFC 5545 calendar (`text/calendar`), the [calendar feed](../explanation/features.md#calendar-feed)'s events not over yet as `VEVENT`; also takes a `read` token as `?token=` (see [Calendar feed](../explanation/features.md#calendar-feed) for the risk) |
+| GET | `/api/v1/calendar.ics` | read | An RFC 5545 calendar (`text/calendar`), the [calendar feed](../explanation/features.md#calendar-feed)'s events not over yet as `VEVENT` and your open tasks with a due date as `VTODO`; also takes a `read` token as `?token=` (see [Calendar feed](../explanation/features.md#calendar-feed) for the risk) |
 | POST | `/api/v1/ask` | read | Body `{ question }`, 1 to 500 characters; `{ answer, sources }` (see [Ask](../explanation/features.md#ask)); `503` without a model, `504` on a model timeout, `502` on any other model failure |
 | POST | `/mcp` | read | [MCP](#mcp) |
 
