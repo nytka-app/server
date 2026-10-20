@@ -36,6 +36,7 @@ public static class PeopleEndpoints
         people.MapPost("/suggestions/accept-by-name", AcceptByNameAsync);
         people.MapPost("/suggestions/{id:guid}/accept", AcceptSuggestionAsync);
         people.MapPost("/suggestions/{id:guid}/reject", RejectSuggestionAsync);
+        people.MapPost("/suggestions/{id:guid}/undo", UndoSuggestionAsync);
         people.MapDelete("/{id:guid}/voices/{speakerId}", UnlinkAsync);
         people.MapPut("/{id:guid}/tags/{name}", AddTagAsync);
         people.MapDelete("/{id:guid}/tags/{name}", RemoveTagAsync);
@@ -138,13 +139,14 @@ public static class PeopleEndpoints
     public sealed record SuggestionList(IReadOnlyList<NameSuggestionRow> Items);
 
     /// <summary>
-    /// Names the model suggested for unnamed voices, newest first, at most 200. <c>status</c> is <c>pending</c> (default), <c>accepted</c> or
-    /// <c>rejected</c>. <c>sameName</c> is the number of pending suggestions with the same name (any case), the item's own included.
+    /// Names the model suggested for unnamed voices, newest decided (else made) first. <c>status</c> is <c>pending</c> (default),
+    /// <c>accepted</c>, <c>rejected</c> or <c>auto_applied</c>; <c>limit</c> is 1 to 200, default 200. <c>sameName</c> is the number of
+    /// pending suggestions with the same name (any case), the item's own included; <c>decidedAt</c> when it was answered or applied.
     /// </summary>
-    private static async Task<IResult> SuggestionsAsync(string? status, NameSuggestionStore suggestions, CancellationToken ct) =>
-        status is null or "pending" or "accepted" or "rejected"
-            ? Results.Ok(new SuggestionList(await suggestions.ListAsync(status ?? "pending", MaxSuggestions, ct)))
-            : Invalid("status", "Must be pending, accepted or rejected.");
+    private static async Task<IResult> SuggestionsAsync(string? status, int? limit, NameSuggestionStore suggestions, CancellationToken ct) =>
+        status is null or "pending" or "accepted" or "rejected" or "auto_applied"
+            ? Results.Ok(new SuggestionList(await suggestions.ListAsync(status ?? "pending", Math.Clamp(limit ?? MaxSuggestions, 1, MaxSuggestions), ct)))
+            : Invalid("status", "Must be pending, accepted, rejected or auto_applied.");
 
     /// <summary>
     /// Applies a pending suggestion: a voice is named as <c>POST /people</c> does, a label names its segments, a voice group is
@@ -189,6 +191,19 @@ public static class PeopleEndpoints
                 result.PersonId is { } person ? await people.GetAsync(person, ct) : null, result.Accepted, result.Skipped)),
         };
     }
+
+    /// <summary>
+    /// Undoes an auto-applied suggestion (<see cref="NameSuggestionStore.UndoAsync"/>): the voice loses the name and the suggestion
+    /// becomes <c>rejected</c>, so it is never applied again. 204; 404 for an unknown suggestion; 409 when it is not auto-applied
+    /// (one undone already is <c>rejected</c>).
+    /// </summary>
+    private static async Task<IResult> UndoSuggestionAsync(Guid id, NameSuggestionStore suggestions, TimeProvider time, CancellationToken ct) =>
+        await suggestions.UndoAsync(id, time.GetUtcNow(), ct) switch
+        {
+            SuggestionDecision.NotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such suggestion."),
+            SuggestionDecision.NotPending => Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The suggestion is not auto-applied."),
+            _ => Results.NoContent(),
+        };
 
     /// <summary>Rejects a pending suggestion; its name is never suggested again for that voice. 204; 404 or 409 as accept.</summary>
     private static async Task<IResult> RejectSuggestionAsync(Guid id, NameSuggestionStore suggestions, TimeProvider time, CancellationToken ct) =>
