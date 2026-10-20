@@ -90,7 +90,8 @@ show yet.
 - · **Limitless owners can switch.** The app connects to the Limitless pendant, streams from it and
   syncs the audio it stores, using a port of the official Omi app's MIT-licensed Limitless
   connector. The server imports a Limitless export, and plain audio and transcript files (SRT, VTT,
-  TXT). Limitless sends Opus like Omi, so the server's audio path does not change.
+  TXT). Limitless sends Opus like Omi, so the server's audio path does not change once the app hands it
+  20 ms frames. Plan: [docs/specs/multi-device.md](docs/specs/multi-device.md).
   - Done when: a Limitless pendant runs a day with no Limitless app, and a Limitless export imports.
   - Why now: Limitless stopped selling its pendant on 5 December 2025 and supports existing pendants
     throughout 2026.
@@ -112,8 +113,10 @@ The order inside this stage is not fixed yet.
   reaches a cloud model.
 - · **It is live.** Transcripts while you talk, over WebSocket; pendant firmware updates from the app;
   a home-screen widget; opt-in location tags.
-- · **More pendants.** Plaud and Bee, ported from the same Omi connectors. Bee sends AAC, so the
-  server gains a decoder for it.
+- · **More pendants.** Plaud and Fieldy, ported from the same Omi connectors. Both send Opus, so the
+  server's audio path does not change; Omi's connectors read neither one's stored audio, so the README says
+  what is lost while the phone is away. Bee is left out while its firmware encrypts audio. Plan:
+  [docs/specs/multi-device.md](docs/specs/multi-device.md).
 - · **More screens.** A web client first; desktop and iOS when someone builds them.
 
 ## Stage 4 — Someone else can run it for you (decided after 1.0)
