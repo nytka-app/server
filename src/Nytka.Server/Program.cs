@@ -25,6 +25,7 @@ using Nytka.Storage;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using Switchknife.Migrations;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -92,7 +93,7 @@ _ = app.Services.GetRequiredService<IOptions<NytkaOptions>>().Value;
 
 var connectionString = app.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings__Postgres is required.");
-new DatabaseMigrator(connectionString, app.Services.GetRequiredService<ILogger<DatabaseMigrator>>()).Run();
+NytkaMigrations.Run(connectionString, app.Services.GetRequiredService<ILogger<DatabaseMigrator>>());
 
 // The settings table exists from here on. Hosted services start in app.Run(), so their first read is safe.
 app.UseExceptionHandler();

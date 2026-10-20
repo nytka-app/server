@@ -27,7 +27,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
-        new DatabaseMigrator(ConnectionString, NullLogger<DatabaseMigrator>.Instance).Run();
+        NytkaMigrations.Run(ConnectionString, NullLogger.Instance);
         DataSource = NpgsqlDataSource.Create(ConnectionString);
     }
 

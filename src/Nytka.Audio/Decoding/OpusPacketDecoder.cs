@@ -16,6 +16,9 @@ public sealed class OpusPacketDecoder
     /// <summary>The longest a single Opus packet can decode to: 120 ms, Opus's own maximum frame duration.</summary>
     public const int MaxSamplesPerPacket = Timeline.SampleRate * 120 / 1000;
 
+    /// <summary>The shortest a single Opus packet can decode to: 2.5 ms, Opus's own minimum frame duration.</summary>
+    public const int MinSamplesPerPacket = Timeline.SampleRate * 25 / 10_000;
+
     private readonly IOpusDecoder _decoder = OpusCodecFactory.CreateDecoder(Timeline.SampleRate, 1);
 
     public short[] Decode(ReadOnlySpan<byte> packet)

@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Nytka.Server.Ai;
 using Nytka.Server.Calendar;
 using Nytka.Server.Events;
@@ -539,7 +540,9 @@ public sealed class CalendarBriefTests(PostgresFixture db) : IAsyncLifetime
             }
         }
 
-        public ILogger CreateLogger(string categoryName) => new Capture(this);
+        // The migrator's start lines name the test database's host (127.0.0.1), which is not the feed's address.
+        public ILogger CreateLogger(string categoryName) =>
+            categoryName.StartsWith("Switchknife.Migrations.", StringComparison.Ordinal) ? NullLogger.Instance : new Capture(this);
 
         public void Dispose()
         {

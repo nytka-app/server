@@ -160,6 +160,32 @@ public sealed class TranscriptImportParserTests
     }
 
     [Fact]
+    public void Srt_rejects_an_hours_value_too_large_to_parse_as_an_int_instead_of_throwing()
+    {
+        const string srt = """
+            1
+            99999999999999999999:00:00,000 --> 00:00:01,000
+            Hello.
+
+            """;
+
+        Assert.Throws<TranscriptImportException>(() => TranscriptImportParser.ParseSrt(srt, StartedAt));
+    }
+
+    [Fact]
+    public void Srt_rejects_an_hours_value_over_the_cap()
+    {
+        const string srt = """
+            1
+            1000:00:00,000 --> 00:00:01,000
+            Hello.
+
+            """;
+
+        Assert.Throws<TranscriptImportException>(() => TranscriptImportParser.ParseSrt(srt, StartedAt));
+    }
+
+    [Fact]
     public void NUL_characters_are_dropped()
     {
         var parsed = TranscriptImportParser.ParseTxt("he\0llo", StartedAt);

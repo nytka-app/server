@@ -28,7 +28,7 @@ public class MigrationTests(PostgresFixture db)
 
     [Fact]
     public void Running_twice_changes_nothing() =>
-        new DatabaseMigrator(db.ConnectionString, NullLogger<DatabaseMigrator>.Instance).Run();
+        NytkaMigrations.Run(db.ConnectionString, NullLogger.Instance);
 
     [Fact]
     public async Task Refuses_an_omi_platform_database()
@@ -46,7 +46,7 @@ public class MigrationTests(PostgresFixture db)
         }
 
         var error = Assert.Throws<InvalidOperationException>(
-            () => new DatabaseMigrator(omi, NullLogger<DatabaseMigrator>.Instance).Run());
+            () => NytkaMigrations.Run(omi, NullLogger.Instance));
 
         Assert.Contains("belongs to omi-platform", error.InnerException?.Message, StringComparison.Ordinal);
     }
