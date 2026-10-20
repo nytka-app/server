@@ -31,3 +31,4 @@ CLAUDE.local.md
 # YAMNet and its class map are fetched by scripts/fetch-audio-tagger.sh (and the Docker build), never committed.
 /src/Nytka.Audio/Models/yamnet.onnx
 /src/Nytka.Audio/Models/yamnet_class_map.csv
+.tmp/

@@ -929,8 +929,9 @@ curl -sS -X POST "$NYTKA_URL/api/v1/import/transcript?format=srt&startedAt=2026-
   same times, because the search index cannot hold a longer one. NUL characters are dropped.
 - The answer is `{ conversationId, segments }`. Posting the same file again makes another
   conversation: there is no id to dedupe transcript imports by.
-- `400` for a file that does not parse as the given format, or a `startedAt` with no UTC offset;
-  `413` above 100 MB.
+- `400` for a file that does not parse as the given format, or a `startedAt` with no UTC offset or
+  outside the range a chunk's base time can hold (1970-01-01 up to just shy of year 10000); `413`
+  above 100 MB.
 
 ### Audio files
 
@@ -1468,8 +1469,8 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations?before=&since=&tag=&media=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, mediaShare, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `mediaShare` the share (0 to 1) of the conversation's speech time whose [speech kind](#speech-kind) is `media`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](#tags) (`400` for a name that is none); `media` is `hide` (leaves out those with a `mediaShare` of 0.8 or more) or `only` (keeps just those), else `400`; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource, speechKind, speechGuess, speechScore, speechSignals, speechMarked }`, `isUserSource` being `manual`, `voice`, `provider` or null, see [Your voice](#your-voice); `speechKind` the [speech kind](#speech-kind) that applies (`person`, `media`, `call` or null), `speechGuess` Nytka's guess (also `unsure`) with its `speechScore` and `speechSignals` (a list, empty when none), `speechMarked` true when your mark decides) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
-| POST | `/api/v1/import/transcript?format=&startedAt=` | admin | Body: an SRT, VTT or TXT transcript; see [Importing other sources](#importing-other-sources); `200 { conversationId, segments }`; `400` for a body that does not parse, or a `startedAt` with no UTC offset; `413` above 100 MB |
-| POST | `/api/v1/import/audio?startedAt=` | admin | Body: a WAV or Ogg Opus file; see [Importing other sources](#importing-other-sources); `202 { sessionId, durationMs }`; `415` for an unsupported content type, `400` for bad audio, `413` above 100 MB |
+| POST | `/api/v1/import/transcript?format=&startedAt=` | admin | Body: an SRT, VTT or TXT transcript; see [Importing other sources](#importing-other-sources); `200 { conversationId, segments }`; `400` for a body that does not parse, or a `startedAt` with no UTC offset or outside the range a chunk's base time can hold; `413` above 100 MB |
+| POST | `/api/v1/import/audio?startedAt=` | admin | Body: a WAV or Ogg Opus file; see [Importing other sources](#importing-other-sources); `202 { sessionId, durationMs }`; `415` for an unsupported content type, `400` for bad audio or a `startedAt` with no UTC offset or outside the range a chunk's base time can hold, `413` above 100 MB |
 | PATCH | `/api/v1/conversations/{id}` | admin | Body `{ title }`, 1 to 120 characters, or `null` for the generated title |
 | POST | `/api/v1/conversations/{id}/enrich` | admin | Queues a summary run: `202 { aiStatus: "pending" }`; `409` while the conversation is open or no model is set |
 | POST | `/api/v1/speech/backfill?force=` | admin | Queues `classify-speech` for closed conversations with unguessed lines (`force=true`: also those guessed by an older `speech_version`). `200 { queued, remaining }`: at most 500 are queued per call, `remaining` counts the rest; nothing is queued while `Nytka__Speech__Mode` is `off`; see [Speech kind](#speech-kind) |
