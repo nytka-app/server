@@ -167,6 +167,11 @@ public static class ChunkFormat
             throw new ArgumentException($"A chunk holds 1 to {MaxFrames} frames.", nameof(chunk));
         }
 
+        if (chunk.BaseTimeMs is < 0 or > MaxBaseTimeMs)
+        {
+            throw new ArgumentException($"Base time {chunk.BaseTimeMs} is outside the supported range.", nameof(chunk));
+        }
+
         var size = HeaderSize;
         for (var i = 0; i < chunk.Frames.Count; i++)
         {

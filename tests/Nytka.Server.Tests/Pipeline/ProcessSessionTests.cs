@@ -1,4 +1,6 @@
 using Nytka.Server.Jobs;
+using Nytka.Server.Pipeline;
+using Nytka.Storage;
 using static Nytka.Server.Tests.SyntheticAudio;
 
 namespace Nytka.Server.Tests.Pipeline;
@@ -148,6 +150,44 @@ public sealed class ProcessSessionTests(PostgresFixture db) : IAsyncLifetime
         Assert.All(batches, b => Assert.InRange((b.Item2 - b.Item1).TotalSeconds, 20, 21));
         Assert.Equal(0, await Count("audio_chunks", "body is not null"));
         Assert.InRange(ran, 1, 39 * 2 + 20); // one transcription per batch plus a few process runs
+    }
+
+    [Fact]
+    public async Task A_session_with_an_unreadable_chunk_gives_up_instead_of_looping_forever()
+    {
+        var server = NewServer();
+        var now = server.Time.GetUtcNow();
+
+        // Stored directly, bypassing the chunk and import endpoints: both now refuse to write a chunk
+        // ChunkFormat cannot read, so this simulates a row from before that validation existed.
+        await db.ExecuteAsync(
+            "insert into capture_sessions (id, started_at, last_received_at) values (@session, @now, @now)",
+            new { session = _session, now });
+        await db.ExecuteAsync(
+            """
+            insert into audio_chunks (session_id, first_seq, frame_count, base_time, last_time, body, received_at)
+            values (@session, 0, 1, @now, @now, @body, @now)
+            """,
+            new { session = _session, now, body = new byte[] { 0, 1, 2, 3 } }); // not a chunk: ChunkFormat.Read throws
+        await server.Get<JobQueue>().EnqueueAsync(
+            JobKinds.ProcessSession, new SessionPayload(_session), JobKinds.ProcessSessionKey(_session), now, default);
+
+        await server.RunJobsAsync();                       // attempt 1
+        Assert.Equal(0, await server.RunJobsAsync());      // waits 30 s
+        server.Time.Advance(TimeSpan.FromSeconds(30));
+        await server.RunJobsAsync();                       // attempt 2
+        server.Time.Advance(TimeSpan.FromSeconds(119));
+        Assert.Equal(0, await server.RunJobsAsync());      // waits 2 min
+        server.Time.Advance(TimeSpan.FromSeconds(1));
+        await server.RunJobsAsync();                       // attempt 3, then gives up
+
+        Assert.Equal(0, await Count("jobs"));
+        Assert.NotNull(await db.ScalarAsync<DateTime?>(
+            "select gave_up_at from capture_sessions where id = @session", new { session = _session }));
+
+        // The scheduler leaves it alone from now on, instead of re-queuing it every tick forever.
+        await server.Get<Scheduler>().TickAsync(default);
+        Assert.Equal(0, await Count("jobs", "kind = 'process-session'"));
     }
 
     [Fact]

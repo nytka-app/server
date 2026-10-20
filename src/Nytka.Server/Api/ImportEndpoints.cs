@@ -101,7 +101,7 @@ public static partial class ImportEndpoints
 
         if (ParseStartedAt(startedAt) is not { } at)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["startedAt"] = ["Must be a time with a UTC offset."] });
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["startedAt"] = [StartedAtMessage] });
         }
 
         if (http.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
@@ -147,7 +147,7 @@ public static partial class ImportEndpoints
     {
         if (ParseStartedAt(startedAt) is not { } at)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["startedAt"] = ["Must be a time with a UTC offset."] });
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["startedAt"] = [StartedAtMessage] });
         }
 
         var mediaType = MediaTypeHeaderValue.TryParse(http.ContentType, out var parsed) ? parsed.MediaType.Value : null;
@@ -199,12 +199,24 @@ public static partial class ImportEndpoints
         return Results.Accepted(value: new AudioImportResponse(session, (int)(lastEnd - at).TotalMilliseconds));
     }
 
-    /// <summary>A time with a UTC offset, or null for anything else (missing, no offset, not a time).</summary>
-    private static DateTimeOffset? ParseStartedAt(string? value) =>
-        value is not null && HasOffset().IsMatch(value)
-        && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)
-            ? time.ToUniversalTime()
-            : null;
+    private static readonly string StartedAtMessage =
+        $"Must be a time with a UTC offset, 1970-01-01 or later and before {DateTimeOffset.FromUnixTimeMilliseconds(ChunkFormat.MaxBaseTimeMs):yyyy-MM-dd}.";
+
+    /// <summary>
+    /// A time with a UTC offset in the range a chunk's base time can hold, or null for anything else
+    /// (missing, no offset, not a time, or outside that range).
+    /// </summary>
+    private static DateTimeOffset? ParseStartedAt(string? value)
+    {
+        if (value is null || !HasOffset().IsMatch(value)
+            || !DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
+        {
+            return null;
+        }
+
+        var utc = time.ToUniversalTime();
+        return utc.ToUnixTimeMilliseconds() is >= 0 and <= ChunkFormat.MaxBaseTimeMs ? utc : null;
+    }
 
     [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}[Tt ].*([Zz]|[+-]\d{2}(:?\d{2})?)$")]
     private static partial Regex HasOffset();

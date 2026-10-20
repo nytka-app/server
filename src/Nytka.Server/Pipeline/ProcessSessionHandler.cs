@@ -53,10 +53,15 @@ public sealed class ProcessSessionHandler(
 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
     {
-        var sessionId = JsonSerializer.Deserialize<SessionPayload>(job.Payload)!.SessionId;
+        var sessionId = SessionId(job);
         var now = time.GetUtcNow();
 
         if (await chunks.GetSessionAsync(sessionId, ct) is not { } session)
+        {
+            return JobOutcome.Done;
+        }
+
+        if (session.GaveUpAt is not null)
         {
             return JobOutcome.Done;
         }
@@ -155,7 +160,18 @@ public sealed class ProcessSessionHandler(
         return window;
     }
 
-    public Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct) => Task.CompletedTask;
+    /// <summary>
+    /// Marks the session so the scheduler stops queuing it: a chunk it holds could not be read, so
+    /// every run would fail the same way. Logs the session id only, never the error's own text.
+    /// </summary>
+    public Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct)
+    {
+        var sessionId = SessionId(job);
+        logger.LogWarning("Session {SessionId}: gave up after repeated failures; it will not be processed again.", sessionId);
+        return chunks.MarkGaveUpAsync(sessionId, time.GetUtcNow(), ct);
+    }
+
+    private static Guid SessionId(JobRecord job) => JsonSerializer.Deserialize<SessionPayload>(job.Payload)!.SessionId;
 
     /// <summary>
     /// Takes chunks in order until one starts past where the previous ended and arrived less than
