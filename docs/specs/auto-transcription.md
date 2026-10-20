@@ -98,24 +98,40 @@ Measured on the maintainer's server over the 24 days to 2026-10-21 (aggregates o
 | Batch length | 14 to 21 s on a normal day (mean per day) |
 | Conversations | 223; median 2 min, mean 13.5 min, longest 358 min |
 | Line time by kind | wearer 58%, other people 39%, `media` guess 0.5%, `unsure` 0.8%, unguessed 1.7% |
-| Bill | $8.10 for 4,717 requests and 16 h of speech; context 79% of it, audio 9%, text out 12% |
+| Bill | $8.10 for 4,717 requests and 16 h of speech |
+| Pinned Soniox calls, measured (`stt` log fields from homelab-gitops #895, 42 calls in 2 h) | per call 14.4 s of audio, 85 output tokens, 611 context characters; batches as short as 0.75 s are sent |
 
-The cost of one paid request, by the ledger's own formula: **$0.001365** of context (390 tokens), plus **$0.045** per
-hour of audio, plus about **$0.059** per hour of speech in text out (50,700 characters an hour). So the bill is the
-request count: a 17 s batch pays 6.5 times more for its context than for its audio.
+The cost of one paid request, from the measured calls at Soniox list prices (context at about 4 characters a token):
 
-| Heavy day (614 batches, 3.1 h) | Requests | Context | Audio | Text out | Total | 30 days |
-|---|---|---|---|---|---|---|
-| Today: Soniox per batch | 614 | $0.84 | $0.14 | $0.18 | **$1.16** | $35 |
-| Cheap fixes only (batches 15/45/60 s, context 120 tokens) | about 270 | $0.11 | $0.14 | $0.18 | **$0.43** | $13 |
-| Auto, every conversation paid | about 15 (10 conversations, pieces of 30 min) | $0.01 | $0.14 | $0.18 | **$0.33** | $10 |
-| Auto, unknown far-field speech not routed (assumed 20% of other people's time) | about 15 | $0.01 | $0.12 | $0.16 | **$0.29** | $9 |
-| Auto, half the conversations skipped and a third of those read later (assumed) | about 10 | $0.01 | $0.09 | $0.12 | **$0.22** | $7 |
+| Part | Per call | Share |
+|---|---|---|
+| Context, 611 characters (about 150 tokens at $3.50 per million) | $0.00054 | 53% |
+| Text out, 85 tokens at $3.50 per million | $0.00030 | 29% |
+| Audio, 14.4 s at 30,000 tokens an hour and $1.50 per million | $0.00018 | 18% |
+| **Total** | **$0.00102** | |
 
-Two things follow. First, one request per conversation removes almost all of the waste; routing and skipping only
-trim the remaining $0.10 per speech hour. Second, media routing saves almost no money here (0.5% of line time is
-guessed media at the current threshold): its value is quality, because TV text stops reaching names, facts and tasks.
-The skip rate and the far-field share are assumptions until the ledger and `GET /api/v1/transcript/eval` measure them.
+The ledger's price table (NYTKA-88) is fitted to the real bill and needs 390 text-in tokens a request to match it, not
+150, which puts context at 79% of the bill. Whether Soniox counts more tokens per character than 4 (the context mixes
+Cyrillic and Latin) or bills a fixed part per request is UNKNOWN; the ledger settles it once it records billed units.
+Either way the context sent with every batch is the largest single cost, and a 0.75 s batch pays it in full.
+
+Heavy day (614 batches, 2.5 h of billed audio at 14.4 s a call). "Measured" prices calls as above; "bill fit" uses the
+ledger's 390 tokens a request.
+
+| Heavy day | Requests | Context | Audio | Text out | Total, measured | Total, bill fit | 30 days, measured |
+|---|---|---|---|---|---|---|---|
+| Today: Soniox per batch | 614 | $0.33 | $0.11 | $0.18 | **$0.62** | $1.16 | $19 |
+| Cheap fixes only (context trimmed to about 200 characters, batches 15/45/60 s, short batches held) | about 270 | $0.05 | $0.11 | $0.18 | **$0.34** | $0.44 | $10 |
+| Auto, every conversation paid | about 15 (10 conversations, pieces of 30 min) | $0.01 | $0.11 | $0.18 | **$0.30** | $0.33 | $9 |
+| Auto, unknown far-field speech not routed (assumed 20% of other people's time) | about 15 | $0.01 | $0.10 | $0.17 | **$0.28** | $0.30 | $8 |
+| Auto, half the conversations skipped and a third of those read later (assumed) | about 10 | $0.01 | $0.07 | $0.12 | **$0.20** | $0.22 | $6 |
+
+Three things follow. First, the context is the first thing to fix, and the cheap fixes alone take a heavy day from
+$0.62 to $0.34 before Auto exists; they ship first (Steps). Second, once the context is paid once per conversation, text
+out is the largest part (about 60%), and only sending less audio lowers it: routing and skipping, not batch size.
+Third, media routing saves almost no money here (0.5% of line time is guessed media at the current threshold): its value
+is quality, because TV text stops reaching names, facts and tasks. The skip rate and the far-field share are
+assumptions until the ledger and `GET /api/v1/transcript/eval` measure them.
 
 ## Close: when a conversation is settled
 
@@ -143,7 +159,7 @@ live engine is not called.
 
 `stt` labels speakers only on pinned cloud answers today. The live pass needs its labels too, so the paid pass can
 carry `speaker_id` over (Swap): `homelab-gitops` changes `serve_pinned` to label Parakeet's segments as it labels the
-A/B arm's. That is a `stt` change, outside this repository, and Step 1 of the Steps.
+A/B arm's. That is a `stt` change, outside this repository, and Step 4 of the Steps.
 
 ### The paid pass
 
@@ -311,18 +327,24 @@ than `auto` and for a live engine that is itself paid.
 
 ## Cheap fixes
 
-These ship first, before Auto, and keep paying off for anyone who keeps a paid engine per batch:
+These ship first, before Auto, in this order, and keep paying off for anyone who keeps a paid engine per batch. Together
+they take the measured heavy day from $0.62 to about $0.34 (The numbers):
 
-1. **Bigger batches while a paid engine serves batches.** `BatchRules` becomes settings `stt.batch.minSeconds` (15),
-   `stt.batch.maxSeconds` (45) and `stt.batch.hardMaxSeconds` (60), up from 5, 30 and 45, for about 270 requests
-   instead of 614 on the heaviest day. Under Auto the live engine is free and the defaults stay at 5, 30 and 45 for a
-   fresher draft. 60 s keeps `stt`'s peak under its limit (1.20 GiB measured on a 48 s upload; Parakeet's VAD segments
-   are capped at 8 s, so the peak grows with the WAV, not the model). Speech-kind's stretch and Your voice's 30 s
-   segment cap work on lines, not batches, and do not change.
-2. **Context trimmed for pinned requests** (`homelab-gitops`, `stt/server.py`): Nytka's pinned Soniox requests send
-   `terms` and `general` only, not the description paragraph; 390 tokens become about 120. Checked first on 50 stored
-   batches that the word error does not rise (How we measure it).
-3. **Bring your own Soniox key** and the direct client (The paid engine), usable per batch before Auto exists.
+1. **Context trimmed for pinned requests** (`homelab-gitops`, `stt/server.py`): Nytka's pinned Soniox requests send
+   `terms` and `general` only, not the description paragraph; 611 characters become about 200. The biggest single
+   saving available today, a one-file change. Checked first on 50 stored batches that the word error does not rise (How
+   we measure it).
+2. **Bigger batches, and no tiny ones, while a paid engine serves batches.** `BatchRules` becomes settings
+   `stt.batch.minSeconds` (15), `stt.batch.maxSeconds` (45), `stt.batch.hardMaxSeconds` (60) and
+   `stt.batch.longSilenceSeconds` (120), up from 5, 30, 45 and 30, for about 270 requests instead of 614 on the heaviest
+   day. The last one is what stops a 0.75 s batch: today a batch under `minSeconds` closes after 30 s of silence and is
+   sent alone; with 120 s (the conversation gap) it waits for the next speech of the same conversation and joins it. A
+   capture session that ends still flushes it. Under Auto the live engine is free and the defaults stay at 5, 30, 45
+   and 30 for a fresher draft. 60 s keeps `stt`'s peak under its limit (1.20 GiB measured on a 48 s upload; Parakeet's
+   VAD segments are capped at 8 s, so the peak grows with the WAV, not the model). Speech-kind's stretch and Your
+   voice's 30 s segment cap work on lines, not batches, and do not change.
+3. **Context once: bring your own Soniox key** and the direct client (The paid engine), usable per batch before Auto
+   exists and the paid pass's engine after.
 
 ## On-device drafts
 
@@ -381,7 +403,7 @@ Migrations, numbers fixed by this plan (NYTKA-88 holds 0036):
 | `stt.auto.contextText` | `Nytka__Stt__Auto__ContextText` | empty | A paragraph about the recordings for the paid engine's context |
 | `stt.auto.cleaning` | `Nytka__Stt__Auto__Cleaning` | `off` | `off`, then the steps research accepts |
 | `stt.auto.classifier` | `Nytka__Stt__Auto__Classifier` | `off` | `off`, then the classifier research accepts |
-| `stt.batch.minSeconds`, `maxSeconds`, `hardMaxSeconds` | `Nytka__Stt__Batch__MinSeconds`, ... | `5`, `30`, `45` | Batch rules; 15, 45, 60 suit a paid engine per batch |
+| `stt.batch.minSeconds`, `maxSeconds`, `hardMaxSeconds`, `longSilenceSeconds` | `Nytka__Stt__Batch__MinSeconds`, ... | `5`, `30`, `45`, `30` | Batch rules; 15, 45, 60, 120 suit a paid engine per batch |
 
 Options, from the environment only: `Nytka__Stt__SonioxApiKey` and `Nytka__Stt__SonioxBaseUrl`
 (`https://api.soniox.com`). The budget keys are NYTKA-88's. Every variable goes into `.env.example` (commented out) and
@@ -496,16 +518,17 @@ deletes, a 429, a slow answer) and a fake live engine.
 
 | # | Repo | Content | Done when | After |
 |---|---|---|---|---|
-| 1 | homelab-gitops | `stt`: label pinned Parakeet answers; trimmed context for pinned Soniox | a pinned `parakeet` request returns `speaker_id`; WER unchanged on 50 stored batches | |
-| 2 | server | Cheap fixes: batch rules as settings | a heavy day's ledger shows at most half the requests at the same speech | |
+| 1 | homelab-gitops | `stt`: trimmed context for pinned Soniox requests | context about 200 characters in the `stt` log; WER unchanged on 50 stored batches | |
+| 2 | server | Batch rules as settings, short batches held for the next speech | a heavy day's ledger shows at most half the requests at the same speech, none under `minSeconds` but a session's last | |
 | 3 | server | Soniox direct client, BYO key, context once, ledger row per request | fake-Soniox tests pass, files deleted on every outcome | NYTKA-88 |
-| 4 | server | Passes and swap: `0037`, plan/build/submit/swap, `segment_drafts`, `transcript.upgraded`, manual `upgrade` route | swap tests: atomic under a crash, marks and suggestions repointed, times true | 3 |
-| 5 | server | Auto: `stt.mode`, live model, settle, pieces, categories and routes, enrichment hold, retention | a settled synthetic conversation gets one pass; media and noise never sent | 4 |
-| 6 | server | Lazy triggers and budget states, `/status` | each trigger queues one pass; `spent` sends nothing | 5 |
-| 7 | server | Corrections and evaluation: `noise` kind, correction passes, `transcript/eval`, `transcript/pairs` | a correction queues a pass for its stretch only | 5 |
-| 8 | android | Draft banner, upgrade on open, category chips, Noise mark, Settings: Auto or Off | app tests; the 409 reason shown | 6 |
-| 9 | server | On-device drafts: `0038`, `POST /api/v1/drafts`, use in `transcribe` | a covered batch makes no live request | 4 |
-| 10 | server | Cleaning and classifier (pending research) | the acceptance criteria above, on the owner's set | 7, research |
+| 4 | homelab-gitops | `stt`: label pinned Parakeet answers | a pinned `parakeet` request returns `speaker_id` | |
+| 5 | server | Passes and swap: `0037`, plan/build/submit/swap, `segment_drafts`, `transcript.upgraded`, manual `upgrade` route | swap tests: atomic under a crash, marks and suggestions repointed, times true | 3, 4 |
+| 6 | server | Auto: `stt.mode`, live model, settle, pieces, categories and routes, enrichment hold, retention | a settled synthetic conversation gets one pass; media and noise never sent | 5 |
+| 7 | server | Lazy triggers and budget states, `/status` | each trigger queues one pass; `spent` sends nothing | 6 |
+| 8 | server | Corrections and evaluation: `noise` kind, correction passes, `transcript/eval`, `transcript/pairs` | a correction queues a pass for its stretch only | 6 |
+| 9 | android | Draft banner, upgrade on open, category chips, Noise mark, Settings: Auto or Off | app tests; the 409 reason shown | 7 |
+| 10 | server | On-device drafts: `0038`, `POST /api/v1/drafts`, use in `transcribe` | a covered batch makes no live request | 5 |
+| 11 | server | Cleaning and classifier (pending research) | the acceptance criteria above, on the owner's set | 8, research |
 
 ## Review focus
 
