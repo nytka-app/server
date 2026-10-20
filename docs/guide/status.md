@@ -86,7 +86,7 @@ the app.
 
 - The server needs an Omi pendant on consumer firmware 3.0.x; offline sync needs 3.0.20 or later.
 - Anonymous speaker labels such as `SPEAKER_00` can mean different people in different batches,
-  because each batch is transcribed on its own ([README](../../README.md#transcription-endpoints)).
+  because each batch is transcribed on its own ([README](../reference/configuration.md#transcription-endpoints)).
 - The pendant keeps no mute state, so while the phone is away it records anyway; the app drops
   muted stretches before upload ([vision](../../docs/vision.md#what-it-looks-like)).
 - A `read` token cannot be used in the app, which needs `admin`.
