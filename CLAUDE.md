@@ -9,7 +9,7 @@ was built: `docs/plans/`.
 
 ## Stack
 
-.NET 10 · ASP.NET Core minimal APIs · Postgres 17 · Dapper · DbUp · Concentus (Opus) · ONNX
+.NET 10 · ASP.NET Core minimal APIs · Postgres 17 · Dapper · DbUp (through Switchknife.Migrations) · Concentus (Opus) · ONNX
 Runtime with Silero VAD · ModelContextProtocol SDK · Serilog · xUnit, Testcontainers,
 WebApplicationFactory, FakeTimeProvider.
 

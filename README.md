@@ -113,7 +113,7 @@ crash repeats work and never loses or duplicates it. [Architecture](docs/guide/a
 | HTTP API routes | 82 | rows of the table in [API](docs/reference/api.md#api) |
 | MCP tools | 16 (13 read, 3 write) | [MCP](docs/reference/api.md#mcp) |
 | Database migrations | 32 | `db/migrations/` |
-| Test methods | 1,389 | `[Fact]` and `[Theory]` in `tests/` |
+| Test methods | 1,391 | `[Fact]` and `[Theory]` in `tests/` |
 
 ## Docs
 

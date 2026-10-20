@@ -163,7 +163,7 @@ public sealed class SpeechStorageTests(PostgresFixture db) : IAsyncLifetime
             await admin.ExecuteAsync("drop database if exists speech_fresh");
         }
 
-        new DatabaseMigrator(fresh, NullLogger<DatabaseMigrator>.Instance).Run();
+        NytkaMigrations.Run(fresh, NullLogger.Instance);
 
         await using var connection = new NpgsqlConnection(fresh);
         var rows = await connection.QueryAsync<State>(
