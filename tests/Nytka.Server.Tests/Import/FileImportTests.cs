@@ -118,6 +118,19 @@ public sealed class FileImportTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("1960-01-01T00:00:00Z")]  // before 1970
+    [InlineData("9999-12-31T23:59:59Z")]  // past what a chunk's base time can hold
+    public async Task A_start_time_outside_the_chunk_range_is_rejected_for_transcript_import_and_nothing_is_written(string startedAt)
+    {
+        var response = await Admin.PostAsync(
+            $"/api/v1/import/transcript?format=txt&startedAt={Uri.EscapeDataString(startedAt)}",
+            new StringContent("Hello there.", Encoding.UTF8, "text/plain"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await Count("select count(*) from conversations"));
+    }
+
     [Fact]
     public async Task A_malformed_srt_body_is_rejected_and_nothing_is_written()
     {
@@ -176,6 +189,19 @@ public sealed class FileImportTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(1, await Count("select count(*) from audio_chunks"));
+    }
+
+    [Theory]
+    [InlineData("1960-01-01T00:00:00Z")]  // before 1970
+    [InlineData("9999-12-31T23:59:59Z")]  // past what a chunk's base time can hold
+    public async Task A_start_time_outside_the_chunk_range_is_rejected_for_audio_import_and_nothing_is_written(string startedAt)
+    {
+        var response = await Admin.PostAsync(
+            $"/api/v1/import/audio?startedAt={Uri.EscapeDataString(startedAt)}", WavBody(Tone(Timeline.SamplesPerFrame * 5)));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, await Count("select count(*) from audio_chunks"));
+        Assert.Equal(0, await Count("select count(*) from jobs where kind = 'process-session'"));
     }
 
     [Fact]

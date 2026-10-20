@@ -205,8 +205,9 @@ curl -sS -X POST "$NYTKA_URL/api/v1/import/transcript?format=srt&startedAt=2026-
   same times, because the search index cannot hold a longer one. NUL characters are dropped.
 - The answer is `{ conversationId, segments }`. Posting the same file again makes another
   conversation: there is no id to dedupe transcript imports by.
-- `400` for a file that does not parse as the given format, or a `startedAt` with no UTC offset;
-  `413` above 100 MB.
+- `400` for a file that does not parse as the given format, or a `startedAt` with no UTC offset or
+  outside the range a chunk's base time can hold (1970-01-01 up to just shy of year 10000); `413`
+  above 100 MB.
 
 ### Audio files
 
@@ -224,5 +225,6 @@ curl -sS -X POST "$NYTKA_URL/api/v1/import/audio?startedAt=2026-03-01T09:00:00Z"
   `process-session` job, so VAD, transcription and conversation assignment run exactly as they would
   for a live capture; the resulting conversation is indistinguishable from one the pendant sent.
 - The answer is `202 { sessionId, durationMs }`.
-- `415` for any other content type, `400` for a WAV that is not 16 kHz mono 16-bit, holds no audio or
-  is longer than 1 hour once decoded, `413` above 100 MB.
+- `415` for any other content type, `400` for a WAV that is not 16 kHz mono 16-bit, holds no audio,
+  is longer than 1 hour once decoded, or a `startedAt` with no UTC offset or outside the range a
+  chunk's base time can hold, `413` above 100 MB.
