@@ -154,6 +154,18 @@ may offer the name with a better evidence line. Nothing deletes by itself, and n
 existing rows. To clean an old install: revalidate, then backfill with `force=true` until `remaining`
 is `0`.
 
+**Auto-applied names.** With `people.autoApplyNames` on, `NameSuggestionStore.ApplyAsync` applies a
+newly stored `named` suggestion of a `speaker`, `label` or `person` target whose confidence is at least
+`people.autoApplyConfidence`, in the run's transaction and through the code of accept, under a savepoint: one
+that cannot apply rolls back and stays `pending`. Status `auto_applied`; `applied` (jsonb) records the person, whether
+the apply made them, the voice it linked, the segments it named, the role tag it added and a `person` target's old
+name, which is what undo reverts. Never applied: a run that gives two voices the same name, a target with a pending
+or applied suggestion of another name, a name a role-only person has, a `person` target whose name another person
+has (a merge cannot be undone), and what accept-by-name skips. One threshold serves self-introductions and being
+addressed: when it shipped (2026-10-20) the owner's server held 66 suggestions, all pending, so no acceptance rate
+argued for two. Evidence in the voice's own segments (a self-introduction) was 28 of them, 22 at 0.85 or above;
+addressed-by-name 38, 32 at 0.85 or above.
+
 **Limits.** English audio playing nearby (a video, a call) is a voice like any other, and Nytka
 cannot tell it from a person, so a name spoken by media can be suggested; reject it. A low
 confidence is not a signal for it and is not used as one.
@@ -326,6 +338,8 @@ security" say so, and that the calendar URL usually contains a token.
 | Key | Variable | Default | Meaning |
 |---|---|---|---|
 | `people.suggestNames` | `Nytka__People__SuggestNames` | `true` | Layer 1 |
+| `people.autoApplyNames` | `Nytka__People__AutoApplyNames` | `true` | Layer 1, auto-applied names |
+| `people.autoApplyConfidence` | `Nytka__People__AutoApplyConfidence` | `0.85` | Confidence, 0.5 to 1, at or above which a suggestion applies itself |
 | `people.facts` | `Nytka__People__Facts` | `true` | Layer 3 extraction |
 | `people.voiceMatching` | `Nytka__People__VoiceMatching` | `false` | Layer 2 |
 | `people.voiceThreshold` | `Nytka__People__VoiceThreshold` | `0.7` | Similarity, 0.5 to 0.95, for joining a group or matching a voiceprint |
@@ -348,6 +362,7 @@ UNKNOWN until the evaluation runs.
 | `PATCH`, `DELETE /api/v1/people/{id}/facts/{factId}` | admin | edit (200) or tombstone (204) |
 | `GET /api/v1/people/suggestions?status=pending` | read | `{ items: [{ id, conversationId, target, speakerId, groupId, name, personId, confidence, sameName, evidence: { segmentId, startedAt, text } }] }` |
 | `POST /api/v1/people/suggestions/{id}/accept`, `/reject` | admin | 200 with the person, or 204; 409 when no longer pending |
+| `POST /api/v1/people/suggestions/{id}/undo` | admin | reverts an `auto_applied` suggestion from `applied` and makes it `rejected`; 204; 409 when not auto-applied |
 | `POST /api/v1/people/suggestions/accept-by-name` `{ name }` | admin | accepts every pending `speaker`, `label` and `group` suggestion of the name (any case; not role-only, not `person`) through the code of the single accept, in one transaction: `200 { person, accepted, skipped }` (`skipped`: it can no longer apply, as a voice that belongs to another person, segments that all have a person, a group that is gone); `404` when none is pending; `400` for a blank name; `409` when the pending ones carry different people or the name is a role-only person's |
 | `POST /api/v1/people/suggestions/revalidate` | admin | deletes pending model suggestions that fail the name rules; `{ checked, removed, kept }` |
 | `POST /api/v1/people/backfill?limit&force` | admin | `force=true` also re-queues names runs made under an older rule version |
