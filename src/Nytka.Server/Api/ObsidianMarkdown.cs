@@ -50,9 +50,13 @@ public static class ObsidianMarkdown
         return ReservedFileNames.Contains(trimmed) ? "_" + trimmed : trimmed;
     }
 
-    /// <summary>8 hex characters of <paramref name="id"/>: short, stable and, with the sanitized title or name next to
-    /// it, enough to keep every file name in the export unique without a second pass over the whole export.</summary>
-    public static string ShortId(Guid id) => id.ToString("N")[..8];
+    /// <summary>8 hex characters of <paramref name="id"/>, short, stable and, with the sanitized title or name next to
+    /// it, enough to keep every file name in the export unique without a second pass over the whole export: the
+    /// <em>last</em> 8, not the first. Every id here is a <see cref="Guid.CreateVersion7(DateTimeOffset)"/> UUID v7,
+    /// whose first 8 hex characters are its 48-bit millisecond timestamp (RFC 9562); two ids made in the same ~65 s
+    /// bucket would share them, so the first 8 characters are not unique, only the last 8 (inside the random
+    /// <c>rand_b</c> field) are.</summary>
+    public static string ShortId(Guid id) => id.ToString("N")[^8..];
 
     /// <summary>The conversation's file name, under <c>Conversations/</c>, without extension.</summary>
     public static string ConversationFileStem(ObsidianConversation conversation) => ConversationStem(conversation.Id, conversation.StartedAt, conversation.Title);
@@ -63,9 +67,16 @@ public static class ObsidianMarkdown
     public static string ConversationFileName(ObsidianConversation conversation) => $"Conversations/{ConversationFileStem(conversation)}.md";
 
     /// <summary>The person's file name, under <c>People/</c>, without extension.</summary>
-    public static string PersonFileStem(ObsidianPerson person) => $"{SanitizeFileNamePart(person.Name)} {ShortId(person.Id)}";
+    public static string PersonFileStem(ObsidianPerson person) => PersonStem(person.Id, person.Name);
+
+    private static string PersonStem(Guid id, string name) => $"{SanitizeFileNamePart(name)} {ShortId(id)}";
 
     public static string PersonFileName(ObsidianPerson person) => $"People/{PersonFileStem(person)}.md";
+
+    /// <summary>The standalone tasks' file name, at the export's root, without extension: one shared note, so it needs no id suffix.</summary>
+    public const string TasksFileStem = "Tasks";
+
+    public static string TasksFileName => $"{TasksFileStem}.md";
 
     public static string Conversation(ObsidianConversation conversation)
     {
@@ -138,9 +149,34 @@ public static class ObsidianMarkdown
             foreach (var conversation in person.Conversations)
             {
                 var stem = ConversationStem(conversation.Id, conversation.StartedAt, conversation.Title);
-                var alias = $"{conversation.StartedAt:yyyy-MM-dd} — {OneLine(conversation.Title ?? "Untitled conversation").Replace('|', ' ').Replace('[', '(').Replace(']', ')')}";
+                var alias = $"{conversation.StartedAt:yyyy-MM-dd} — {WikiLinkAlias(conversation.Title ?? "Untitled conversation")}";
                 body.Append("- [[").Append(stem).Append('|').Append(alias).Append("]]\n");
             }
+        }
+
+        return body.ToString();
+    }
+
+    /// <summary>The note for tasks added by hand with no conversation (<c>tasks.conversation_id</c> nullable since #145):
+    /// one <c>- [ ]</c> or <c>- [x]</c> line per task, oldest first, with its due date and a wiki link to its person when set.</summary>
+    public static string Tasks(IReadOnlyList<ObsidianStandaloneTask> tasks)
+    {
+        var body = new StringBuilder();
+        body.Append("# Tasks\n\n");
+        foreach (var task in tasks)
+        {
+            body.Append("- [").Append(task.Done ? 'x' : ' ').Append("] ").Append(OneLine(task.Text));
+            if (task.Due is { } due)
+            {
+                body.Append(CultureInfo.InvariantCulture, $" (due {due:yyyy-MM-dd})");
+            }
+
+            if (task.PersonId is { } personId && task.PersonName is { } personName)
+            {
+                body.Append(" — [[").Append(PersonStem(personId, personName)).Append('|').Append(WikiLinkAlias(personName)).Append("]]");
+            }
+
+            body.Append('\n');
         }
 
         return body.ToString();
@@ -153,4 +189,8 @@ public static class ObsidianMarkdown
     /// <summary>A value that must stay on one line (a heading, a link alias, a front matter string): line breaks become spaces.</summary>
     private static string OneLine(string value) =>
         value.Contains('\n') || value.Contains('\r') ? string.Join(' ', value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)) : value;
+
+    /// <summary>A wiki link's alias text (the part after <c>|</c>): on one line, and without the characters that would
+    /// end the link (<c>|</c>) or read as a nested link (<c>[</c> <c>]</c>) early.</summary>
+    private static string WikiLinkAlias(string value) => OneLine(value).Replace('|', ' ').Replace('[', '(').Replace(']', ')');
 }
