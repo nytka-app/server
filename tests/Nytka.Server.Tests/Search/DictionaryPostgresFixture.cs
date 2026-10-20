@@ -44,7 +44,7 @@ public sealed class DictionaryPostgresFixture : IAsyncLifetime
         }
 
         await _container.StartAsync();
-        new DatabaseMigrator(_container.GetConnectionString(), NullLogger<DatabaseMigrator>.Instance).Run();
+        NytkaMigrations.Run(_container.GetConnectionString(), NullLogger.Instance);
         DataSource = NpgsqlDataSource.Create(_container.GetConnectionString());
         Search = SearchSeed.StoreFor(_container.GetConnectionString());
         // Opt-in, as `search.dictionary = uk_hunspell` does when the server starts.

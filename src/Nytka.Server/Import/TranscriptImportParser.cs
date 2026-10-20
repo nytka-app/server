@@ -110,7 +110,12 @@ public static partial class TranscriptImportParser
             throw new TranscriptImportException("A timing line is malformed.");
         }
 
-        var hours = match.Groups["h"].Success ? int.Parse(match.Groups["h"].Value, CultureInfo.InvariantCulture) : 0;
+        var hours = 0;
+        if (match.Groups["h"].Success && !int.TryParse(match.Groups["h"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out hours))
+        {
+            throw new TranscriptImportException("A timing line is malformed.");
+        }
+
         var minutes = int.Parse(match.Groups["m"].Value, CultureInfo.InvariantCulture);
         var seconds = int.Parse(match.Groups["s"].Value, CultureInfo.InvariantCulture);
         var fraction = match.Groups["f"].Value.PadRight(3, '0')[..3];

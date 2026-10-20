@@ -6,7 +6,7 @@ section: "Get started"
 ---
 
 This page runs the server. The phone side is on [Install the Android app](android-app.md). The
-steps follow the install section of the [README](../../README.md#install-in-15-minutes), which
+steps follow the install section of the [README](../how-to/install.md#install-in-15-minutes), which
 puts the whole path at about 15 minutes once the prerequisites are in place.
 
 ## Before you start
@@ -78,7 +78,7 @@ tailscale serve status
 `status` prints the `https://<machine>.<tailnet>.ts.net` address. A domain with a reverse proxy
 that terminates HTTPS works too. On a VPN without HTTPS you can bind to the VPN address and turn
 on the app's private-network switch, which sends audio unencrypted
-([README](../../README.md#install-in-15-minutes)).
+([README](../how-to/install.md#install-in-15-minutes)).
 
 ## 4. Read the status
 
@@ -93,7 +93,7 @@ the key, URL or model in `.env` is wrong. Fix `.env` and run `docker compose up 
 
 ## Test without a pendant
 
-`src/Nytka.Replay` sends a WAV file as one capture session ([README](../../README.md#test-without-a-pendant)):
+`src/Nytka.Replay` sends a WAV file as one capture session ([README](../how-to/operations.md#test-without-a-pendant)):
 
 ```bash title="Replay a recording"
 dotnet run --project src/Nytka.Replay -- --server http://127.0.0.1:8080 --wav speech.wav
@@ -106,6 +106,6 @@ The token comes from `--token` or `NYTKA_TOKEN`. The file must be 16 kHz, mono, 
 - A language model for titles, summaries, tasks and memories:
   [configuration](configuration.md#language-model).
 - Back up the `postgres-data` volume and read the
-  [upgrade notes](../../README.md#upgrading).
+  [upgrade notes](../how-to/operations.md#upgrading).
 - The Ukrainian search dictionary is an extra download with a licence prompt
-  ([README](../../README.md#ukrainian-search-optional)).
+  ([README](../explanation/features.md#ukrainian-search-optional)).

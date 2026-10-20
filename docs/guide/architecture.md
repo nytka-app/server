@@ -72,7 +72,7 @@ Everything is in Postgres, so `pg_dump` backs it up. A dump holds your transcrip
 secrets, so keep it private. Speech audio stays for `Nytka__Audio__RetentionDays`; transcripts,
 summaries, tasks and memories stay until you delete them. Tokens are kept as a hash. A voiceprint,
 if you enroll one, is in the database and in no API answer, export or log. The full list is in the
-[README](../../README.md#what-it-stores).
+[README](../how-to/operations.md#what-it-stores).
 
 ## Words used here
 

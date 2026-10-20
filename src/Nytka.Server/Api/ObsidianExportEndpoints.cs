@@ -7,7 +7,8 @@ namespace Nytka.Server.Api;
 
 /// <summary>
 /// The Obsidian export (docs/specs/export.md, Obsidian export): a ZIP of Markdown notes for an Obsidian vault, one
-/// per conversation and one per person. Admin only.
+/// per conversation, one per person, and a <c>Tasks.md</c> for tasks added by hand with no conversation (left out
+/// when there are none). Admin only.
 /// </summary>
 public static class ObsidianExportEndpoints
 {
@@ -41,6 +42,7 @@ public static class ObsidianExportEndpoints
                 {
                     ObsidianPersonEntry p => (ObsidianMarkdown.PersonFileName(p.Person), ObsidianMarkdown.Person(p.Person)),
                     ObsidianConversationEntry c => (ObsidianMarkdown.ConversationFileName(c.Conversation), ObsidianMarkdown.Conversation(c.Conversation)),
+                    ObsidianTasksEntry t => (ObsidianMarkdown.TasksFileName, ObsidianMarkdown.Tasks(t.Tasks)),
                     _ => throw new InvalidOperationException($"Unknown Obsidian export entry: {entry.GetType()}"),
                 };
                 await WriteAsync(zip, name, content, ct);

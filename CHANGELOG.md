@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.28.0](https://github.com/nytka-app/server/compare/v0.27.0...v0.28.0) (2026-10-20)
+
+
+### Miscellaneous Chores
+
+* release 0.28.0 ([#156](https://github.com/nytka-app/server/issues/156)) ([26464ea](https://github.com/nytka-app/server/commit/26464eac09902227b83d35ef8d15a8eebef57839))
+
+## [0.27.0](https://github.com/nytka-app/server/compare/v0.26.0...v0.27.0) (2026-10-20)
+
+
+### Features
+
+* **people:** respell a renamed or merged person's name in generated text ([#143](https://github.com/nytka-app/server/issues/143)) ([8839523](https://github.com/nytka-app/server/commit/8839523b4d290a4e766791f527173b8adcd33a91))
+* promise ledger, GET /people/{id}/ledger and get_ledger ([#144](https://github.com/nytka-app/server/issues/144)) ([4d9e5bf](https://github.com/nytka-app/server/commit/4d9e5bf00efa62ac9f683ec428ef6fad7cf3c836))
+* **tasks:** create a task by hand and give it a due date ([#145](https://github.com/nytka-app/server/issues/145)) ([487f777](https://github.com/nytka-app/server/commit/487f7774953cf134581561585933e660c86bbc29))
+
+
+### Bug Fixes
+
+* **people:** name respelling no longer rewrites common lowercase words ([#148](https://github.com/nytka-app/server/issues/148)) ([7d05caf](https://github.com/nytka-app/server/commit/7d05cafa33be1c5ac47454469c0326619aa7622e))
+* retry failed transcription batches and add POST /transcriptions/retry ([#147](https://github.com/nytka-app/server/issues/147)) ([8ef4469](https://github.com/nytka-app/server/commit/8ef4469b1d1f8c65b7c44afb235c78f9a8ea7653))
+
 ## [0.26.0](https://github.com/nytka-app/server/compare/v0.25.0...v0.26.0) (2026-10-18)
 
 

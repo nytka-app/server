@@ -21,18 +21,25 @@ public sealed record ObsidianPersonConversation(Guid Id, string? Title, DateTime
 public sealed record ObsidianPerson(
     Guid Id, string Name, IReadOnlyList<string> Tags, IReadOnlyList<string> Facts, IReadOnlyList<ObsidianPersonConversation> Conversations);
 
-/// <summary>Either a person or a conversation, read for the Obsidian export.</summary>
+/// <summary>A task added by hand with no conversation (<c>tasks.conversation_id</c> nullable since #145), for the
+/// Obsidian export's Tasks note.</summary>
+public sealed record ObsidianStandaloneTask(string Text, bool Done, DateTime? Due, Guid? PersonId, string? PersonName);
+
+/// <summary>Either a person, a conversation or the standalone tasks note, read for the Obsidian export.</summary>
 public abstract record ObsidianEntry;
 
 public sealed record ObsidianPersonEntry(ObsidianPerson Person) : ObsidianEntry;
 
 public sealed record ObsidianConversationEntry(ObsidianConversation Conversation) : ObsidianEntry;
 
+public sealed record ObsidianTasksEntry(IReadOnlyList<ObsidianStandaloneTask> Tasks) : ObsidianEntry;
+
 /// <summary>
 /// Reads the data for the Obsidian Markdown export (docs/specs/export.md, Obsidian export): one repeatable-read,
 /// read-only transaction, like <see cref="ExportStore"/>. People (with their facts, tags and every conversation they
 /// spoke in) are read once; conversations (with their segments, tags and tasks) are paged <see cref="PageSize"/> at a
-/// time, so memory stays bounded however long the history is.
+/// time, so memory stays bounded however long the history is; tasks with no conversation (added by hand) are read
+/// once, last, for the export's single Tasks note.
 /// </summary>
 public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
 {
@@ -128,6 +135,19 @@ public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
             }
 
             (afterAt, afterId) = (page[^1].StartedAt, page[^1].Id);
+        }
+
+        var standaloneTasks = (await connection.QueryAsync<ObsidianStandaloneTask>(new CommandDefinition(
+            """
+            select t.text as Text, t.done as Done, t.due_at as Due, t.person_id as PersonId, p.name as PersonName
+            from tasks t left join people p on p.id = t.person_id
+            where t.deleted_at is null and t.conversation_id is null
+            order by t.created_at, t.id
+            """,
+            transaction: transaction, cancellationToken: ct))).ToList();
+        if (standaloneTasks.Count > 0)
+        {
+            yield return new ObsidianTasksEntry(standaloneTasks);
         }
     }
 }

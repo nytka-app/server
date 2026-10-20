@@ -98,6 +98,24 @@ public sealed class OggOpusReaderTests
     }
 
     [Fact]
+    public void Stops_once_maxPackets_is_passed_instead_of_reading_the_rest_of_the_stream()
+    {
+        var packets = ToneFrames(10);
+
+        Assert.Throws<OggOpusPacketLimitException>(() => OggOpusReader.ReadPackets(Write(packets), maxPackets: 3));
+    }
+
+    [Fact]
+    public void Reads_normally_when_under_maxPackets()
+    {
+        var packets = ToneFrames(5);
+
+        var read = OggOpusReader.ReadPackets(Write(packets), maxPackets: 5);
+
+        Assert.Equal(5, read.Count);
+    }
+
+    [Fact]
     public void Ignores_pages_of_another_logical_stream()
     {
         var wanted = ToneFrames(3);

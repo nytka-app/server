@@ -66,6 +66,49 @@ public sealed class ObsidianExportApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Contains("Wearer: Shall we rent the cabin?", conversationFile);
         Assert.Contains("Anna: Yes, bring the canoe.", conversationFile);
         Assert.Matches(@"\*\*\d{2}:\d{2}:\d{2}\*\* Wearer: Shall we rent the cabin\?", conversationFile);
+        Assert.DoesNotContain("Tasks.md", files.Keys);
+    }
+
+    [Fact]
+    public async Task Two_conversations_on_the_same_day_with_the_same_title_made_in_the_same_moment_get_different_files()
+    {
+        var first = await Seed("First conversation");
+        var second = await Seed("Second conversation");
+        await Db.ExecuteAsync("update conversations set ai_title = 'Trip' where id = any(@ids)", new { ids = new[] { first, second } });
+
+        var files = await ExportAsync();
+
+        var conversationFiles = files.Keys.Where(k => k.StartsWith("Conversations/")).ToList();
+        Assert.Equal(2, conversationFiles.Count);
+        Assert.Equal(2, conversationFiles.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Exports_a_Tasks_note_for_tasks_added_by_hand_with_no_conversation()
+    {
+        var person = Guid.CreateVersion7(Now);
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@person, 'Anna', @Now)", new { person, Now });
+        await Db.ExecuteAsync(
+            """
+            insert into tasks (id, conversation_id, text, fingerprint, person_id, due_at, created_at, updated_at)
+            values (@id, null, 'Buy a tent', 'a', @person, @due, @Now, @Now)
+            """,
+            new { id = Guid.CreateVersion7(Now), person, due = Now.AddDays(3), Now });
+        await Db.ExecuteAsync(
+            """
+            insert into tasks (id, conversation_id, text, fingerprint, done, created_at, updated_at)
+            values (@id, null, 'Call the vet', 'b', true, @Now, @Now)
+            """,
+            new { id = Guid.CreateVersion7(Now.AddSeconds(1)), Now = Now.AddSeconds(1) });
+
+        var files = await ExportAsync();
+
+        var tasksFile = Assert.Single(files, f => f.Key == "Tasks.md").Value;
+        Assert.StartsWith("# Tasks", tasksFile);
+        Assert.Contains("- [ ] Buy a tent (due " + Now.AddDays(3).ToString("yyyy-MM-dd") + ")", tasksFile);
+        Assert.Contains("Anna", tasksFile);
+        Assert.Contains("- [x] Call the vet", tasksFile);
+        Assert.True(tasksFile.IndexOf("Buy a tent", StringComparison.Ordinal) < tasksFile.IndexOf("Call the vet", StringComparison.Ordinal));
     }
 
     [Fact]
