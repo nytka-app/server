@@ -27,7 +27,7 @@ Each rule has a test in
 ## Make a token
 
 Make a `read` token per client so you can revoke one without touching the rest. The server shows
-the token once and stores a SHA-256 of it ([README](../../README.md#tokens-and-scopes)).
+the token once and stores a SHA-256 of it ([README](../reference/configuration.md#tokens-and-scopes)).
 
 ```bash title="Create a read token"
 curl -X POST https://<address>/api/v1/tokens \
@@ -94,7 +94,7 @@ Three tools write (Plane NYTKA-81) and need an `admin` token: a `read` token's `
 names them, and calling one with a `read` token is JSON-RPC error `-32600` ("Access forbidden: This
 tool requires authorization."), caught by the MCP host's authorization filters
 (`AddAuthorizationFilters` in `McpExtensions.AddNytkaMcp`) before the tool runs, the same
-[`admin`-or-`read` scope check](../../README.md#tokens-and-scopes) REST uses.
+[`admin`-or-`read` scope check](../reference/configuration.md#tokens-and-scopes) REST uses.
 
 | Tool | Input | Notes |
 |---|---|---|
@@ -103,7 +103,7 @@ tool requires authorization."), caught by the MCP host's authorization filters
 | `create_memory` | `text` (1 to 300 characters) | A tool error when a live memory already holds the same fact |
 
 `complete_task`, `create_task` and `create_memory` match their REST counterparts (`PATCH /api/v1/tasks/{id}` for
-completing, `POST /api/v1/memories` for a memory, `POST /api/v1/tasks` for a task; see [Tasks](../../README.md#tasks)). A hand-made task is
+completing, `POST /api/v1/memories` for a memory, `POST /api/v1/tasks` for a task; see [Tasks](../explanation/features.md#tasks)). A hand-made task is
 marked `edited`, so a later summary never removes or rewrites it, and `create_task` raises
 `task.created` only for a `commitment`, matching how a summary's tasks do.
 
@@ -125,7 +125,7 @@ An unknown id is a tool error ("No such conversation."). A malformed id, time, s
 tag is JSON-RPC error `-32602`. `ask` is a tool error when no model is set or it fails.
 
 The REST endpoints behind the tools, and every other route, are in the
-[README API table](../../README.md#api).
+[README API table](../reference/api.md#api).
 
 > [!WARNING]
 > A `read` token reads every transcript. Treat it like the admin token: give each client its own
