@@ -103,7 +103,7 @@ set `NYTKA_BIND` in `.env` to the VPN address, run `docker compose up -d` and us
 
 Stop the official Omi app (two apps cannot hold the pendant). Install `nytka-<version>.apk` from the
 [app's releases](https://github.com/nytka-app/android/releases/latest), then follow
-[Nytka for Android](https://github.com/nytka-app/android#first-run-about-5-minutes): enter the
+[Nytka for Android](https://github.com/nytka-app/android/blob/main/docs/tutorial.md#first-run-about-5-minutes): enter the
 address from step 4 and the token, tap **Test connection**, allow Nearby devices and notifications,
 accept the consent note and tap **Pair pendant**. The token is on your server machine:
 

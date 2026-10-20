@@ -111,7 +111,7 @@ What the server does with late audio:
 The pendant cannot mute itself while the phone is away, so the app drops stored audio from muted
 stretches before it uploads anything: that audio never reaches this server. The firmware it needs
 (3.0.20 or later) and the Pendant storage card are described in
-[Nytka for Android](https://github.com/nytka-app/android#offline-sync).
+[Nytka for Android](https://github.com/nytka-app/android/blob/main/docs/explanation/offline-sync.md).
 
 ## Running the no-loss wear test
 
