@@ -70,6 +70,6 @@ docker compose up -d --build
   each `.` as `__` and each part capitalized (`llm.baseUrl` is `Nytka__Llm__BaseUrl`). A new key or
   option needs its variable in `.env.example` (commented out) and in `docker-compose.yml` (empty
   default), or Compose never passes it on and the app cannot edit it.
-- An endpoint, variable or MCP tool that changes gets its README section changed in the same PR.
+- An endpoint, variable or MCP tool that changes gets its section in `docs/reference/` or `docs/explanation/` changed in the same PR (the README only when what it does changes).
 - Conventional commits; release-please turns them into releases. Every commit uses a GitHub noreply
   address; the `.githooks` hooks and `.private-terms` stay on.

@@ -44,7 +44,7 @@ release-please, so the two do not match ([vision](../../docs/vision.md#roadmap))
 
 > [!NOTE]
 > Nytka records the people around the wearer. You are responsible for following the recording and
-> privacy laws where you use it ([README](../../README.md#license)).
+> privacy laws where you use it ([README](../../LICENSE)).
 
 ## Where to go next
 

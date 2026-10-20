@@ -188,7 +188,7 @@ nothing phones home.
   releases. CI builds a signed APK for the app, and an amd64 and arm64 image,
   `ghcr.io/nytka-app/server`, for the server.
 - **Docs.** This file holds the whole picture; `ROADMAP.md` holds the milestones. `docs/specs/`
-  holds one spec per version. The server README holds setup, configuration, provider recipes and
+  holds one spec per version. The server's `docs/` holds setup, configuration, provider recipes and
   the API; the Android README holds the app's.
 - **Independence.** Based Hardware makes Omi and owns its name; Meta owns Limitless. Nytka is an
   independent project with no affiliation to either.
