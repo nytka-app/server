@@ -15,7 +15,7 @@ public static class NameSpelling
     /// <summary>The whole <paramref name="oldName"/> on word boundaries, ignoring case; null when it does not occur.</summary>
     public static string? Respell(string text, string oldName, string newName)
     {
-        var changed = Pattern(oldName).Replace(text, match => Shape(match.Value, newName));
+        var changed = Pattern(oldName).Replace(text, match => Shape(text, match, oldName, newName));
         return changed == text ? null : changed;
     }
 
@@ -64,8 +64,32 @@ public static class NameSpelling
     private static Regex Pattern(string oldName) =>
         new("(?<![\\p{L}\\p{N}])" + Regex.Escape(oldName) + "(?![\\p{L}\\p{N}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private static string Shape(string matched, string newName) =>
-        matched.Any(char.IsLetter) && matched == matched.ToUpperInvariant() && matched.Count(char.IsLetter) > 1 ? newName.ToUpperInvariant()
-        : matched.Any(char.IsLetter) && matched == matched.ToLowerInvariant() ? newName.ToLowerInvariant()
-        : newName;
+    // A case-insensitive match that is not spelled like oldName is often a common word (renaming
+    // "Will" must leave "will" alone), unless a sentence start capitalised it the way English does.
+    private static string Shape(string text, Match match, string oldName, string newName)
+    {
+        var matched = match.Value;
+        if (matched == oldName)
+        {
+            return newName;
+        }
+        if (matched == Capitalize(oldName) && IsSentenceStart(text, match.Index))
+        {
+            return Capitalize(newName);
+        }
+        return matched;
+    }
+
+    private static string Capitalize(string name) =>
+        name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name[1..];
+
+    private static bool IsSentenceStart(string text, int index)
+    {
+        var i = index;
+        while (i > 0 && char.IsWhiteSpace(text[i - 1]))
+        {
+            i--;
+        }
+        return i == 0 || text[i - 1] is '.' or '!' or '?';
+    }
 }

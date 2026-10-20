@@ -25,9 +25,10 @@ public sealed class NameSpellingTests(PostgresFixture db) : IAsyncLifetime
 
     [Theory]
     [InlineData("Alena called about Alena's bees. Alenas stay.", "Alena", "Olena", "Olena called about Olena's bees. Alenas stay.")]
-    [InlineData("АЛЕНА і алена, Алена", "Алена", "Олена", "ОЛЕНА і олена, Олена")]
+    [InlineData("АЛЕНА і алена, Алена", "Алена", "Олена", "АЛЕНА і алена, Олена")]
     [InlineData("Called Olena.", "Alena", "Olena", null)]
     [InlineData("Anna-Maria", "Anna", "Hanna", "Hanna-Maria")]
+    [InlineData("I will call. Will phoned, will call back.", "Will", "Oleg", "I will call. Oleg phoned, will call back.")]
     public void Respell_matches_whole_names_and_keeps_case_shape(string text, string oldName, string newName, string? expected) =>
         Assert.Equal(expected, NameSpelling.Respell(text, oldName, newName));
 
