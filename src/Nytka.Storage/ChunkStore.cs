@@ -13,9 +13,10 @@ public enum StoreOutcome
 
 /// <summary>
 /// <see cref="ProcessedEndSeq"/> is one past the last frame of the processed chunks (null when none
-/// is left): where the next chunk should start.
+/// is left): where the next chunk should start. <see cref="GaveUpAt"/> is set once
+/// <c>ProcessSessionHandler</c> gave up on a chunk it cannot read; the session is then left alone.
 /// </summary>
-public sealed record SessionState(DateTime? ProcessedThroughAt, DateTime LastReceivedAt, long? ProcessedEndSeq);
+public sealed record SessionState(DateTime? ProcessedThroughAt, DateTime LastReceivedAt, long? ProcessedEndSeq, DateTime? GaveUpAt);
 
 public sealed record PendingChunk(long FirstSeq, int FrameCount, DateTime ReceivedAt, byte[] Body);
 
@@ -105,15 +106,18 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
     /// Like <see cref="SessionsWithPendingAudioAsync"/>, with each session's priority. A session is late
     /// when its newest waiting chunk was (last frame over <see cref="JobPriority.LateAfter"/> old when
     /// it arrived, as <c>ChunkEndpoints</c> judges it), so live audio after a backlog is not held behind it.
+    /// A session <see cref="ChunkStore.MarkGaveUpAsync"/> marked is left out: it would only fail again.
     /// </summary>
     public async Task<IReadOnlyList<PendingSession>> PendingSessionsAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var sessions = await connection.QueryAsync<PendingSession>(new CommandDefinition(
             """
-            select distinct on (session_id) session_id as Id, received_at - last_time > @lateAfter as Late
-            from audio_chunks where body is not null
-            order by session_id, first_seq desc
+            select distinct on (c.session_id) c.session_id as Id, c.received_at - c.last_time > @lateAfter as Late
+            from audio_chunks c
+            join capture_sessions s on s.id = c.session_id
+            where c.body is not null and s.gave_up_at is null
+            order by c.session_id, c.first_seq desc
             """,
             new { lateAfter = JobPriority.LateAfter }, cancellationToken: ct));
         return sessions.ToList();
@@ -127,11 +131,24 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
             select s.processed_through_at as ProcessedThroughAt,
                    s.last_received_at     as LastReceivedAt,
                    (select max(c.first_seq + c.frame_count) from audio_chunks c
-                    where c.session_id = s.id and c.body is null) as ProcessedEndSeq
+                    where c.session_id = s.id and c.body is null) as ProcessedEndSeq,
+                   s.gave_up_at           as GaveUpAt
             from capture_sessions s
             where s.id = @session
             """,
             new { session }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Marks the session so <see cref="PendingSessionsAsync"/> leaves it out: it holds a chunk
+    /// <c>ProcessSessionHandler</c> cannot read, so re-queuing it every tick would only fail again.
+    /// </summary>
+    public async Task MarkGaveUpAsync(Guid session, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update capture_sessions set gave_up_at = @now where id = @session",
+            new { session, now }, cancellationToken: ct));
     }
 
     /// <summary>Chunks that still hold audio, in sequence order.</summary>

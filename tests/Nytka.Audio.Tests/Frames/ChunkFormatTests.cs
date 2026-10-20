@@ -113,4 +113,15 @@ public class ChunkFormatTests
 
         Assert.Throws<ArgumentException>(() => ChunkFormat.Write(broken));
     }
+
+    [Theory]
+    [InlineData(-1L)]
+    [InlineData(ChunkFormat.MaxBaseTimeMs + 1)]
+    public void Refuses_to_write_a_base_time_outside_the_supported_range(long baseTimeMs)
+    {
+        var broken = Golden with { BaseTimeMs = baseTimeMs };
+
+        Assert.Contains("supported range", Assert.Throws<ArgumentException>(
+            () => ChunkFormat.Write(broken)).Message, StringComparison.Ordinal);
+    }
 }

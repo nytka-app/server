@@ -15,8 +15,10 @@ public static class WebhooksExtensions
         services.AddScoped<IJobHandler, DeliverWebhookHandler>();
 
         // No redirects (a redirect could point anywhere), and 10 seconds per request: a slow receiver
-        // delays only the Hooks lane, never the Audio or Ai lanes.
+        // delays only the Hooks lane, never the Audio or Ai lanes. The factory's own request logging would write
+        // the whole address, a secret in its path included, so it is removed, as for the calendar feed's client.
         services.AddHttpClient(ClientName, client => client.Timeout = DeliverWebhookHandler.Timeout)
+            .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
