@@ -4,12 +4,15 @@ using Nytka.Audio.Batching;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Transcription;
+using Nytka.Server.Usage;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
 namespace Nytka.Server.Pipeline;
 
-public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient client, VoiceMatcher voice, IEventPublisher events, IOptions<NytkaOptions> options) : IJobHandler
+public sealed class TranscribeHandler(
+    BatchStore batches, TranscriptionClient client, VoiceMatcher voice, UsageLedger usage, IEventPublisher events, IOptions<NytkaOptions> options)
+    : IJobHandler
 {
     public string Kind => JobKinds.Transcribe;
 
@@ -21,7 +24,9 @@ public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient cl
             return JobOutcome.Done;
         }
 
-        var result = await client.TranscribeAsync(batch.Wav, ct);
+        // Past the month's budget the batch goes to the budget model, and is marked to transcribe again; it is never skipped.
+        var plan = await usage.PlanAsync(ct);
+        var result = await client.TranscribeAsync(batch.Wav, ct, plan.Model);
         var map = OffsetMap.FromJson(batch.OffsetMap);
         var segments = ToSegments(result, map, batch.StartedAt, batch.EndedAt);
 
@@ -34,7 +39,8 @@ public sealed class TranscribeHandler(BatchStore batches, TranscriptionClient cl
 
         await batches.CompleteAsync(batchId, result.RawJson, segments, match?.Batch, options.Value.Audio.RetentionDays == 0, ct,
             (connection, transaction, conversationId, token) =>
-                events.PublishAsync(new NytkaEvent(NytkaEvent.SegmentCreated, conversationId, batchId), connection, transaction, token));
+                events.PublishAsync(new NytkaEvent(NytkaEvent.SegmentCreated, conversationId, batchId), connection, transaction, token),
+            (connection, transaction, conversationId, token) => usage.RecordAsync(connection, transaction, batchId, conversationId, plan, map.TotalMs, result.Text.Length, token));
         return JobOutcome.Done;
     }
 

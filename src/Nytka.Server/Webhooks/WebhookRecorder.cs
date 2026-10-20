@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Dapper;
 using Npgsql;
@@ -19,7 +20,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
 
     /// <summary>The types a webhook can ask for, <c>ping</c> (the test call's own) aside.</summary>
     public static readonly IReadOnlyList<string> Types =
-        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated, NytkaEvent.BriefReady, NytkaEvent.SegmentCreated];
+        [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated, NytkaEvent.BriefReady, NytkaEvent.SegmentCreated,
+         NytkaEvent.UsageBudgetWarning, NytkaEvent.UsageBudgetReached];
 
     /// <summary>Types that only a webhook naming them gets: <c>*</c> does not match them, because a batch every half minute is not what "all" means.</summary>
     public static readonly IReadOnlyList<string> OptIn = [NytkaEvent.SegmentCreated];
@@ -143,6 +145,11 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                 return await BriefAsync(e.SubjectId, connection, transaction, ct);
             case NytkaEvent.SegmentCreated:
                 return await SegmentsAsync(e, connection, transaction, ct);
+            case NytkaEvent.UsageBudgetWarning:
+            case NytkaEvent.UsageBudgetReached:
+                return await UsageStore.GetAlertAsync(connection, transaction, e.SubjectId, ct) is { } alert
+                    ? new BudgetData(alert.Id, DateOnly.FromDateTime(alert.Month).ToString("yyyy-MM", CultureInfo.InvariantCulture), alert.BudgetUsd, alert.SpentUsd, alert.At)
+                    : null;
             case NytkaEvent.DigestReady:
                 return await connection.QuerySingleOrDefaultAsync<DigestData>(new CommandDefinition(
                     "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview from digests where id = @id",
@@ -245,6 +252,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private sealed record SegmentRef(long Id, DateTime StartedAt, DateTime EndedAt);
 
     private sealed record SegmentData(Guid ConversationId, long BatchId, IReadOnlyList<SegmentRef> Segments);
+
+    private sealed record BudgetData(Guid Id, string Month, decimal BudgetUsd, decimal SpentUsd, DateTime At);
 
     private sealed record DigestData(Guid Id, string LocalDate, string Headline, string Overview);
 }
