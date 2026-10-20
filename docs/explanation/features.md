@@ -49,7 +49,8 @@ server asks the model whether any unnamed voice gave its name: it introduced its
 "мене звати Олена"), or someone addressed it by name in the next line or two. A name that is only
 mentioned does not count, and neither does the wearer's own (`Nytka__Memories__UserName`). Each answer
 becomes a **suggestion** with the line that shows the name and a confidence of 0.5 to 1; a model
-answer below 0.5 is dropped. A suggestion changes no label: you accept or reject it.
+answer below 0.5 is dropped. A suggestion waits for you to accept or reject it, unless the model is sure of it
+([auto-applied names](#auto-applied-names)).
 
 - A voice is what the label rule can tell apart: the provider's `speaker_id`, or, for a segment with
   only a `speaker` label, that label within one batch. A segment with neither cannot be named.
@@ -83,6 +84,29 @@ answer below 0.5 is dropped. A suggestion changes no label: you accept or reject
   name, no line that can show a neighbour's name, and is not sent to the model; a `call` line is named as before.
   Voice grouping and the cards skip `media` and `call` lines and wait for a line's guess, and facts and memories
   never read a media line. In `shadow` and `off` nothing here changes (except where your own mark says `media`).
+
+### Auto-applied names
+
+With `Nytka__People__AutoApplyNames` on (the default), a new suggestion whose confidence is at least
+`Nytka__People__AutoApplyConfidence` (default 0.85) is accepted as it is made, a self-introduction and being addressed by
+name alike, and gets the status `auto_applied` instead of `accepted`. It does exactly what accept does. It stays pending
+for you when:
+
+- it is a role alone, or a voice group's;
+- the conversation is unsure: another voice of the same run got the same name, or the voice already has a suggestion of
+  another name that is pending or applied;
+- the name clashes with a person: one known only by a [role](#roles) has it, or, for a person known by role, someone else has
+  it (applying would merge the two, which undo could not split);
+- the voice already belongs to a person of another name, or every segment of a label already has a person.
+
+`GET /api/v1/people/suggestions?status=auto_applied&limit=20` lists them, newest applied first, with `decidedAt` the time it
+was applied. `POST /api/v1/people/suggestions/{id}/undo` (admin) takes one back: the voice it linked and the segments it named
+lose the person, a role tag it added goes, a person known by role gets the role name back, and a person the apply made is
+deleted when nothing else holds them (no voice, segment, voiceprint or note). Auto-apply never merges or renames a named
+person, so nothing was [respelled](../specs/name-spelling.md) and nothing needs respelling back. The suggestion becomes
+`rejected`, so the name is never offered or applied for that voice again; `409` when it is not auto-applied. Accept and
+reject answer `409` for an auto-applied suggestion, as for any that is no longer pending. Only the `suggest-names` job applies
+names; the MCP endpoint is read-only. Suggestions made before this existed stay pending.
 
 ### Roles
 

@@ -19,6 +19,9 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
     /// <summary>Whether name suggestions run: off by default, since they would share the fake model.</summary>
     protected virtual bool NameSuggestions => false;
 
+    /// <summary>Whether a sure suggestion applies itself: off by default, so the tests of suggestions see them pending.</summary>
+    protected virtual bool AutoApplyNames => false;
+
     protected FakeLlm Llm { get; } = new();
 
     protected RecordingSubscriber Events { get; } = new();
@@ -54,6 +57,11 @@ public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
             if (!NameSuggestions)
             {
                 settings["Nytka:People:SuggestNames"] = "false";
+            }
+
+            if (!AutoApplyNames)
+            {
+                settings["Nytka:People:AutoApplyNames"] = "false";
             }
 
             if (!PeopleFacts)

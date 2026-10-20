@@ -10,6 +10,8 @@ public sealed class PeopleSettings : ISettingsGroup
     public const string VoiceMatchingKey = "people.voiceMatching";
     public const string VoiceThresholdKey = "people.voiceThreshold";
     public const string FactsKey = "people.facts";
+    public const string AutoApplyNamesKey = "people.autoApplyNames";
+    public const string AutoApplyConfidenceKey = "people.autoApplyConfidence";
 
     public IReadOnlyList<SettingDefinition> Definitions { get; } =
     [
@@ -17,6 +19,8 @@ public sealed class PeopleSettings : ISettingsGroup
         new(VoiceMatchingKey, SettingType.Bool, "false", SettingValidators.Bool),
         new(VoiceThresholdKey, SettingType.Number, "0.7", SettingValidators.Number(0.5, 0.95)),
         new(FactsKey, SettingType.Bool, "true", SettingValidators.Bool),
+        new(AutoApplyNamesKey, SettingType.Bool, "true", SettingValidators.Bool),
+        new(AutoApplyConfidenceKey, SettingType.Number, "0.85", SettingValidators.Number(0.5, 1)),
     ];
 
     public static bool SuggestNames(SettingsService settings) => settings.Get(SuggestNamesKey) != "false";
@@ -28,4 +32,13 @@ public sealed class PeopleSettings : ISettingsGroup
         (float)double.Parse(settings.Get(VoiceThresholdKey)!, NumberStyles.Float, CultureInfo.InvariantCulture);
 
     public static bool FactsEnabled(SettingsService settings) => settings.Get(FactsKey) != "false";
+
+    /// <summary>
+    /// The confidence at or above which a name suggestion applies itself, a self-introduction and being addressed by name alike
+    /// (docs/specs/people.md, Auto-applied names); null when auto-apply is off.
+    /// </summary>
+    public static float? AutoApplyConfidence(SettingsService settings) =>
+        settings.Get(AutoApplyNamesKey) == "false"
+            ? null
+            : (float)double.Parse(settings.Get(AutoApplyConfidenceKey)!, NumberStyles.Float, CultureInfo.InvariantCulture);
 }

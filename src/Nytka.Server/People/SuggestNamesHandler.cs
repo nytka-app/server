@@ -11,7 +11,8 @@ namespace Nytka.Server.People;
 
 /// <summary>
 /// The <c>suggest-names</c> job (docs/specs/people.md, Layer 1): asks the model for names of a conversation's unnamed voices
-/// and stores the ones that pass the drop rules as pending suggestions. It changes no label. Retries as
+/// and stores the ones that pass the drop rules as pending suggestions; one the model is sure of applies itself
+/// (<see cref="PeopleSettings.AutoApplyConfidence"/>) and can be undone. Retries as
 /// <see cref="ExtractMemoriesHandler"/> does: the runner makes three attempts, and a failed run comes back an hour later,
 /// three rounds at most.
 /// </summary>
@@ -56,7 +57,7 @@ public sealed class SuggestNamesHandler(
             var candidates = covered || brief || targets.Count == 0 ? [] : await AskAsync(input, targets, ct);
             await suggestions.ApplyAsync(
                 conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, NameValidator.Version, time.GetUtcNow(),
-                ct);
+                ct, PeopleSettings.AutoApplyConfidence(settings));
             return JobOutcome.Done;
         }
         catch (Exception error) when (job.Attempts >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using Npgsql;
 
@@ -36,7 +37,7 @@ public sealed record NameCandidate(
 
 public sealed record NameSuggestionRow(
     Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
-    float Confidence, NameEvidence Evidence, int SameName = 1);
+    float Confidence, NameEvidence Evidence, int SameName = 1, DateTime? DecidedAt = null);
 
 public sealed record NameEvidence(long SegmentId, DateTime StartedAt, string Text);
 
@@ -49,6 +50,14 @@ public sealed record PendingName(Guid Id, Guid ConversationId, string Name, stri
 
 public enum SuggestionDecision { Ok, NotFound, NotPending, Skipped }
 
+/// <summary>
+/// What auto-applying a suggestion changed, kept on its row (<c>applied</c>) so undo can put it back: the person it named and
+/// whether the apply made them, the voice it linked, the segments it gave the person, the role tag it added and, for a
+/// <c>person</c> target, the role name the person had before.
+/// </summary>
+public sealed record AppliedName(
+    Guid PersonId, bool CreatedPerson, string? SpeakerId, long[] SegmentIds, string? Tag, string? RenamedFrom);
+
 public enum AcceptByName { Ok, NotFound, Conflict }
 
 /// <summary>What accepting every pending suggestion for one name did: the person, how many were applied and how many could not be.</summary>
@@ -59,13 +68,15 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 {
     public const string Names = "names";
 
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
     private sealed record Header(string? Title, DateTime StartedAt);
 
     private sealed record RunMark(long? Through, int Validator);
 
     private sealed record Row(
         Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
-        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText, int SameName);
+        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText, int SameName, DateTime? DecidedAt);
 
     // A class, not a record: Npgsql reports an int8[] column as System.Array, which a constructor parameter of long[] does not match.
     private sealed class Pending
@@ -187,12 +198,13 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Stores the candidates and records the run as done in one transaction; a name already stored for the target, a rejected
-    /// one included, is skipped. The run records the <paramref name="validator"/> version it applied. Returns the number
-    /// inserted, or null when the conversation is gone.
+    /// one included, is skipped. The run records the <paramref name="validator"/> version it applied. With
+    /// <paramref name="autoApply"/> set, a stored candidate at that confidence or above is applied at once (<see cref="AutoAppliesAsync"/>).
+    /// Returns the number inserted, or null when the conversation is gone.
     /// </summary>
     public async Task<int?> ApplyAsync(
         Guid conversationId, IReadOnlyList<NameCandidate> candidates, long? through, int validator, DateTimeOffset now,
-        CancellationToken ct)
+        CancellationToken ct, float? autoApply = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -204,22 +216,44 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             return null;
         }
 
-        var inserted = 0;
+        var inserted = new List<(Guid Id, NameCandidate Candidate)>();
         foreach (var candidate in candidates)
         {
-            inserted += await connection.ExecuteAsync(new CommandDefinition(
-                """
-                insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, role, named, person_id,
-                                              evidence_segment_id, confidence, created_at)
-                values (@id, @conversationId, @target, @speakerId, @segmentIds, @name, @role, @named, @personId, @evidence, @confidence, @now)
-                on conflict do nothing
-                """,
-                new
+            if (await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                    """
+                    insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, role, named, person_id,
+                                                  evidence_segment_id, confidence, created_at)
+                    values (@id, @conversationId, @target, @speakerId, @segmentIds, @name, @role, @named, @personId, @evidence, @confidence, @now)
+                    on conflict do nothing
+                    returning id
+                    """,
+                    new
+                    {
+                        id = Guid.CreateVersion7(now), conversationId, target = candidate.Target, speakerId = candidate.SpeakerId,
+                        segmentIds = candidate.SegmentIds, name = candidate.Name, role = candidate.Role, named = candidate.Named, personId = candidate.PersonId,
+                        evidence = candidate.EvidenceSegmentId, confidence = candidate.Confidence, now,
+                    }, transaction, cancellationToken: ct)) is { } id)
+            {
+                inserted.Add((id, candidate));
+            }
+        }
+
+        if (autoApply is { } threshold)
+        {
+            foreach (var (id, candidate) in inserted)
+            {
+                if (candidate.Confidence < threshold || !await AutoAppliesAsync(connection, transaction, id, candidate, candidates, ct))
                 {
-                    id = Guid.CreateVersion7(now), conversationId, target = candidate.Target, speakerId = candidate.SpeakerId,
-                    segmentIds = candidate.SegmentIds, name = candidate.Name, role = candidate.Role, named = candidate.Named, personId = candidate.PersonId,
-                    evidence = candidate.EvidenceSegmentId, confidence = candidate.Confidence, now,
-                }, transaction, cancellationToken: ct));
+                    continue;
+                }
+
+                await transaction.SaveAsync("auto", ct);
+                if ((await AcceptAsync(connection, transaction, id, now, skipTaken: true, ct, auto: true)).Result != SuggestionDecision.Ok)
+                {
+                    // It stays pending for the owner, with nothing of the attempt left behind.
+                    await transaction.RollbackAsync("auto", ct);
+                }
+            }
         }
 
         await connection.ExecuteAsync(new CommandDefinition(
@@ -231,7 +265,40 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             """,
             new { conversationId, through, validator, now }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
-        return inserted;
+        return inserted.Count;
+    }
+
+    /// <summary>
+    /// Whether a stored candidate may be applied without the owner (docs/specs/people.md, Auto-applied names). Never a role alone
+    /// or a voice group; never when the conversation is unsure who it is: another candidate of this run has the same name, or the
+    /// target already has a suggestion of another name that is pending or applied. Never when the name clashes with a person: one
+    /// known only by role has it, or, for a <c>person</c> target, someone else has it (applying would merge them). A voice that
+    /// already belongs to someone else or segments that all have a person are skipped by the accept itself.
+    /// </summary>
+    private static async Task<bool> AutoAppliesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, NameCandidate candidate, IReadOnlyList<NameCandidate> run,
+        CancellationToken ct)
+    {
+        if (!candidate.Named || candidate.Target is not ("speaker" or "label" or "person")
+            || run.Count(c => c.Named && string.Equals(c.Name, candidate.Name, StringComparison.OrdinalIgnoreCase)) > 1)
+        {
+            return false;
+        }
+
+        return !await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            """
+            select exists (
+                select 1 from name_suggestions n, name_suggestions o
+                where n.id = @id and o.id <> n.id and o.target = n.target and o.status in ('pending', 'accepted', 'auto_applied')
+                  and lower(o.name) <> lower(n.name)
+                  and coalesce(o.speaker_id, case when o.target = 'person' then o.person_id::text end, o.segment_ids[1]::text)
+                      = coalesce(n.speaker_id, case when n.target = 'person' then n.person_id::text end, n.segment_ids[1]::text))
+            or exists (
+                select 1 from people p, name_suggestions n
+                where n.id = @id and lower(p.name) = lower(n.name)
+                  and (not p.named or n.target = 'person' and p.id is distinct from n.person_id))
+            """,
+            new { id }, transaction, cancellationToken: ct));
     }
 
     /// <summary>Records a run that failed its attempts and returns the failure count; null when the conversation is gone.</summary>
@@ -249,7 +316,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             new { conversationId, message, now }, cancellationToken: ct));
     }
 
-    /// <summary>Suggestions with the given status, newest first, at most <paramref name="limit"/>.</summary>
+    /// <summary>Suggestions with the given status, newest decided (else made) first, at most <paramref name="limit"/>.</summary>
     public async Task<IReadOnlyList<NameSuggestionRow>> ListAsync(string status, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -258,17 +325,18 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             select n.id as Id, n.conversation_id as ConversationId, n.target as Target, n.speaker_id as SpeakerId,
                    n.group_id as GroupId, n.name as Name, n.role as Role, n.named as Named, n.person_id as PersonId, n.confidence as Confidence,
                    e.id as EvidenceSegmentId, e.started_at as EvidenceStartedAt, e.text as EvidenceText,
-                   (select count(*)::int from name_suggestions p where p.status = 'pending' and lower(p.name) = lower(n.name)) as SameName
+                   (select count(*)::int from name_suggestions p where p.status = 'pending' and lower(p.name) = lower(n.name)) as SameName,
+                   n.decided_at as DecidedAt
             from name_suggestions n
             join segments e on e.id = n.evidence_segment_id
             where n.status = @status
-            order by n.created_at desc, n.id desc
+            order by coalesce(n.decided_at, n.created_at) desc, n.id desc
             limit @limit
             """,
             new { status, limit }, cancellationToken: ct));
         return rows.Select(r => new NameSuggestionRow(
             r.Id, r.ConversationId, r.Target, r.SpeakerId, r.GroupId, r.Name, r.Role, r.Named, r.PersonId, r.Confidence,
-            new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText), r.SameName)).ToList();
+            new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText), r.SameName, r.DecidedAt)).ToList();
     }
 
     /// <summary>
@@ -351,12 +419,14 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>
-    /// The body of both accepts, inside the caller's transaction, which the caller commits on <see cref="SuggestionDecision.Ok"/>.
-    /// With <paramref name="skipTaken"/> a suggestion that would change nothing, or take a voice from another person, is
-    /// <see cref="SuggestionDecision.Skipped"/>.
+    /// The body of both accepts and of auto-apply, inside the caller's transaction, which the caller commits on
+    /// <see cref="SuggestionDecision.Ok"/>. With <paramref name="skipTaken"/> a suggestion that would change nothing, or take a
+    /// voice from another person, is <see cref="SuggestionDecision.Skipped"/>. With <paramref name="auto"/> the row becomes
+    /// <c>auto_applied</c> and records what changed (<see cref="AppliedName"/>); a merge is skipped, since undo could not split it.
     /// </summary>
     private static async Task<(SuggestionDecision Result, Guid? PersonId)> AcceptAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, DateTimeOffset now, bool skipTaken, CancellationToken ct)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, DateTimeOffset now, bool skipTaken, CancellationToken ct,
+        bool auto = false)
     {
         var row = await connection.QuerySingleOrDefaultAsync<Pending>(new CommandDefinition(
             """
@@ -376,6 +446,10 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         }
 
         Guid person;
+        var created = row.Named && !await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "select exists (select 1 from people where lower(name) = lower(@name))", new { row.Name }, transaction, cancellationToken: ct));
+        string? linked = null, renamedFrom = null, tag = null;
+        long[] labelled = [];
         if (row.Target == "person")
         {
             if (row.PersonId is not { } known)
@@ -387,14 +461,22 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
                 "select id from people where lower(name) = lower(@name) and id <> @known", new { row.Name, known }, transaction, cancellationToken: ct));
             if (existing is { } target)
             {
+                if (auto)
+                {
+                    return (SuggestionDecision.Skipped, null);
+                }
+
                 // The suggestion goes with the merged person (cascade), so there is no status to set.
                 await PeopleStore.MergeAsync(connection, transaction, known, target, ct);
                 return (SuggestionDecision.Ok, target);
             }
 
+            renamedFrom = await connection.ExecuteScalarAsync<string>(new CommandDefinition(
+                "select name from people where id = @known", new { known }, transaction, cancellationToken: ct));
             await connection.ExecuteAsync(new CommandDefinition(
                 "update people set name = @name, named = true where id = @known", new { row.Name, known }, transaction, cancellationToken: ct));
             person = known;
+            created = false;
         }
         else if (row.Target == "speaker")
         {
@@ -406,6 +488,13 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             }
 
             person = await PersonAsync(connection, transaction, row, now, ct);
+            if (!await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "select exists (select 1 from person_voices where speaker_id = @speakerId and person_id = @person)",
+                    new { row.SpeakerId, person }, transaction, cancellationToken: ct)))
+            {
+                linked = row.SpeakerId;
+            }
+
             await PeopleStore.LinkVoiceAsync(connection, transaction, person, row.SpeakerId!, now, ct);
         }
         else if (row.Target == "label")
@@ -418,9 +507,9 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             }
 
             person = await PersonAsync(connection, transaction, row, now, ct);
-            await connection.ExecuteAsync(new CommandDefinition(
-                "update segments set person_id = @person where id = any(@segmentIds) and person_id is null",
-                new { person, segmentIds = row.SegmentIds }, transaction, cancellationToken: ct));
+            labelled = [.. await connection.QueryAsync<long>(new CommandDefinition(
+                "update segments set person_id = @person where id = any(@segmentIds) and person_id is null returning id",
+                new { person, segmentIds = row.SegmentIds }, transaction, cancellationToken: ct))];
         }
         else if (row.GroupId is { } groupId)
         {
@@ -441,12 +530,16 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         if (row.Role is not null)
         {
             // A person who already holds 20 tags keeps them; the role is not worth refusing the name for.
-            await TagStore.AddToPersonAsync(connection, transaction, person, row.Role, now, ct);
+            if (await TagStore.AddToPersonAsync(connection, transaction, person, row.Role, now, ct) == TagAdd.Added)
+            {
+                tag = row.Role;
+            }
         }
 
+        var applied = auto ? JsonSerializer.Serialize(new AppliedName(person, created, linked, labelled, tag, renamedFrom), Json) : null;
         await connection.ExecuteAsync(new CommandDefinition(
-            "update name_suggestions set status = 'accepted', decided_at = @now where id = @id",
-            new { id, now }, transaction, cancellationToken: ct));
+            "update name_suggestions set status = @status, decided_at = @now, applied = @applied::jsonb where id = @id",
+            new { id, now, status = auto ? "auto_applied" : "accepted", applied }, transaction, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(
             """
             delete from name_suggestions
@@ -484,6 +577,78 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             "delete from name_suggestions where status = 'pending' and id = any(@ids)", new { ids = ids.ToArray() }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Undoes an auto-applied suggestion in one transaction (docs/specs/people.md, Auto-applied names): the voice it linked and
+    /// the segments it named lose the person, the role tag it added goes, a <c>person</c> target gets back its role name (unless
+    /// someone has taken that name since), and a person the apply made goes when nothing else holds them: no voice, segment,
+    /// voiceprint or note. Auto-apply never merges, so no name was respelled and there is none to put back. The suggestion becomes
+    /// <c>rejected</c>, so it is never offered or applied again for that voice. <see cref="SuggestionDecision.NotPending"/> when it is not auto-applied.
+    /// </summary>
+    public async Task<SuggestionDecision> UndoAsync(Guid id, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var row = await connection.QuerySingleOrDefaultAsync<(string Status, string? Applied)>(new CommandDefinition(
+            "select status, applied::text from name_suggestions where id = @id for update", new { id }, transaction, cancellationToken: ct));
+        if (row.Status is null)
+        {
+            return SuggestionDecision.NotFound;
+        }
+
+        if (row.Status != "auto_applied" || row.Applied is null)
+        {
+            return SuggestionDecision.NotPending;
+        }
+
+        var applied = JsonSerializer.Deserialize<AppliedName>(row.Applied, Json)!;
+        var person = applied.PersonId;
+        if (applied.SpeakerId is { } speakerId)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "delete from person_voices where speaker_id = @speakerId and person_id = @person",
+                new { speakerId, person }, transaction, cancellationToken: ct));
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update segments set person_id = null where id = any(@ids) and person_id = @person",
+            new { ids = applied.SegmentIds, person }, transaction, cancellationToken: ct));
+        if (applied.Tag is { } tag)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "delete from person_tags where person_id = @person and tag_id = (select id from tags where name = @tag)",
+                new { person, tag }, transaction, cancellationToken: ct));
+        }
+
+        if (applied.RenamedFrom is { } old)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                update people set name = @old, named = false
+                where id = @person and not exists (select 1 from people o where lower(o.name) = lower(@old) and o.id <> @person)
+                """,
+                new { old, person }, transaction, cancellationToken: ct));
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update name_suggestions set status = 'rejected', decided_at = @now, applied = null where id = @id",
+            new { id, now }, transaction, cancellationToken: ct));
+        if (applied.CreatedPerson)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                delete from people p
+                where p.id = @person and p.note is null
+                  and not exists (select 1 from person_voices v where v.person_id = p.id)
+                  and not exists (select 1 from segments s where s.person_id = p.id)
+                  and not exists (select 1 from person_voiceprints v where v.person_id = p.id)
+                """,
+                new { person }, transaction, cancellationToken: ct));
+        }
+
+        await transaction.CommitAsync(ct);
+        return SuggestionDecision.Ok;
     }
 
     public async Task<SuggestionDecision> RejectAsync(Guid id, DateTimeOffset now, CancellationToken ct)
