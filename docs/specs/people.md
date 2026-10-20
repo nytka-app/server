@@ -284,7 +284,9 @@ and their briefs are deleted a day after they end.
 pending voice matches, and low-confidence wearer labels (segments of the last 14 days whose
 `voice_similarity` is within 0.05 of `voice.userThreshold` and that carry no manual mark, at most
 20). Accepting a label stores Nytka's verdict as the wearer's mark; rejecting stores the opposite
-(`VoiceStore.MarkAsync`), so neither needs a new table.
+(`VoiceStore.MarkAsync`), so neither needs a new table. Each item carries `context` (3 lines either side of its evidence
+segments) and `clip` (`GET /api/v1/review/{kind}/{id}/clip`: the evidence ± 3 s, at most 20 s, cut as a card's clip is;
+null and `404` once retention deleted the audio); see docs/explanation/features.md, Review.
 
 ## What it stores
 
@@ -359,6 +361,7 @@ UNKNOWN until the evaluation runs.
 | `GET /api/v1/search` | read | `kinds` gains `person`; a hit's `id` is the person, `snippet` the matching name or fact |
 | `GET /api/v1/briefs/upcoming?minutes=` | read | `minutes` 1 to 1440, default 60. `{ items: [{ uid, title, startsAt, endsAt, attendees: [{ name, personId }], brief: { id, text, createdAt } \| null }] }` |
 | `GET /api/v1/review?limit=` | read | `{ items: [{ kind: name\|voice\|label, id, conversationId, conversationTitle, at, text, proposal: { name, personId, confidence, similarity, isUser } }] }`, newest first, `limit` default 50 |
+| `GET /api/v1/review/{kind}/{id}/clip` | read | Ogg Opus of the item's evidence ± 3 s, at most 20 s; 404 when gone |
 | `POST /api/v1/review/{kind}/{id}/accept`, `/reject` | admin | as the routes above for `name` and `voice`; for `label`, stores the wearer's mark |
 
 **MCP.** `list_people` (`{ items: [{ id, name, lastSeenAt, facts }] }`) and `get_person` (`id` or

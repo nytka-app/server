@@ -34,6 +34,7 @@ public static class InfoEndpoints
     /// "waiting-on": a task may have the kind <c>waiting_on</c> (what another person promised the wearer), <c>kind=waiting_on</c> lists them and the person page has <c>waitingOn</c> (docs/specs/task-kinds.md, Waiting on).
     /// "ledger": <c>GET /api/v1/people/{id}/ledger</c> and the MCP tool <c>get_ledger</c> exist (docs/specs/promise-ledger.md).
     /// "calendar-feed": <c>GET /api/v1/calendar.ics</c> exists (NYTKA-78), with or without a calendar feed.
+    /// "review-clips": review items carry <c>clip</c> and <c>context</c>, and <c>GET /api/v1/review/{kind}/{id}/clip</c> exists.
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -53,6 +54,7 @@ public static class InfoEndpoints
         features.Add("task-create");
         features.Add("ledger");
         features.Add("calendar-feed");
+        features.Add("review-clips");
 
         return features;
     }

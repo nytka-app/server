@@ -17,9 +17,26 @@ public sealed record ReviewProposal(
 /// <summary>One line of a <c>speech</c> item's stretch.</summary>
 public sealed record ReviewLine(long SegmentId, DateTime StartedAt, string Text);
 
-/// <summary>One thing waiting for the owner's answer. <paramref name="Id"/> is a guid, or a segment id for a <c>label</c>.</summary>
+/// <summary>
+/// One thing waiting for the owner's answer. <paramref name="Id"/> is a guid, or a segment id for a <c>label</c> and a
+/// <c>speech</c> item. <paramref name="Clip"/> is the audio of its evidence, null when it has none or the audio is gone;
+/// <paramref name="Context"/> the lines around the evidence, empty for an item with none.
+/// </summary>
 public sealed record ReviewItem(
-    string Kind, string Id, Guid ConversationId, string? ConversationTitle, DateTime At, string Text, ReviewProposal Proposal);
+    string Kind, string Id, Guid ConversationId, string? ConversationTitle, DateTime At, string Text, ReviewProposal Proposal,
+    ReviewClip? Clip = null, IReadOnlyList<ReviewContextLine>? Context = null);
+
+/// <summary>
+/// Where an item's clip is (<c>GET /api/v1/review/{kind}/{id}/clip</c>) and the capture times it covers, as Unix milliseconds:
+/// the evidence and <see cref="ReviewStore.ClipPad"/> either side, at most <see cref="ReviewStore.MaxClip"/>.
+/// </summary>
+public sealed record ReviewClip(string Url, long StartMs, long EndMs);
+
+/// <summary>
+/// A line around an item's evidence: <see cref="Speaker"/> is the provider's label as a conversation shows it,
+/// <see cref="PersonName"/> the person it belongs to by the label rule, <see cref="Evidence"/> true for the evidence itself.
+/// </summary>
+public sealed record ReviewContextLine(long SegmentId, string? Speaker, string? PersonName, bool IsUser, string Text, DateTime StartedAt, bool Evidence);
 
 /// <summary>
 /// The review inbox (docs/specs/people.md, Review inbox): pending name suggestions, pending voice matches and low-confidence
@@ -46,6 +63,30 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
 
     /// <summary>How close to the threshold a similarity must be to count as low confidence.</summary>
     public const double LabelMargin = 0.05;
+
+    /// <summary>The lines of context shown before and after an item's evidence.</summary>
+    public const int ContextLines = 3;
+
+    /// <summary>The audio a clip adds either side of the evidence, and the most a clip holds.</summary>
+    public static readonly TimeSpan ClipPad = TimeSpan.FromSeconds(3);
+
+    public static readonly TimeSpan MaxClip = TimeSpan.FromSeconds(20);
+
+    /// <summary>The capture times a clip covers for evidence from <paramref name="first"/> to <paramref name="last"/>.</summary>
+    public static (DateTime From, DateTime Until) ClipWindow(DateTime first, DateTime last)
+    {
+        var from = first - ClipPad;
+        var until = last + ClipPad;
+        return (from, until - from > MaxClip ? from + MaxClip : until);
+    }
+
+    public static ReviewClip Clip(string kind, string id, DateTime from, DateTime until) => new(
+        $"/api/v1/review/{kind}/{id}/clip",
+        new DateTimeOffset(from, TimeSpan.Zero).ToUnixTimeMilliseconds(), new DateTimeOffset(until, TimeSpan.Zero).ToUnixTimeMilliseconds());
+
+    /// <summary>SQL for whether a conversation <c>@conversationId</c> still has speech audio between <c>@from</c> and <c>@until</c>.</summary>
+    private const string HasAudio =
+        "exists (select 1 from speech_audio a where a.conversation_id = @conversationId and a.started_at < @until and a.ended_at > @from)";
 
     private sealed record Row(
         string Id, Guid ConversationId, string? Title, DateTime At, string Text, string? Name, Guid? PersonId, float? Confidence,
@@ -132,7 +173,117 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
             new { limit }, cancellationToken: ct))).Select(r => new ReviewItem(
                 TagKind, r.Id, r.ConversationId, r.Title, r.At, r.Text, new ReviewProposal(null, r.PersonId, null, null, null, r.Tag))));
         items.AddRange(await SpeechItemsAsync(connection, now, zone ?? TimeZoneInfo.Utc, ct));
-        return items.OrderByDescending(i => i.At).ThenBy(i => i.Id, StringComparer.Ordinal).Take(limit).ToList();
+        var listed = new List<ReviewItem>();
+        foreach (var item in items.OrderByDescending(i => i.At).ThenBy(i => i.Id, StringComparer.Ordinal).Take(limit))
+        {
+            listed.Add(await WithEvidenceAsync(connection, item, ct));
+        }
+
+        return listed;
+    }
+
+    private sealed record ContextRow(long SegmentId, string? Speaker, string? PersonName, bool IsUser, string Text, DateTime StartedAt, DateTime EndedAt, bool Evidence);
+
+    /// <summary>The item with its clip and context, worked out from its evidence segments; a <c>tag</c> has none.</summary>
+    private static async Task<ReviewItem> WithEvidenceAsync(NpgsqlConnection connection, ReviewItem item, CancellationToken ct)
+    {
+        var ids = item.Kind == SpeechKind
+            ? [.. item.Proposal.Lines!.Select(l => l.SegmentId)]
+            : await EvidenceIdsAsync(connection, item.Kind, item.Id, ct);
+        if (ids.Length == 0)
+        {
+            return item with { Context = [] };
+        }
+
+        var lines = await ContextAsync(connection, item.ConversationId, ids, ct);
+        var evidence = lines.Where(l => l.Evidence).ToList();
+        if (evidence.Count == 0)
+        {
+            return item with { Context = [] };
+        }
+
+        var (from, until) = ClipWindow(evidence[0].StartedAt, evidence.Max(l => l.EndedAt));
+        var audio = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            $"select {HasAudio}", new { conversationId = item.ConversationId, from, until }, cancellationToken: ct));
+        return item with
+        {
+            Clip = audio ? Clip(item.Kind, item.Id, from, until) : null,
+            Context = [.. lines.Select(l => new ReviewContextLine(l.SegmentId, l.Speaker, l.PersonName, l.IsUser, l.Text, l.StartedAt, l.Evidence))],
+        };
+    }
+
+    /// <summary>
+    /// The segments an item rests on: a name suggestion's evidence line, the first line of a voice match, a label's segment and
+    /// every line of a speech stretch. Empty for a <c>tag</c> or an item that is gone.
+    /// </summary>
+    private static async Task<long[]> EvidenceIdsAsync(NpgsqlConnection connection, string kind, string id, CancellationToken ct)
+    {
+        var sql = kind switch
+        {
+            NameKind when Guid.TryParse(id, out _) => "select evidence_segment_id from name_suggestions where id = @id::uuid",
+            VoiceKind when Guid.TryParse(id, out _) =>
+                "select s.id from voice_matches m join segments s on s.id = any(m.segment_ids) where m.id = @id::uuid order by s.started_at, s.id limit 1",
+            LabelKind when long.TryParse(id, out _) => "select id from segments where id = @id::bigint",
+            _ => null,
+        };
+        return sql is null ? [] : [.. await connection.QueryAsync<long>(new CommandDefinition(sql, new { id }, cancellationToken: ct))];
+    }
+
+    /// <summary>The evidence segments <paramref name="ids"/> with up to <see cref="ContextLines"/> lines of the conversation either side, in order.</summary>
+    private static async Task<List<ContextRow>> ContextAsync(NpgsqlConnection connection, Guid conversationId, long[] ids, CancellationToken ct)
+    {
+        const string columns =
+            $"""
+            s.id as SegmentId, s.speaker as Speaker, {SpeakerLabel.PersonName} as PersonName, coalesce({SpeakerLabel.IsUser}, false) as IsUser,
+            s.text as Text, s.started_at as StartedAt, s.ended_at as EndedAt, s.id = any(@ids) as Evidence
+            """;
+        return [.. await connection.QueryAsync<ContextRow>(new CommandDefinition(
+            $"""
+            with evidence as (
+                select min(s.started_at) as first_at, min(s.id) as first_id, max(s.started_at) as last_at, max(s.id) as last_id
+                from segments s where s.id = any(@ids) and s.conversation_id = @conversationId)
+            select * from (
+                (select {columns} from segments s {SpeakerLabel.Joins}, evidence e
+                 where s.conversation_id = @conversationId and not s.id = any(@ids) and (s.started_at, s.id) < (e.first_at, e.first_id)
+                 order by s.started_at desc, s.id desc limit @take)
+                union all
+                (select {columns} from segments s {SpeakerLabel.Joins} where s.conversation_id = @conversationId and s.id = any(@ids))
+                union all
+                (select {columns} from segments s {SpeakerLabel.Joins}, evidence e
+                 where s.conversation_id = @conversationId and not s.id = any(@ids) and (s.started_at, s.id) > (e.last_at, e.last_id)
+                 order by s.started_at, s.id limit @take)) t
+            order by StartedAt, SegmentId
+            """,
+            new { conversationId, ids, take = ContextLines }, cancellationToken: ct))];
+    }
+
+    /// <summary>
+    /// The conversation and capture times of an item's clip (<see cref="ClipWindow"/>), or null when the item has no evidence or
+    /// is gone. A name suggestion has one whatever its status, so an auto-applied name can be heard too.
+    /// </summary>
+    public async Task<(Guid ConversationId, DateTime From, DateTime Until)?> ClipAsync(string kind, string id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        long[] ids;
+        if (kind == SpeechKind)
+        {
+            ids = long.TryParse(id, out var segment) ? (await SpeechStretchAsync(segment, ct)).SegmentIds : [];
+        }
+        else
+        {
+            ids = await EvidenceIdsAsync(connection, kind, id, ct);
+        }
+
+        var span = await connection.QuerySingleOrDefaultAsync<(Guid? ConversationId, DateTime? First, DateTime? Last)>(new CommandDefinition(
+            "select min(conversation_id::text)::uuid, min(started_at), max(ended_at) from segments where id = any(@ids)",
+            new { ids }, cancellationToken: ct));
+        if (span.ConversationId is not { } conversation)
+        {
+            return null;
+        }
+
+        var (from, until) = ClipWindow(span.First!.Value, span.Last!.Value);
+        return (conversation, from, until);
     }
 
     private sealed record StretchRow(

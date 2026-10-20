@@ -21,6 +21,7 @@ public static class ReviewEndpoints
     {
         var review = api.MapGroup("/review");
         review.MapGet("", ListAsync).AllowRead();
+        review.MapGet("/{kind}/{id}/clip", ClipAsync).AllowRead();
         review.MapPost("/{kind}/{id}/accept", AcceptAsync);
         review.MapPost("/{kind}/{id}/reject", RejectAsync);
         return api;
@@ -37,6 +38,26 @@ public static class ReviewEndpoints
         Results.Ok(new ReviewList(await review.ListAsync(
             Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit), PeopleSettings.VoiceMatching(settings), VoiceSettings.UserThreshold(settings),
             time.GetUtcNow(), ct, UserTimeZone.Resolve(settings))));
+
+    /// <summary>
+    /// The audio of an item's evidence as <c>audio/ogg</c>: the evidence and 3 s either side, at most 20 s, cut by capture time
+    /// as a card's clip is. A <c>name</c> item has one whatever the suggestion's status. 404 for an unknown kind or item, a
+    /// <c>tag</c>, or audio that retention has deleted (<c>audio.retentionDays</c>).
+    /// </summary>
+    private static async Task<IResult> ClipAsync(string kind, string id, ReviewStore review, BatchStore batches, CancellationToken ct)
+    {
+        if (await review.ClipAsync(kind, id, ct) is not { } window)
+        {
+            return NotFound();
+        }
+
+        var bodies = await batches.SpeechAudioBodiesAsync(
+            window.ConversationId, new DateTimeOffset(window.From, TimeSpan.Zero), new DateTimeOffset(window.Until, TimeSpan.Zero), ct);
+        var serial = Guid.TryParse(id, out var guid) ? BitConverter.ToUInt32(guid.ToByteArray(), 12) : (uint)long.Parse(id, System.Globalization.CultureInfo.InvariantCulture);
+        return CardClip.Cut(bodies, window.From, window.Until, serial, (int)ReviewStore.MaxClip.TotalMilliseconds) is { } clip
+            ? Results.File(clip, AudioEndpoints.OggMediaType, enableRangeProcessing: true)
+            : Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "The item's audio is gone.");
+    }
 
     /// <summary>
     /// <c>name</c> and <c>voice</c> as <c>POST /people/suggestions/{id}/accept</c> and a card's answer do: 200 with the person.
