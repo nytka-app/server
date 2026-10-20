@@ -23,6 +23,14 @@ public static class AudioImportBuilder
     /// <summary>The longest file accepted, decoded: a WAV at the 100 MB body limit is 52 minutes, so this only bites on compressed audio.</summary>
     public const int MaxSamples = Timeline.SampleRate * 60 * 60;
 
+    /// <summary>
+    /// Bounds how many packets <see cref="OggOpusReader.ReadPackets"/> collects before the 1-hour cap below is
+    /// even checked: no packet decodes to fewer samples than <see cref="OpusPacketDecoder.MinSamplesPerPacket"/>,
+    /// so a stream over this many packets could never fit in the cap, and reading it out of a huge file of tiny
+    /// packets would only waste memory.
+    /// </summary>
+    private const int MaxPackets = MaxSamples / OpusPacketDecoder.MinSamplesPerPacket + 1;
+
     private const int RecordHeaderSize = 6; // offsetMs (u32) + length (u16) before each frame; ChunkFormat's own, private there.
 
     private static readonly string[] WavMediaTypes = [WavMediaType, "audio/wave", "audio/x-wav"];
@@ -52,9 +60,19 @@ public static class AudioImportBuilder
                 : audio.Samples;
         }
 
+        IReadOnlyList<byte[]> packets;
+        try
+        {
+            packets = OggOpusReader.ReadPackets(body, MaxPackets);
+        }
+        catch (OggOpusPacketLimitException)
+        {
+            throw new AudioImportException("The audio is longer than 1 hour.");
+        }
+
         var decoder = new OpusPacketDecoder();
         var samples = new List<short>();
-        foreach (var packet in OggOpusReader.ReadPackets(body))
+        foreach (var packet in packets)
         {
             samples.AddRange(decoder.Decode(packet));
             if (samples.Count > MaxSamples)

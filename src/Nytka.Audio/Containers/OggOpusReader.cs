@@ -3,7 +3,12 @@ using System.Buffers.Binary;
 namespace Nytka.Audio.Containers;
 
 /// <summary>The body is not a readable Ogg Opus file. The message is fixed: it never carries anything from the file.</summary>
-public sealed class OggOpusException(string message) : Exception(message);
+public class OggOpusException(string message) : Exception(message);
+
+/// <summary>The stream held more packets than the caller's <c>maxPackets</c> allows. Thrown as soon as the bound is
+/// passed, before any later page is read, so a file built of many tiny packets cannot force the whole stream to be
+/// read into memory first.</summary>
+public sealed class OggOpusPacketLimitException() : OggOpusException("The Opus stream holds too many packets.");
 
 /// <summary>
 /// Reads an Ogg Opus file (RFC 7845, RFC 3533) back into its Opus packets: the reverse of
@@ -15,7 +20,12 @@ public static class OggOpusReader
     private const int HeaderSize = 27;
     private const byte BeginOfStream = 0x02;
 
-    public static IReadOnlyList<byte[]> ReadPackets(ReadOnlySpan<byte> data)
+    /// <summary>
+    /// Reads every packet of the file's first Opus logical stream. <paramref name="maxPackets"/> bounds how many
+    /// packets are collected: once passed, reading stops at once and <see cref="OggOpusPacketLimitException"/> is
+    /// thrown, rather than reading the rest of a (possibly huge) file of tiny packets first.
+    /// </summary>
+    public static IReadOnlyList<byte[]> ReadPackets(ReadOnlySpan<byte> data, int maxPackets = int.MaxValue)
     {
         uint? serial = null;
         var tagsSeen = false;
@@ -62,6 +72,10 @@ public static class OggOpusReader
                 if (tagsSeen)
                 {
                     packets.Add(current.ToArray());
+                    if (packets.Count > maxPackets)
+                    {
+                        throw new OggOpusPacketLimitException();
+                    }
                 }
 
                 tagsSeen = true; // the stream's first packet here is OpusTags, which is not audio
