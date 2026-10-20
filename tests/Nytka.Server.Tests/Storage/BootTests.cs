@@ -41,7 +41,7 @@ public sealed class BootTests(PostgresFixture db)
         var result = DeployChanges.To
             .PostgresqlDatabase(connectionString)
             .WithScriptsEmbeddedInAssembly(
-                typeof(DatabaseMigrator).Assembly,
+                NytkaMigrations.Scripts,
                 name => name.StartsWith(ScriptPrefix, StringComparison.Ordinal)
                     && string.CompareOrdinal(name, ScriptPrefix + lastScript) <= 0)
             .WithTransactionPerScript()

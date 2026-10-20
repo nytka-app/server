@@ -17,7 +17,7 @@ public sealed class SearchFallbackTests
         await container.StartAsync();
         // No pooling: a pooled session that already read the dictionary would still have it after the files go.
         var connectionString = new NpgsqlConnectionStringBuilder(container.GetConnectionString()) { Pooling = false }.ConnectionString;
-        new DatabaseMigrator(connectionString, NullLogger<DatabaseMigrator>.Instance).Run();
+        NytkaMigrations.Run(connectionString, NullLogger.Instance);
         await using var data = NpgsqlDataSource.Create(connectionString);
         using var search = SearchSeed.StoreFor(connectionString);
 
