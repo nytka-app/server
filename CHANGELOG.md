@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/nytka-app/server/compare/v0.27.0...v0.28.0) (2026-10-20)
+
+
+### Miscellaneous Chores
+
+* release 0.28.0 ([#156](https://github.com/nytka-app/server/issues/156)) ([26464ea](https://github.com/nytka-app/server/commit/26464eac09902227b83d35ef8d15a8eebef57839))
+
 ## [0.27.0](https://github.com/nytka-app/server/compare/v0.26.0...v0.27.0) (2026-10-20)
 
 
