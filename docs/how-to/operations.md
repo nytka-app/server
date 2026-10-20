@@ -9,8 +9,8 @@ transcripts and your webhook secrets.
 
 - Silence is dropped as soon as a chunk is processed. Speech audio (Opus, about 18 MB per hour of
   speech) stays for `RetentionDays`. With `RetentionDays=0` it goes as soon as its transcript
-  exists; audio whose transcription failed stays, so you can see what failed, until you delete its
-  conversation.
+  exists; audio whose transcription failed stays, to be [tried again](../reference/configuration.md#transcription-endpoints) and so
+  you can see what failed, until you delete its conversation.
 - Transcripts, titles, summaries, tasks and memories stay until you delete them. Deleting a
   conversation deletes its audio, transcript, tasks and memories.
 - Daily digests stay until you delete their rows; they hold model-written text about your day, so a dump holds them too.

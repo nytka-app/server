@@ -27,6 +27,7 @@ public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
     public static TheoryData<string, string> AdminOnly => new()
     {
         { "GET", "/api/v1/status" },
+        { "POST", "/api/v1/transcriptions/retry" },
         { "POST", "/api/v1/chunks" },
         { "POST", "/api/v1/people/backfill" },
         { "GET", "/api/v1/diagnostics" },

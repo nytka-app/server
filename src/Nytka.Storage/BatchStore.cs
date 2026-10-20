@@ -142,6 +142,29 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             new { id, error }, cancellationToken: ct));
     }
 
+    /// <summary>
+    /// Sets failed batches that still hold their WAV back to pending, inside the caller's transaction, and returns their ids. Without <paramref name="force"/> only those under <paramref name="maxRetries"/>
+    /// rounds whose wait is over: <paramref name="retryAfter"/>, doubled for every earlier round, since the batch failed; each
+    /// of them counts one more round. A forced call takes every one and starts the count over. Compares with the database clock, as
+    /// <see cref="FailAsync"/> writes <c>finished_at</c> by it.
+    /// </summary>
+    public async Task<IReadOnlyList<long>> ReopenFailedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, bool force, int maxRetries, TimeSpan retryAfter, CancellationToken ct)
+    {
+        var rows = await connection.QueryAsync<long>(new CommandDefinition(
+            """
+            update transcription_batches
+            set status = 'pending', error = null, finished_at = null,
+                retries = case when @force then 0 else retries + 1 end
+            where status = 'failed' and wav is not null
+              and (@force or (retries < @maxRetries
+                              and coalesce(finished_at, created_at) <= now() - @retryAfter * (1 << retries)))
+            returning id
+            """,
+            new { force, maxRetries, retryAfter }, transaction, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     public async Task<IReadOnlyList<BatchRow>> ListForConversationAsync(Guid conversationId, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);

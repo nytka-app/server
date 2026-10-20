@@ -166,6 +166,14 @@ then the provider's `speaker`; your own lines show as `Wearer` before any of the
 returns their lines to the next step. `PATCH /api/v1/people/{id}` also keeps your own note on a
 person (up to 500 characters), which no model reads or writes.
 
+**Failed batches.** A batch the endpoint refuses three times in a row (30 seconds, then 2 minutes
+apart) is marked failed and keeps its audio. The server tries it again on its own 1 hour later, then
+after 2, 4, 8 and 16 hours, five rounds in all, so an endpoint that was down for a day costs a delay
+and not a transcript, while one that rejects a batch for good stops being asked. `POST
+/api/v1/transcriptions/retry` (admin) tries every failed batch that still has its audio right away and
+starts its five rounds over; it answers `{ queued }`. New lines in a summarized conversation get it
+summarized again, as any new line does.
+
 ## The language model
 
 A language model gives each closed conversation a title, a summary and tasks, and it feeds

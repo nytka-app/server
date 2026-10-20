@@ -110,10 +110,10 @@ crash repeats work and never loses or duplicates it. [Architecture](docs/guide/a
 
 | | Value | Source |
 |---|---|---|
-| HTTP API routes | 81 | rows of the table in [API](docs/reference/api.md#api) |
+| HTTP API routes | 82 | rows of the table in [API](docs/reference/api.md#api) |
 | MCP tools | 16 (13 read, 3 write) | [MCP](docs/reference/api.md#mcp) |
-| Database migrations | 31 | `db/migrations/` |
-| Test methods | 1,384 | `[Fact]` and `[Theory]` in `tests/` |
+| Database migrations | 32 | `db/migrations/` |
+| Test methods | 1,389 | `[Fact]` and `[Theory]` in `tests/` |
 
 ## Docs
 
