@@ -338,6 +338,14 @@ then the provider's `speaker`; your own lines show as `Wearer` before any of the
 returns their lines to the next step. `PATCH /api/v1/people/{id}` also keeps your own note on a
 person (up to 500 characters), which no model reads or writes.
 
+**Failed batches.** A batch the endpoint refuses three times in a row (30 seconds, then 2 minutes
+apart) is marked failed and keeps its audio. The server tries it again on its own 1 hour later, then
+after 2, 4, 8 and 16 hours, five rounds in all, so an endpoint that was down for a day costs a delay
+and not a transcript, while one that rejects a batch for good stops being asked. `POST
+/api/v1/transcriptions/retry` (admin) tries every failed batch that still has its audio right away and
+starts its five rounds over; it answers `{ queued }`. New lines in a summarized conversation get it
+summarized again, as any new line does.
+
 ## Your voice
 
 Nytka learns your voice once and then marks the segments you said as yours, with any transcription
@@ -1452,6 +1460,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/healthz` | none | 200 when the database answers |
 | GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features }`; `scope` is the caller's; `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `ledger` (`GET /api/v1/people/{id}/ledger` exists), `task-create` (`POST /api/v1/tasks`, and tasks have a `due` and may have no conversation), `speech-kind` ([speech kinds](#speech-kind) on lines), `context-ranges` (the server takes [context ranges](#context-from-the-phone)) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
+| POST | `/api/v1/transcriptions/retry` | admin | Transcribes every failed batch that still has its audio again, as late audio; `200 { queued }`; see [Failed batches](#transcription-endpoints) |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
@@ -1555,8 +1564,8 @@ transcripts and your webhook secrets.
 
 - Silence is dropped as soon as a chunk is processed. Speech audio (Opus, about 18 MB per hour of
   speech) stays for `RetentionDays`. With `RetentionDays=0` it goes as soon as its transcript
-  exists; audio whose transcription failed stays, so you can see what failed, until you delete its
-  conversation.
+  exists; audio whose transcription failed stays, to be [tried again](#transcription-endpoints) and so
+  you can see what failed, until you delete its conversation.
 - Transcripts, titles, summaries, tasks and memories stay until you delete them. Deleting a
   conversation deletes its audio, transcript, tasks and memories.
 - Daily digests stay until you delete their rows; they hold model-written text about your day, so a dump holds them too.

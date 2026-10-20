@@ -14,13 +14,13 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle), the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs and
+/// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs and
 /// the speech kinds' follow-up of their settings. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
-    CalendarQueue calendar, SpeechStore speech,
+    CalendarQueue calendar, SpeechStore speech, BatchRetryQueue batchRetries,
     SpeakerModel speaker, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
@@ -45,6 +45,7 @@ public sealed class Scheduler(
                 session.Late ? JobPriority.Late : JobPriority.Live);
         }
 
+        await batchRetries.QueueAsync(force: false, ct);
         await QueueEnrichmentsAsync(now, ct);
         await QueueDigestAsync(now, ct);
         await QueueRescoreAsync(now, ct);
