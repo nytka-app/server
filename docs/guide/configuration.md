@@ -58,7 +58,7 @@ or model value stops it at start with a message naming the variable.
 | `Nytka__User__TimeZone` | `UTC` | edit | IANA zone for prompts and mute windows |
 
 The gap runs from 30 seconds to 1 hour. With `RetentionDays=0`, audio goes once it is
-transcribed ([README](../../README.md#what-it-stores)). Mute windows are a JSON list of at most
+transcribed ([README](../how-to/operations.md#what-it-stores)). Mute windows are a JSON list of at most
 50, such as `[{"days":[1,2,3,4,5],"start":"09:30","end":"10:00"}]`; `days` are ISO weekdays
 (1 Monday to 7 Sunday) and times are local `HH:mm`. Tests:
 [`MuteWindowTests.cs`](../../tests/Nytka.Server.Tests/Pipeline/MuteWindowTests.cs).
@@ -75,7 +75,7 @@ The server sends WAV (16 kHz, mono, 16-bit) as `multipart/form-data` with
 | whisper.cpp server | `http://<host>:<port>/inference` |
 
 OpenAI uses model `whisper-1`; its `gpt-4o-*-transcribe` models answer `json` only and do not
-work. Groq's README example is `whisper-large-v3-turbo` ([README](../../README.md#transcription-endpoints)).
+work. Groq's README example is `whisper-large-v3-turbo` ([README](../reference/configuration.md#transcription-endpoints)).
 
 ## Language model
 
@@ -96,7 +96,7 @@ The model is optional. Without one, conversations keep their transcripts and sho
 Use `JsonMode=object` for an endpoint that rejects `json_schema`. A run makes up to three
 attempts, then the conversation shows `aiStatus: failed` with a one-sentence `aiMessage`. The
 text of each conversation goes to the endpoint you set and nowhere else
-([README](../../README.md#the-language-model)).
+([README](../reference/configuration.md#the-language-model)).
 
 ## Memories, people, tags, digest
 
@@ -113,7 +113,7 @@ text of each conversation goes to the endpoint you set and nowhere else
 | `Nytka__Digest__Hour` | `21` | edit | Local hour after which it is made |
 
 These need the language model. Several are checked when first used, so a bad value in `.env`
-fails at that point, not at start ([README](../../README.md#configuration)).
+fails at that point, not at start ([README](../reference/configuration.md#configuration)).
 `Nytka__People__VoiceMatching=true` is refused with `400` until your own voice is enrolled.
 
 ## Your voice
@@ -139,7 +139,7 @@ from your own recordings ([spec](../../docs/specs/your-voice.md#how-we-measure-i
 | `Nytka__Speech__MediaThreshold` | `0.94` | edit | Score, 0.5 to 0.99, at or above which a guess is media |
 
 Your own marks on lines apply in every mode. A change of either setting works the stored guesses out
-again in the background ([README](../../README.md#speech-kind)).
+again in the background ([README](../explanation/features.md#speech-kind)).
 
 ## Search and calendar
 
