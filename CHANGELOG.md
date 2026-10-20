@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.29.0](https://github.com/nytka-app/server/compare/v0.28.0...v0.29.0) (2026-10-20)
+
+
+### Features
+
+* **people:** auto-apply sure name suggestions, with undo ([#159](https://github.com/nytka-app/server/issues/159)) ([82d089f](https://github.com/nytka-app/server/commit/82d089f68ba1a4f5205a48d3980d49b65446d083))
+* **review:** clips and context lines on review items ([#160](https://github.com/nytka-app/server/issues/160)) ([f9c52ed](https://github.com/nytka-app/server/commit/f9c52ed7b0984992ee77b66be5b1a7dc8165bd8e))
+
+
+### Bug Fixes
+
+* **export:** unique Obsidian file names and export standalone tasks ([#153](https://github.com/nytka-app/server/issues/153)) ([f76c63b](https://github.com/nytka-app/server/commit/f76c63bcc0a7efbe06a108382a7402991118772b))
+* **import:** avoid 500 on huge SRT/VTT hours and unbounded Ogg packet reads ([#150](https://github.com/nytka-app/server/issues/150)) ([ada1cd2](https://github.com/nytka-app/server/commit/ada1cd269fb13069c1bdc4981d9550ec30aab5f2))
+* keep webhook URLs out of logs; iCal feed headers; due tasks as VTODO ([#154](https://github.com/nytka-app/server/issues/154)) ([b1104a3](https://github.com/nytka-app/server/commit/b1104a3066e32520ed9217f0be13e55e8244d545))
+* refuse import times outside the chunk format's range; a process-session that cannot read its chunks stops retrying ([#152](https://github.com/nytka-app/server/issues/152)) ([013aa08](https://github.com/nytka-app/server/commit/013aa08719bec9923ca8ed7ed7a92c200c6e4540))
+
 ## [0.28.0](https://github.com/nytka-app/server/compare/v0.27.0...v0.28.0) (2026-10-20)
 
 
