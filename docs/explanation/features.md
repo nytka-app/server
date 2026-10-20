@@ -351,8 +351,17 @@ merges five queues, newest first:
   reject marks them `person`, both `204`; `409` when a line is already marked.
 
 An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
-confidence, similarity, isUser, tag, role, named } }`; fields that do not belong to the kind are `null`. `id` is a
-segment id for a label and a guid for the others. `limit` is 1 to 200, default 50.
+confidence, similarity, isUser, tag, role, named }, clip, context }`; fields that do not belong to the kind are `null`. `id` is a
+segment id for a label and a speech item and a guid for the others. `limit` is 1 to 200, default 50.
+
+**Hearing an item.** Every item that rests on speech has the lines it rests on, its evidence: a name's line that says the
+name, a voice match's first line, a label's segment, a speech item's stretch. `context` is up to 3 lines before and after the
+evidence and the evidence itself, oldest first: `{ segmentId, speaker, personName, isUser, text, startedAt, evidence }`,
+`speaker` being the provider's label and `personName` the person the line belongs to. `clip` is `{ url, startMs, endMs }`:
+`GET /api/v1/review/{kind}/{id}/clip` (read token) answers the evidence with 3 s either side, at most 20 s, as Ogg Opus cut by
+capture time, and `startMs` and `endMs` are the capture times it covers in Unix milliseconds. `clip` is null, and the route
+`404`, once retention has deleted the audio (`Nytka__Audio__RetentionDays`, 14 days by default). A `tag` item has no clip and
+an empty `context`. Name suggestions listed by `GET /api/v1/people/suggestions` carry the same `clip`, whatever their status.
 
 `POST /api/v1/review/{kind}/{id}/accept` and `/reject` answer an item. A `name` or `voice` item is
 answered as its own routes do (`200` with the person on accept, `204` on reject; `409` when a

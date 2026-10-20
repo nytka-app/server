@@ -37,7 +37,7 @@ public sealed record NameCandidate(
 
 public sealed record NameSuggestionRow(
     Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
-    float Confidence, NameEvidence Evidence, int SameName = 1, DateTime? DecidedAt = null);
+    float Confidence, NameEvidence Evidence, int SameName = 1, DateTime? DecidedAt = null, ReviewClip? Clip = null);
 
 public sealed record NameEvidence(long SegmentId, DateTime StartedAt, string Text);
 
@@ -76,7 +76,8 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
 
     private sealed record Row(
         Guid Id, Guid ConversationId, string Target, string? SpeakerId, Guid? GroupId, string Name, string? Role, bool Named, Guid? PersonId,
-        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText, int SameName, DateTime? DecidedAt);
+        float Confidence, long EvidenceSegmentId, DateTime EvidenceStartedAt, string EvidenceText, int SameName, DateTime? DecidedAt,
+        DateTime EvidenceEndedAt, bool HasAudio);
 
     // A class, not a record: Npgsql reports an int8[] column as System.Array, which a constructor parameter of long[] does not match.
     private sealed class Pending
@@ -326,17 +327,25 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
                    n.group_id as GroupId, n.name as Name, n.role as Role, n.named as Named, n.person_id as PersonId, n.confidence as Confidence,
                    e.id as EvidenceSegmentId, e.started_at as EvidenceStartedAt, e.text as EvidenceText,
                    (select count(*)::int from name_suggestions p where p.status = 'pending' and lower(p.name) = lower(n.name)) as SameName,
-                   n.decided_at as DecidedAt
+                   n.decided_at as DecidedAt, e.ended_at as EvidenceEndedAt,
+                   exists (select 1 from speech_audio a
+                           where a.conversation_id = n.conversation_id and a.ended_at > e.started_at - @pad
+                             and a.started_at < least(e.ended_at + @pad, e.started_at - @pad + @max)) as HasAudio
             from name_suggestions n
             join segments e on e.id = n.evidence_segment_id
             where n.status = @status
             order by coalesce(n.decided_at, n.created_at) desc, n.id desc
             limit @limit
             """,
-            new { status, limit }, cancellationToken: ct));
-        return rows.Select(r => new NameSuggestionRow(
-            r.Id, r.ConversationId, r.Target, r.SpeakerId, r.GroupId, r.Name, r.Role, r.Named, r.PersonId, r.Confidence,
-            new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText), r.SameName, r.DecidedAt)).ToList();
+            new { status, limit, pad = ReviewStore.ClipPad, max = ReviewStore.MaxClip }, cancellationToken: ct));
+        return rows.Select(r =>
+        {
+            var (from, until) = ReviewStore.ClipWindow(r.EvidenceStartedAt, r.EvidenceEndedAt);
+            return new NameSuggestionRow(
+                r.Id, r.ConversationId, r.Target, r.SpeakerId, r.GroupId, r.Name, r.Role, r.Named, r.PersonId, r.Confidence,
+                new NameEvidence(r.EvidenceSegmentId, r.EvidenceStartedAt, r.EvidenceText), r.SameName, r.DecidedAt,
+                r.HasAudio ? ReviewStore.Clip(ReviewStore.NameKind, r.Id.ToString(), from, until) : null);
+        }).ToList();
     }
 
     /// <summary>

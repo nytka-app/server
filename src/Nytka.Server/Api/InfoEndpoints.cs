@@ -36,6 +36,7 @@ public static class InfoEndpoints
     /// "calendar-feed": <c>GET /api/v1/calendar.ics</c> exists (NYTKA-78), with or without a calendar feed.
     /// "auto-names": a name suggestion may be <c>auto_applied</c>, <c>GET /api/v1/people/suggestions?status=auto_applied</c> lists them and
     /// <c>POST /api/v1/people/suggestions/{id}/undo</c> takes one back (docs/specs/people.md, Auto-applied names), whether or not auto-apply is on.
+    /// "review-clips": review items carry <c>clip</c> and <c>context</c>, and <c>GET /api/v1/review/{kind}/{id}/clip</c> exists.
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -56,6 +57,7 @@ public static class InfoEndpoints
         features.Add("ledger");
         features.Add("calendar-feed");
         features.Add("auto-names");
+        features.Add("review-clips");
 
         return features;
     }
