@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/nytka-app/server/compare/v0.29.0...v0.30.0) (2026-10-21)
+
+
+### Features
+
+* **usage:** transcription ledger, GET /api/v1/usage and a monthly budget ([#163](https://github.com/nytka-app/server/issues/163)) ([fad35e6](https://github.com/nytka-app/server/commit/fad35e6cddb097af45a2e5093df23ff71a4333d5))
+
 ## [0.29.0](https://github.com/nytka-app/server/compare/v0.28.0...v0.29.0) (2026-10-20)
 
 
