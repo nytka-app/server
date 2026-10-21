@@ -42,6 +42,11 @@ public sealed class ProcessSessionHandler(
 
     public static readonly TimeSpan GapWait = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan GapRecheck = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// Silence in the uploads that ends a capture session. A short batch waits for more speech up to the batch rules'
+    /// long silence, so a session is not idle before that.
+    /// </summary>
     public static readonly TimeSpan IdleAfter = TimeSpan.FromSeconds(60);
 
     /// <summary>offsetMs (u32) + length (u16) before each frame in the chunk format.</summary>
@@ -84,13 +89,15 @@ public sealed class ProcessSessionHandler(
         var processedThrough = session.ProcessedThroughAt is { } at ? new DateTimeOffset(at).ToUnixTimeMilliseconds() : long.MinValue;
         var detection = Detector.Detect(VadScanner.Scan(timeline, vad)).TrimBefore(processedThrough);
         detection = DropMuted(detection, timeline, sessionId);
-        var idle = !waiting && !more && session.LastReceivedAt <= (now - IdleAfter).UtcDateTime;
-        var plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: idle);
+        var rules = BatchSettings.Rules(settings, options.Value.Conversations.Gap);
+        var idleAfter = TimeSpan.FromMilliseconds(Math.Max(IdleAfter.TotalMilliseconds, rules.LongSilenceMs));
+        var idle = !waiting && !more && session.LastReceivedAt <= (now - idleAfter).UtcDateTime;
+        var plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: idle, rules);
         var newThrough = Math.Max(processedThrough, plan.ProcessedThroughMs(timeline.EndMs));
         if (more && !waiting && newThrough <= processedThrough)
         {
             // Speech pending from the window's start would be read again forever: close it here.
-            plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: true);
+            plan = SpeechBatcher.Plan(detection, timeline.EndMs, flush: true, rules);
             newThrough = Math.Max(processedThrough, plan.ProcessedThroughMs(timeline.EndMs));
         }
 

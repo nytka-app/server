@@ -14,6 +14,9 @@ public class SpeechBatcherTests
 
     private static SpeechDetection Closed(params SpeechRegion[] regions) => new(regions, null);
 
+    /// <summary>The values that suit a paid engine per batch (docs/specs/auto-transcription.md): 15, 45, 60 and 120 seconds.</summary>
+    private static readonly BatchRules Paid = new(MinSpeechMs: 15_000, MaxSpeechMs: 45_000, HardMaxSpeechMs: 60_000, LongSilenceMs: 120_000);
+
     [Fact]
     public void Closes_after_a_pause_once_five_seconds_are_in()
     {
@@ -176,5 +179,127 @@ public class SpeechBatcherTests
 
         Assert.Empty(plan.Closed);
         Assert.Equal(5_000, plan.ProcessedThroughMs(5_000));
+    }
+
+    [Fact]
+    public void Default_rules_are_five_thirty_forty_five_and_thirty_seconds()
+    {
+        var rules = BatchRules.Default;
+
+        Assert.Equal((5_000, 30_000, 45_000, 30_000), (rules.MinSpeechMs, rules.MaxSpeechMs, rules.HardMaxSpeechMs, rules.LongSilenceMs));
+        Assert.Equal(1_000, rules.PauseMs);
+    }
+
+    [Fact]
+    public void A_short_batch_waits_for_the_next_speech_when_the_long_silence_is_two_minutes()
+    {
+        var plan = SpeechBatcher.Plan(Closed(R(0, 0.75)), audioEndMs: 100_000, flush: false, Paid);
+
+        Assert.Empty(plan.Closed);
+        Assert.Equal([R(0, 0.75)], plan.Pending);
+        Assert.Equal(0, plan.ProcessedThroughMs(100_000));
+    }
+
+    [Fact]
+    public void A_short_batch_joins_speech_that_comes_within_the_long_silence()
+    {
+        var plan = SpeechBatcher.Plan(Closed(R(0, 0.75), R(100, 118)), audioEndMs: 119_000, flush: false, Paid);
+
+        var batch = Assert.Single(plan.Closed);
+        Assert.Equal([R(0, 0.75), R(100, 118)], batch.Regions);
+        Assert.Empty(plan.Pending);
+    }
+
+    [Fact]
+    public void A_short_batch_joins_speech_still_open_when_the_audio_ends()
+    {
+        var detection = new SpeechDetection([R(0, 0.75)], R(100, 110));
+
+        var waiting = SpeechBatcher.Plan(detection, audioEndMs: 110_000, flush: false, Paid);
+        var flushed = SpeechBatcher.Plan(detection, audioEndMs: 110_000, flush: true, Paid);
+
+        Assert.Empty(waiting.Closed);
+        Assert.Equal([R(0, 0.75), R(100, 110)], waiting.Pending);
+        Assert.Equal([R(0, 0.75), R(100, 110)], Assert.Single(flushed.Closed).Regions);
+    }
+
+    [Fact]
+    public void A_short_batch_goes_out_alone_after_the_long_silence()
+    {
+        var plan = SpeechBatcher.Plan(Closed(R(0, 0.75), R(121, 140)), audioEndMs: 140_500, flush: false, Paid);
+
+        Assert.Equal([R(0, 0.75)], Assert.Single(plan.Closed).Regions);
+        Assert.Equal([R(121, 140)], plan.Pending);
+    }
+
+    [Fact]
+    public void A_short_batch_goes_out_when_the_audio_has_been_silent_for_the_long_silence()
+    {
+        var waiting = SpeechBatcher.Plan(Closed(R(0, 0.75)), audioEndMs: 119_000, flush: false, Paid);
+        var closed = SpeechBatcher.Plan(Closed(R(0, 0.75)), audioEndMs: 121_000, flush: false, Paid);
+
+        Assert.Empty(waiting.Closed);
+        Assert.Equal([R(0, 0.75)], Assert.Single(closed.Closed).Regions);
+        Assert.Empty(closed.Pending);
+    }
+
+    [Fact]
+    public void A_session_that_ends_flushes_a_short_batch()
+    {
+        var plan = SpeechBatcher.Plan(Closed(R(0, 0.75)), audioEndMs: 30_000, flush: true, Paid);
+
+        Assert.Equal([R(0, 0.75)], Assert.Single(plan.Closed).Regions);
+        Assert.Empty(plan.Pending);
+        Assert.Equal(30_000, plan.ProcessedThroughMs(30_000));
+    }
+
+    [Fact]
+    public void Fourteen_seconds_is_still_short_for_a_paid_engine_and_fifteen_is_not()
+    {
+        var fourteen = SpeechBatcher.Plan(Closed(R(0, 14)), audioEndMs: 20_000, flush: false, Paid);
+        var fifteen = SpeechBatcher.Plan(Closed(R(0, 15)), audioEndMs: 20_000, flush: false, Paid);
+
+        Assert.Empty(fourteen.Closed);
+        Assert.Equal([R(0, 15)], Assert.Single(fifteen.Closed).Regions);
+    }
+
+    [Fact]
+    public void A_paid_batch_of_phrases_passes_the_soft_maximum_and_stays_under_the_hard_one()
+    {
+        var plan = SpeechBatcher.Plan(Closed(Phrases(16)), audioEndMs: 56_000, flush: false, Paid);
+
+        Assert.Empty(plan.Closed);
+        Assert.Equal(16, plan.Pending.Count);
+    }
+
+    [Fact]
+    public void A_paid_batch_starts_a_new_one_rather_than_pass_the_hard_maximum()
+    {
+        var plan = SpeechBatcher.Plan(Closed(Phrases(22)), audioEndMs: 77_000, flush: false, Paid);
+
+        var batch = Assert.Single(plan.Closed);
+        Assert.Equal(60_000, batch.SpeechMs);
+        Assert.Equal(2, plan.Pending.Count);
+    }
+
+    [Fact]
+    public void Speech_longer_than_the_paid_hard_maximum_is_cut_there()
+    {
+        var plan = SpeechBatcher.Plan(Closed(R(0, 70)), audioEndMs: 70_500, flush: false, Paid);
+
+        Assert.Equal([R(0, 60)], Assert.Single(plan.Closed).Regions);
+        Assert.Equal([R(60, 70)], plan.Pending);
+    }
+
+    [Fact]
+    public void A_long_stretch_of_phrases_gives_fewer_batches_under_the_paid_rules_than_the_default_rules()
+    {
+        var phrases = Closed(Phrases(60));
+
+        var byDefault = SpeechBatcher.Plan(phrases, audioEndMs: 215_000, flush: true);
+        var paid = SpeechBatcher.Plan(phrases, audioEndMs: 215_000, flush: true, Paid);
+
+        Assert.True(paid.Closed.Count < byDefault.Closed.Count);
+        Assert.Equal(byDefault.Closed.Sum(b => b.SpeechMs), paid.Closed.Sum(b => b.SpeechMs));
     }
 }

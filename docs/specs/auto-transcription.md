@@ -54,7 +54,8 @@ worktree (not merged), and `homelab-gitops` `stt/server.py` at `a3d150f`.
 
 - **Batching.** `SpeechBatcher` (`src/Nytka.Audio/Batching/SpeechBatcher.cs`) closes a batch at a pause of
   `PauseMs` (1 s) once it holds `MinSpeechMs` (5 s), keeps growing past `MaxSpeechMs` (30 s) until such a pause, and cuts
-  at `HardMaxSpeechMs` (45 s) (`BatchRules.cs`). The rules are code constants, not settings.
+  at `HardMaxSpeechMs` (45 s) (`BatchRules.cs`). The four lengths are the settings `stt.batch.*` (Settings); the pause
+  stays a constant, and `ProcessSessionHandler` reads the rules on every run.
 - **One request per batch.** `TranscribeHandler` sends the batch WAV through `TranscriptionClient.TranscribeAsync`
   (`multipart`, `model` = `Nytka__Stt__Model`, `prompt` = `stt.vocabulary` plus the named people), maps segment times
   through the batch's `OffsetMap`, fingerprints the segments for the wearer (`VoiceMatcher`), and stores everything in
@@ -339,8 +340,15 @@ they take the measured heavy day from $0.62 to about $0.34 (The numbers):
    `stt.batch.longSilenceSeconds` (120), up from 5, 30, 45 and 30, for about 270 requests instead of 614 on the heaviest
    day. The last one is what stops a 0.75 s batch: today a batch under `minSeconds` closes after 30 s of silence and is
    sent alone; with 120 s (the conversation gap) it waits for the next speech of the same conversation and joins it. A
-   capture session that ends still flushes it. Under Auto the live engine is free and the defaults stay at 5, 30, 45
-   and 30 for a fresher draft. 60 s keeps `stt`'s peak under its limit (1.20 GiB measured on a 48 s upload; Parakeet's
+   capture session that ends still flushes it: the handler calls a session ended after no upload for
+   `max(60 s, longSilenceSeconds)`, so the wait is not cut short at 60 s, and `longSilenceSeconds` never counts for more
+   than `conversations.gap`, or a held batch would join the next conversation. Each of the four is 1 to 60 s
+   (`longSilenceSeconds` 1 to 600 s), the API refuses an order other than `minSeconds` <= `maxSeconds` <=
+   `hardMaxSeconds`, and `hardMaxSeconds` stops at 60 s for the reason below. Replaying the 23,350 speech regions stored in the 4,759 batches of 2026-09-29 to 2026-10-21 through `SpeechBatcher`
+   (the old rules give 4,590 batches, 96% of the real count) gives 2,500 batches with 15, 45, 60 and 120 s: 46% fewer,
+   mean 26 s instead of 13 s. The heaviest day (2026-10-20) goes from 600 to 336, not 270; 36 of its batches stay under
+   15 s, lone remarks 2 minutes or more from other speech. Under Auto the live engine is free and the defaults stay at
+   5, 30, 45 and 30 for a fresher draft. 60 s keeps `stt`'s peak under its limit (1.20 GiB measured on a 48 s upload; Parakeet's
    VAD segments are capped at 8 s, so the peak grows with the WAV, not the model). Speech-kind's stretch and Your
    voice's 30 s segment cap work on lines, not batches, and do not change.
 3. **Context once: bring your own Soniox key** and the direct client (The paid engine), usable per batch before Auto
