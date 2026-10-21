@@ -86,9 +86,9 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
   never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
-  `Nytka__Memories__*`, `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Search__Dictionary`, `Nytka__Speech__*` and `Nytka__Voice__*` are checked when first used, so type them as
-  the table shows: a bad `Nytka__Memories__Enabled` makes every summary fail, and a bad
-  `Nytka__Search__Dictionary` stops indexing.
+  `Nytka__Memories__Enabled` and `Nytka__Search__Dictionary` are checked at start too.
+  `Nytka__Memories__*` (the rest), `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Speech__*` and `Nytka__Voice__*` are checked when first used, so type them as
+  the table shows.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
   a new `llm.model` included. A change to `.env` needs `docker compose up -d`.
 

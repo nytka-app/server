@@ -74,6 +74,8 @@ public class HostTests(PostgresFixture db)
     [InlineData("Nytka:AdminToken", "too-short", "Nytka__AdminToken")]
     [InlineData("Nytka:Stt:Url", null, "Nytka__Stt__Url")]
     [InlineData("Nytka:Stt:Url", "not a url", "Nytka__Stt__Url")]
+    [InlineData("Nytka:Memories:Enabled", "maybe", "Nytka__Memories__Enabled")]
+    [InlineData("Nytka:Search:Dictionary", "klingon", "Nytka__Search__Dictionary")]
     public void Refuses_to_start_with_bad_settings(string key, string? value, string message)
     {
         using var factory = new NytkaApiFactory(db, settings =>
