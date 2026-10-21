@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/nytka-app/server/compare/v0.30.0...v0.31.0) (2026-10-21)
+
+
+### Features
+
+* **stt:** batch rules as settings; short batches wait for the next speech ([#165](https://github.com/nytka-app/server/issues/165)) ([f3ef63a](https://github.com/nytka-app/server/commit/f3ef63a47ab457422b02d8bb49896c8a2d5ad3c4))
+
 ## [0.30.0](https://github.com/nytka-app/server/compare/v0.29.0...v0.30.0) (2026-10-21)
 
 
