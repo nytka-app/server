@@ -31,6 +31,10 @@ you copy without thinking would lock its setting.
 | `Nytka__Stt__MonthlyBudgetUsd` | no | empty | editable | Transcription budget per calendar month in US dollars, `0` to `100000` with a dot; empty is no limit. Past it, batches go to `Nytka__Stt__BudgetModel` and are marked to transcribe again; none is skipped |
 | `Nytka__Stt__BudgetWarningPercent` | no | `80` | editable | Percent of the budget, 1 to 100, at which `usage.budget.warning` is sent |
 | `Nytka__Stt__BudgetModel` | no | `parakeet` | editable | Sent as `model` past the budget: the homelab `stt` service reads it as a pinned engine; pick a free one |
+| `Nytka__Stt__Batch__MinSeconds` | no | `5` | editable | Speech a batch must hold before a pause closes it, 1 to 60 seconds; at most `MaxSeconds`. A shorter batch waits for more speech, up to `LongSilenceSeconds` |
+| `Nytka__Stt__Batch__MaxSeconds` | no | `30` | editable | Speech after which a batch closes at the next pause (a soft limit), 1 to 60 seconds; between `MinSeconds` and `HardMaxSeconds` |
+| `Nytka__Stt__Batch__HardMaxSeconds` | no | `45` | editable | The most speech one batch holds, 1 to 60 seconds; longer unbroken speech is cut there. 60 is the most the `stt` service takes within its memory limit |
+| `Nytka__Stt__Batch__LongSilenceSeconds` | no | `30` | editable | Silence that closes a batch even when it is short, 1 to 600 seconds, and never more than `Nytka__Conversations__Gap`. At `120` a batch under `MinSeconds` waits for the next speech of its conversation instead of going out alone. A capture session also counts as ended after this much silence in its uploads, but not before 60 seconds |
 | `Nytka__Conversations__Gap` | no | `00:02:00` | editable | Silence that ends a conversation, `hh:mm:ss`, from 30 seconds to 1 hour |
 | `Nytka__Audio__RetentionDays` | no | `14` | editable | Days to keep speech audio and [context ranges](../explanation/features.md#context-from-the-phone), 0 to 3650; `0` deletes audio once transcribed and ranges a day after they end |
 | `Nytka__Mute__Windows` | no | `[]` | editable | JSON list of weekly windows whose audio is dropped by capture time before transcription, at most 50, such as `[{"days":[1,2,3,4,5],"start":"09:30","end":"10:00"}]`. `days` are ISO weekdays of the start day (1 Monday to 7 Sunday), `start` and `end` are local `HH:mm`; an end at or before the start crosses midnight. Uses `Nytka__User__TimeZone` |
@@ -179,6 +183,12 @@ and not a transcript, while one that rejects a batch for good stops being asked.
 /api/v1/transcriptions/retry` (admin) tries every failed batch that still has its audio right away and
 starts its five rounds over; it answers `{ queued }`. New lines in a summarized conversation get it
 summarized again, as any new line does.
+
+**Batch rules.** A request carries one batch, and a paid engine charges per request, so fewer, longer batches cost
+less. `Nytka__Stt__Batch__MinSeconds`, `MaxSeconds`, `HardMaxSeconds` and `LongSilenceSeconds` default to 5, 30, 45 and
+30 seconds; 15, 45, 60 and 120 suit a paid engine per batch. A change reaches the next processing run, not batches
+already cut. A PATCH that breaks `MinSeconds <= MaxSeconds <= HardMaxSeconds` is refused with a message on the key;
+an environment value that does is lifted to the next one up. See the [Auto transcription spec](../specs/auto-transcription.md).
 
 ## The language model
 

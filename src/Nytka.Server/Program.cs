@@ -86,6 +86,7 @@ builder.Services.AddNytkaTags();
 builder.Services.AddNytkaCalendar();
 builder.Services.AddNytkaSpeech();
 builder.Services.AddNytkaUsage();
+builder.Services.AddNytkaBatching();
 
 var app = builder.Build();
 

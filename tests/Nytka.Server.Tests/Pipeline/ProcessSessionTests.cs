@@ -84,6 +84,73 @@ public sealed class ProcessSessionTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0, await Count("audio_chunks", "body is not null"));
     }
 
+    private NytkaApiFactory PaidServer()
+    {
+        var server = new NytkaApiFactory(db, settings =>
+        {
+            settings["Nytka:Stt:Batch:MinSeconds"] = "15";
+            settings["Nytka:Stt:Batch:MaxSeconds"] = "45";
+            settings["Nytka:Stt:Batch:HardMaxSeconds"] = "60";
+            settings["Nytka:Stt:Batch:LongSilenceSeconds"] = "120";
+        });
+        _servers.Add(server);
+        return server;
+    }
+
+    private async Task<int> RunAfterAsync(NytkaApiFactory server, int seconds)
+    {
+        server.Time.Advance(TimeSpan.FromSeconds(seconds));
+        await server.Get<Scheduler>().TickAsync(default);
+        return await server.RunJobsAsync();
+    }
+
+    [Fact]
+    public async Task Default_rules_send_a_short_batch_alone_when_the_next_speech_is_a_minute_and_a_half_away()
+    {
+        var server = NewServer();
+        await server.UploadAsync(Chunks(_session, Tone(1), Silence(90), Tone(10), Silence(2)));
+
+        await server.RunJobsAsync();
+        await RunAfterAsync(server, 61);
+
+        Assert.Equal(2, await Count("transcription_batches"));
+    }
+
+    [Fact]
+    public async Task A_short_batch_waits_for_the_next_speech_under_the_paid_rules()
+    {
+        var server = PaidServer();
+        await server.UploadAsync(Chunks(_session, Tone(1), Silence(90), Tone(10), Silence(2)));
+
+        await server.RunJobsAsync();
+        await RunAfterAsync(server, 61);
+        Assert.Equal(0, await Count("transcription_batches"));
+        Assert.NotEqual(0, await Count("audio_chunks", "body is not null")); // the held speech keeps its audio
+
+        await RunAfterAsync(server, 61);
+
+        var (start, end) = await OnlyBatch();
+        Assert.Equal(StartMs, start);
+        Assert.InRange(end, StartMs + 101_000, StartMs + 101_500);
+        Assert.Equal(0, await Count("audio_chunks", "body is not null"));
+    }
+
+    [Fact]
+    public async Task A_lone_short_batch_is_flushed_when_the_session_goes_idle_under_the_paid_rules()
+    {
+        var server = PaidServer();
+        await server.UploadAsync(Chunks(_session, Silence(1), Tone(1), Silence(2)));
+
+        await server.RunJobsAsync();
+        await RunAfterAsync(server, 61);
+        Assert.Equal(0, await Count("transcription_batches"));
+
+        await RunAfterAsync(server, 61);
+
+        Assert.Equal(1, await Count("transcription_batches"));
+        Assert.Equal(0, await Count("audio_chunks", "body is not null"));
+    }
+
     [Fact]
     public async Task Restart_between_runs_loses_no_speech()
     {

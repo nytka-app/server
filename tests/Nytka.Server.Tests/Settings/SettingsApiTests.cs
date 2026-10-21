@@ -67,6 +67,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
                 "calendar.icsUrl", "calendar.briefMinutes",
                 "speech.mode", "speech.mediaThreshold",
                 "stt.prices", "stt.monthlyBudgetUsd", "stt.budgetWarningPercent", "stt.budgetModel",
+                "stt.batch.minSeconds", "stt.batch.maxSeconds", "stt.batch.hardMaxSeconds", "stt.batch.longSilenceSeconds",
             ],
             items.EnumerateArray().Select(i => i.GetProperty("key").GetString()));
         Assert.All(
@@ -152,6 +153,64 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
         var response = await Patch(server.CreateAuthorizedClient(), new Dictionary<string, string> { ["voice.learn"] = "false" });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("stt.batch.minSeconds", "15", true)]
+    [InlineData("stt.batch.minSeconds", "0", false)]
+    [InlineData("stt.batch.maxSeconds", "61", false)]
+    [InlineData("stt.batch.hardMaxSeconds", "60", true)]
+    [InlineData("stt.batch.hardMaxSeconds", "61", false)]
+    [InlineData("stt.batch.longSilenceSeconds", "120", true)]
+    [InlineData("stt.batch.longSilenceSeconds", "0", false)]
+    [InlineData("stt.batch.longSilenceSeconds", "601", false)]
+    [InlineData("stt.batch.longSilenceSeconds", "1.5", false)]
+    public async Task A_batch_rule_is_a_whole_number_of_seconds_in_range(string key, string value, bool accepted)
+    {
+        var response = await Patch(new Dictionary<string, string> { [key] = value });
+
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("int", Item(await List(), key).GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task The_batch_rules_default_to_five_thirty_forty_five_and_thirty_seconds()
+    {
+        var list = await List();
+
+        Assert.Equal(
+            ["5", "30", "45", "30"],
+            new[] { "minSeconds", "maxSeconds", "hardMaxSeconds", "longSilenceSeconds" }
+                .Select(k => Item(list, $"stt.batch.{k}").GetProperty("default").GetString()));
+    }
+
+    [Theory]
+    [InlineData("stt.batch.minSeconds", "31", "stt.batch.maxSeconds")]
+    [InlineData("stt.batch.maxSeconds", "4", "stt.batch.minSeconds")]
+    [InlineData("stt.batch.maxSeconds", "46", "stt.batch.hardMaxSeconds")]
+    [InlineData("stt.batch.hardMaxSeconds", "29", "stt.batch.maxSeconds")]
+    public async Task A_batch_rule_never_passes_its_neighbour(string key, string value, string other)
+    {
+        var response = await Patch(new Dictionary<string, string> { [key] = value });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var errors = (await Json(response)).GetProperty("errors");
+        Assert.Contains(key, errors.EnumerateObject().Select(p => p.Name));
+        Assert.Contains(other, errors.GetProperty(key).EnumerateArray().Single().GetString());
+        Assert.Equal("default", Item(await List(), key).GetProperty("source").GetString());
+    }
+
+    [Fact]
+    public async Task The_paid_engine_batch_rules_may_move_together()
+    {
+        var response = await Patch(new Dictionary<string, string>
+        {
+            ["stt.batch.minSeconds"] = "15", ["stt.batch.maxSeconds"] = "45",
+            ["stt.batch.hardMaxSeconds"] = "60", ["stt.batch.longSilenceSeconds"] = "120",
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("60", Item(await List(), "stt.batch.hardMaxSeconds").GetProperty("value").GetString());
     }
 
     [Fact]
