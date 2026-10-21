@@ -24,11 +24,16 @@ public sealed class UsageLedgerTests(PostgresFixture db) : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private NytkaApiFactory Server(string? budget = null)
+    private NytkaApiFactory Server(string? budget = null, string? sonioxKey = null)
     {
         var server = new NytkaApiFactory(db, s =>
         {
             s["Nytka:Stt:Model"] = "soniox";
+            if (sonioxKey is not null)
+            {
+                s["Nytka:Stt:SonioxApiKey"] = sonioxKey;
+            }
+
             if (budget is not null)
             {
                 s["Nytka:Stt:MonthlyBudgetUsd"] = budget;
@@ -143,5 +148,36 @@ public sealed class UsageLedgerTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Single(await Rows());
         Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from transcription_usage where conversation_id is not null"));
+    }
+
+    [Fact]
+    public async Task With_a_soniox_key_a_batch_goes_to_soniox_directly_and_its_row_is_soniox()
+    {
+        var server = Server(sonioxKey: "test-key");
+        await server.UploadAsync(Chunks(Guid.NewGuid(), Tone(6), Silence(3)));
+
+        await server.RunJobsAsync();
+
+        Assert.DoesNotContain(server.Stt.Requests, r => r.Fields.ContainsKey("model"));
+        Assert.Equal(1, server.Soniox.Calls.Count(c => c == "POST /v1/transcriptions"));
+        Assert.Equal(0, server.Soniox.StoredFiles);
+        Assert.Equal(0, server.Soniox.StoredTranscriptions);
+        var row = Assert.Single(await Rows());
+        Assert.Equal("soniox", row.Engine);
+        Assert.Equal("hello there".Length, row.TextChars);
+        Assert.Equal(["hello there"], await db.QueryAsync<string>("select text from segments"));
+    }
+
+    [Fact]
+    public async Task With_a_soniox_key_past_the_budget_batches_go_to_the_budget_model()
+    {
+        var server = Server(budget: "0.0006", sonioxKey: "test-key");
+        await server.UploadAsync(Chunks(Guid.NewGuid(), Tone(6), Silence(1), Gap(150), Tone(6), Silence(3)));
+
+        await server.RunJobsAsync();
+
+        Assert.Equal(1, server.Soniox.Calls.Count(c => c == "POST /v1/transcriptions"));
+        Assert.Equal(["parakeet"], server.Stt.Requests.Where(r => r.Fields.ContainsKey("model")).Select(r => r.Fields["model"]));
+        Assert.Equal([("soniox", false), ("parakeet", true)], (await Rows()).Select(r => (r.Engine, r.OverBudget)));
     }
 }

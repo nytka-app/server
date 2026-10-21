@@ -4,6 +4,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Events;
 using Nytka.Server.Settings;
+using Nytka.Server.Transcription;
 using Nytka.Storage;
 
 namespace Nytka.Server.Usage;
@@ -11,9 +12,10 @@ namespace Nytka.Server.Usage;
 /// <summary>
 /// Where a batch goes: <paramref name="Model"/> is what Nytka sends as <c>model</c> (null: none), <paramref name="Engine"/>
 /// its name in the ledger and the price table. <paramref name="OverBudget"/> when the month's budget is spent and the batch
-/// goes to <c>stt.budgetModel</c> instead of the usual model.
+/// goes to <c>stt.budgetModel</c> instead of the usual model. <paramref name="Soniox"/> when the batch goes to Soniox directly
+/// (<c>Nytka__Stt__SonioxApiKey</c> is set) rather than to <c>stt.url</c>.
 /// </summary>
-public sealed record UsagePlan(string? Model, string Engine, bool OverBudget);
+public sealed record UsagePlan(string? Model, string Engine, bool OverBudget, bool Soniox = false);
 
 /// <summary>
 /// The transcription ledger (docs/specs/usage.md). Before a request, <see cref="PlanAsync"/> picks the model by the month's
@@ -37,8 +39,11 @@ public sealed class UsageLedger(UsageStore usage, SettingsService settings, IOpt
 
     public async Task<UsagePlan> PlanAsync(CancellationToken ct)
     {
-        var model = options.Value.Stt.Model;
-        var usual = new UsagePlan(string.IsNullOrWhiteSpace(model) ? null : model, Engine(model), false);
+        var stt = options.Value.Stt;
+        var model = stt.Model;
+        var usual = stt.UsesSoniox
+            ? new UsagePlan(null, SonioxClient.Engine, false, Soniox: true)
+            : new UsagePlan(string.IsNullOrWhiteSpace(model) ? null : model, Engine(model), false);
         if (UsageSettings.Budget(settings) is not { } budget)
         {
             return usual;

@@ -69,10 +69,13 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
     /// </summary>
     private async Task<string> BuildVocabularyAsync(string? vocabulary, CancellationToken ct)
     {
-        var words = ParseWords(vocabulary).Concat(await namedPeople(ct)).Distinct(StringComparer.OrdinalIgnoreCase);
-        var joined = string.Join(", ", words);
+        var joined = string.Join(", ", Terms(vocabulary, await namedPeople(ct)));
         return joined.Length <= MaxVocabularyLength ? joined : joined[..MaxVocabularyLength];
     }
+
+    /// <summary><paramref name="vocabulary"/>'s words and <paramref name="names"/>, deduplicated without case, in that order.</summary>
+    public static IReadOnlyList<string> Terms(string? vocabulary, IEnumerable<string> names) =>
+        ParseWords(vocabulary).Concat(names).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static IEnumerable<string> ParseWords(string? value) =>
         string.IsNullOrWhiteSpace(value)

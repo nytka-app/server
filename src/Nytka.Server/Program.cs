@@ -59,6 +59,7 @@ builder.Services.AddHostedService<JobRunnerService>();
 builder.Services.AddHostedService<SchedulerService>();
 builder.Services.AddSingleton<NamedPeopleLookup>(sp => sp.GetRequiredService<PeopleStore>().NamesAsync);
 builder.Services.AddHttpClient<TranscriptionClient>(client => client.Timeout = TranscriptionClient.Timeout);
+builder.Services.AddHttpClient<SonioxClient>(client => client.Timeout = SonioxClient.Timeout);
 builder.Services.AddHttpClient<VoiceprintClient>(client => client.Timeout = VoiceprintClient.Timeout)
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 

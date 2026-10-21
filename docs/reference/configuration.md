@@ -27,6 +27,8 @@ you copy without thinking would lock its setting.
 | `Nytka__Stt__Model` | no | | editable | Sent as `model`; OpenAI and Groq need it |
 | `Nytka__Stt__Language` | no | `auto` | editable | `auto` lets the endpoint detect the language; or a language tag such as `uk` or `en`, sent as `language` (providers usually want a two-letter ISO 639-1 code) |
 | `Nytka__Stt__Vocabulary` | no | empty | editable | Comma- or newline-separated words sent as `prompt`, a spelling hint for names and jargon ([Transcription endpoints](#transcription-endpoints)); named people's names are added automatically. Capped to 1000 characters; never logged |
+| `Nytka__Stt__SonioxApiKey` | no | | env only | A Soniox API key: batches go to Soniox directly instead of `Nytka__Stt__Url` ([Soniox, direct](#soniox-direct)). Never stored, returned or logged |
+| `Nytka__Stt__SonioxBaseUrl` | no | `https://api.soniox.com` | env only | Soniox's API base URL |
 | `Nytka__Stt__Prices` | no | Soniox async | editable | JSON price table by engine (the `model` sent, any case; `auto` when none is): `{"soniox":{"audioTokensPerHour":30000,"audioUsdPerMillionTokens":1.5,"requestTokens":390,"textInUsdPerMillionTokens":3.5,"textCharsPerToken":3,"textOutUsdPerMillionTokens":3.5}}`. A field left out is 0; an engine left out, such as `parakeet`, costs nothing. See [Usage and budget](../specs/usage.md) |
 | `Nytka__Stt__MonthlyBudgetUsd` | no | empty | editable | Transcription budget per calendar month in US dollars, `0` to `100000` with a dot; empty is no limit. Past it, batches go to `Nytka__Stt__BudgetModel` and are marked to transcribe again; none is skipped |
 | `Nytka__Stt__BudgetWarningPercent` | no | `80` | editable | Percent of the budget, 1 to 100, at which `usage.budget.warning` is sent |
@@ -189,6 +191,18 @@ less. `Nytka__Stt__Batch__MinSeconds`, `MaxSeconds`, `HardMaxSeconds` and `LongS
 30 seconds; 15, 45, 60 and 120 suit a paid engine per batch. A change reaches the next processing run, not batches
 already cut. A PATCH that breaks `MinSeconds <= MaxSeconds <= HardMaxSeconds` is refused with a message on the key;
 an environment value that does is lifted to the next one up. See the [Auto transcription spec](../specs/auto-transcription.md).
+
+### Soniox, direct
+
+With `Nytka__Stt__SonioxApiKey` set, the server sends each batch to Soniox's async API itself: it uploads the WAV
+(`POST /v1/files`), creates a transcription (`POST /v1/transcriptions`, model `stt-async-v5`, speaker diarization on,
+language hints `Nytka__Stt__Language` or `uk`, `ru`, `en` when it is `auto`), polls it every half second for up to 100
+seconds, reads the transcript, and then deletes the transcription and the file, on success, failure and timeout alike.
+One `context` goes with each request: a `general` entry for the domain and, as `terms`, `Nytka__Stt__Vocabulary`'s words
+and named people's names (up to 1000 characters). Soniox's tokens become segments where the speaker changes or a pause of
+1 second falls; speakers are labelled `SPEAKER_1`, `SPEAKER_2` within the batch. The ledger records each batch as engine
+`soniox`. Past the monthly budget, batches go to `Nytka__Stt__BudgetModel` on `Nytka__Stt__Url` as before, so that URL is
+still required. An error names the status code only; Soniox's own error message is never kept.
 
 ## The language model
 
