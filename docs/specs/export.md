@@ -125,10 +125,36 @@ Tasks note needs no id suffix: it is the export's one and only tasks file.
 
 ## Re-importing
 
-Not built. Nytka cannot read its own export back; the Omi import reads Omi's file only. The ids and the
-`source`/`externalId` pair are kept stable so an importer can be idempotent later (the schema's unique
-`(source, external_id)` already does this for Omi). Until then the file is for keeping, for
-other tools, and for moving away.
+`POST /api/v1/import/nytka` (admin) takes the NDJSON file above, at most 100 MB like the other imports, and
+writes it back: to restore a server from its export, or to move to another one. It answers `200` with what it
+wrote, `{ people, conversations, tasks, memories, personFacts, bookmarks, digests, settings }`, each
+`{ imported, skipped }`, plus `segments`, the number of transcript lines written.
+
+**Idempotent.** Every record keeps its id. A record whose id is already on the server is skipped and left as
+it is, and so is one whose natural key is: a person of the same name (any case), a conversation with the same
+`source`/`externalId` pair (an Omi conversation imported on both servers), a task with the same text in the
+same conversation, a memory with the same text, a fact with the same text about the same person. The file's
+person ids map to the ones they matched, so tasks and facts land on the right person. Importing the same file
+twice changes nothing the second time, and importing a file into the server it came from changes nothing.
+
+**One transaction.** The file is read one line at a time and written in one transaction. The first line must
+be a `header` with `format` `"nytka-export"`; a `version` above 1 is refused with `400` and the fixed message
+"The export is from a newer Nytka: this server reads export format version 1 only." A file whose `end` line is
+missing or whose counts differ from its lines was cut short: `400`, and nothing is written. So is a line that
+is not JSON or lacks a required field, and a value the schema refuses (`400`, "The export holds a record this
+server cannot store."). An unknown `type` is skipped, as for any reader. No error carries a part of the file.
+
+**What comes back as it was.** Conversations with their source, times, status, title (the user's stays the
+user's), summary, tags and segments; a segment's speaker label, voice id, wearer flag, speech kind (an owner's
+mark stays a mark) and person. People with their note, `named`, tags and the voice ids named after them;
+tasks with their person, kind, due time and done state, standalone ones included; memories; person facts;
+bookmarks; digests. A restored conversation is marked as read by enrichment through its last segment, and no
+event, webhook or job is raised for any record, as with the Omi import; search indexes the new rows on its own.
+
+**What does not.** Voiceprints (the export carries only whether one existed: the person's voice is learnt
+again), and audio, which the export does not carry. A generated title that the user's own title replaced is
+gone. Settings are applied after the data commits, each only where the environment does not set it and it
+differs from the value in effect; a value this server refuses is counted as skipped, not fatal.
 
 ## Not in this version
 
@@ -142,5 +168,4 @@ other tools, and for moving away.
   is in `tags` (`docs/specs/tags.md`).
 - Webhooks, tokens, diagnostics, jobs, search indexes and raw transcription responses: configuration or
   working state, not the user's data.
-- Importing the file into Nytka.
 - Incremental export (`?since=`).

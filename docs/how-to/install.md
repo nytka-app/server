@@ -179,6 +179,31 @@ The answer counts what happened:
   is not an Omi export or a time has no offset, `413` above 100 MB. Needs an admin token. Nothing from
   the file reaches a log or an error.
 
+## Restore a Nytka export
+
+The file `GET /api/v1/export` writes ([Export](../explanation/features.md#export)) goes back into a Nytka
+server: the same one after a lost database, or a new one you are moving to.
+
+```bash
+curl -sS -X POST "$NYTKA_URL/api/v1/import/nytka" \
+  -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @nytka-export.ndjson
+```
+
+The answer counts what happened: `{ people, conversations, tasks, memories, personFacts, bookmarks, digests,
+settings }`, each `{ imported, skipped }`, and `segments`.
+
+- Every record keeps its id. What the server already has (the same id, a person of the same name, an Omi
+  conversation imported there too, a task or memory with the same text) is `skipped` and left as it is, so
+  posting the file twice changes nothing.
+- Restored conversations trigger no webhook, summary or memory extraction, and are searchable once the
+  indexer has run.
+- Voiceprints and audio are not in the export, so they do not come back: the server learns voices again.
+- Settings in the file apply where your environment does not set them.
+- One transaction: `400` for a file that is no Nytka export, one from a newer format version, one cut short
+  (no `end` line) or one with a value the server refuses, and nothing is written; `413` above 100 MB.
+
 ## Importing other sources
 
 Besides an Omi export, Nytka takes two kinds of file from anywhere else, both admin token, both at

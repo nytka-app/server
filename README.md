@@ -66,7 +66,8 @@ docs do not say.
   the cost per day, the month so far and its forecast, and past a monthly budget batches go to a free engine and are
   marked to transcribe again, never dropped ([usage and budget](docs/specs/usage.md)).
 - **Nothing is lost.** Audio the pendant stored while the phone was away arrives later at the time it was recorded, and
-  an Omi export imports in one call.
+  an Omi export imports in one call. Nytka's own export reads back in, to restore a server or move to a new one
+  ([restore](docs/how-to/install.md#restore-a-nytka-export)).
 
 Not here: an iOS app, a hosted version for people who do not self-host, and OAuth sign-in for MCP clients. What each
 milestone adds, and what comes next, is in the [roadmap](ROADMAP.md).
@@ -120,7 +121,7 @@ crash repeats work and never loses or duplicates it. [Architecture](docs/guide/a
 
 ## Docs
 
-- [Install the server](docs/how-to/install.md): the 15-minute install, import from Omi, transcript and audio files
+- [Install the server](docs/how-to/install.md): the 15-minute install, import from Omi, restoring a Nytka export, transcript and audio files
 - [Configuration](docs/reference/configuration.md): every setting, tokens and scopes, QR pairing, transcription and
   language-model endpoints
 - [HTTP API, webhooks and MCP](docs/reference/api.md): every route, webhook events and signing, the MCP tools
