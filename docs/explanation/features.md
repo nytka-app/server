@@ -106,7 +106,7 @@ deleted when nothing else holds them (no voice, segment, voiceprint or note). Au
 person, so nothing was [respelled](../specs/name-spelling.md) and nothing needs respelling back. The suggestion becomes
 `rejected`, so the name is never offered or applied for that voice again; `409` when it is not auto-applied. Accept and
 reject answer `409` for an auto-applied suggestion, as for any that is no longer pending. Only the `suggest-names` job applies
-names; the MCP endpoint is read-only. Suggestions made before this existed stay pending.
+names; no MCP tool applies one. Suggestions made before this existed stay pending.
 
 ### Roles
 

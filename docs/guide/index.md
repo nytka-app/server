@@ -20,15 +20,15 @@ every 30 seconds. The server drops silence with Silero VAD, sends the speech to 
 transcription endpoint and stores the result in Postgres. A conversation ends after two minutes
 without speech (`Nytka__Conversations__Gap`). With a language model you configure, each closed
 conversation gets a title, a summary and tasks, and the server keeps lasting facts about you as
-memories. Search, webhooks and a read-only MCP endpoint sit on top. [Architecture](architecture.md)
+memories. Search, webhooks and an MCP endpoint (13 read tools, 3 write tools) sit on top. [Architecture](architecture.md)
 has the detail.
 
 ## What is in the two repositories
 
 | Repository | Holds | Version checked |
 |---|---|---|
-| [nytka-app/server](https://github.com/nytka-app/server) | ASP.NET Core server, Postgres, MCP | v0.19.0 |
-| [nytka-app/android](https://github.com/nytka-app/android) | Kotlin app for Android 12+ | v0.15.0 |
+| [nytka-app/server](https://github.com/nytka-app/server) | ASP.NET Core server, Postgres, MCP | v0.30.0 |
+| [nytka-app/android](https://github.com/nytka-app/android) | Kotlin app for Android 12+ | v0.22.0 |
 
 Each repository has its own version. Roadmap milestones have names, and release numbers come from
 release-please, so the two do not match ([vision](../../docs/vision.md#roadmap)).

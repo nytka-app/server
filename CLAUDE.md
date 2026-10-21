@@ -3,7 +3,7 @@
 Self-hosted server for the Nytka app: takes Opus chunks from the app, drops silence with Silero VAD,
 sends speech to an OpenAI-compatible transcription endpoint and serves conversations over HTTP API
 v1. It also asks an OpenAI-compatible chat endpoint for titles, summaries, tasks and memories,
-indexes text for full-text search, delivers webhooks and serves a read-only MCP endpoint. The whole
+indexes text for full-text search, delivers webhooks and serves an MCP endpoint (13 read tools, 3 write tools behind an `admin` token). The whole
 picture: `docs/vision.md`; what each version must do: `docs/specs/v0.1.md` to `v0.4.md`; how v0.1
 was built: `docs/plans/`.
 
