@@ -335,7 +335,7 @@ a call line's as `<label> (call)`. The design is in [docs/specs/speech-kind.md](
 ## Review
 
 One list for everything waiting on your answer, so the app needs one screen. `GET /api/v1/review`
-merges five queues, newest first:
+merges six queues, newest first:
 
 - **`name`:** a pending [name suggestion](#people), shown with the line that carries the name; it may carry a [role](#roles).
 - **`voice`:** a pending [voice match](#voice-grouping) ("Is this Olena?"), shown with its first three
@@ -349,9 +349,14 @@ merges five queues, newest first:
   lowest segment id, `text` its lines joined, and the proposal is `speechKind` (the guess) and `lines`:
   `[{ segmentId, startedAt, text }]`. Accept marks every line of the stretch with the guess (`media` for `unsure`),
   reject marks them `person`, both `204`; `409` when a line is already marked.
+- **`task`:** a summary's task that may be an open task again ([duplicate tasks](#duplicate-tasks)). `text` is the new task,
+  the conversation is its own, and `proposal.task` is the open one: `{ id, text, conversationId, conversationTitle }`, the
+  conversation fields `null` for a task made by hand. Accept deletes the new task and links its conversation to the open one
+  (`200` with the kept task, as `GET /api/v1/tasks` shows it); reject keeps both (`204`); `409` once it was answered or either
+  task is done or deleted. The item leaves the list as soon as either task is done or deleted.
 
 An item is `{ kind, id, conversationId, conversationTitle, at, text, proposal: { name, personId,
-confidence, similarity, isUser, tag, role, named }, clip, context }`; fields that do not belong to the kind are `null`. `id` is a
+confidence, similarity, isUser, tag, role, named, speechKind, lines, task }, clip, context }`; fields that do not belong to the kind are `null`. `id` is a
 segment id for a label and a speech item and a guid for the others. `limit` is 1 to 200, default 50.
 
 **Hearing an item.** Every item that rests on speech has the lines it rests on, its evidence: a name's line that says the
@@ -360,8 +365,8 @@ evidence and the evidence itself, oldest first: `{ segmentId, speaker, personNam
 `speaker` being the provider's label and `personName` the person the line belongs to. `clip` is `{ url, startMs, endMs }`:
 `GET /api/v1/review/{kind}/{id}/clip` (read token) answers the evidence with 3 s either side, at most 20 s, as Ogg Opus cut by
 capture time, and `startMs` and `endMs` are the capture times it covers in Unix milliseconds. `clip` is null, and the route
-`404`, once retention has deleted the audio (`Nytka__Audio__RetentionDays`, 14 days by default). A `tag` item has no clip and
-an empty `context`. Name suggestions listed by `GET /api/v1/people/suggestions` carry the same `clip`, whatever their status.
+`404`, once retention has deleted the audio (`Nytka__Audio__RetentionDays`, 14 days by default). A `tag` or `task` item has no
+clip and an empty `context`. Name suggestions listed by `GET /api/v1/people/suggestions` carry the same `clip`, whatever their status.
 
 `POST /api/v1/review/{kind}/{id}/accept` and `/reject` answer an item. A `name` or `voice` item is
 answered as its own routes do (`200` with the person on accept, `204` on reject; `409` when a
@@ -384,11 +389,27 @@ it only when the speaker named a date for that task, and the server drops one th
 never removes or rewrites one you touched. `GET /api/v1/tasks` lists open or done tasks, newest
 first, with the title and day of their conversation.
 
-A task whose normalized text matches an open (not done, not deleted) task from an earlier conversation is not
-created again: a task's `conversation_id` cannot name a second conversation, so the match is recorded in
-`task_duplicates` (`conversation_id`, `task_id`, `created_at`) instead, and raises no `task.created`. Matching ignores
-case, punctuation and whitespace, the same normalization a task's own fingerprint uses, so only text that is
-the same in substance is merged. `task_duplicates` has no API.
+### Duplicate tasks
+
+A summary's new task is compared with every open (not done, not deleted) task of other conversations and every open task
+made by hand, by its fingerprint: the text lower-cased, letters and digits only. A done task never absorbs a new one.
+
+- **Sure:** the same fingerprint, the same kind and no two different people (a task with no person matches either). The task
+  is not created again: a task's `conversation_id` cannot name a second conversation, so the conversation is linked to the
+  open task in `task_duplicates` (`conversation_id`, `task_id`, `created_at`, once per pair), and no `task.created` is raised.
+- **Unsure:** the same fingerprint with another kind or another person, or, with the same kind and no two different people,
+  texts of 3 words or more that share at least 60% of their distinct words ("Send Ben the report" and "Send the report to
+  Ben"). The task is created, and the pair waits in the [review inbox](#review) as a `task` item; the closest open task is
+  proposed.
+- Anything else is a new task.
+
+Matching is by words, not by the language model: nothing else in Nytka asks the model whether two things are the same, and the
+open tasks are few. Word overlap does not see Ukrainian case endings or synonyms, so such a pair stays two tasks unless you
+merge them by hand. `task_duplicates` has no API.
+
+`POST /api/v1/tasks` without a conversation answers `409` when an open task made by hand already has the same fingerprint, so
+a retried request adds nothing; once that task is done the same text can be added again, and reopening the old one is then
+`409` too.
 
 A task can name the person it is owed to or who asked for it (`personId`, `personName`). A summary
 sets it when it is created, only to a person whose voice you named in that conversation (the wearer

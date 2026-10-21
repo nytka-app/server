@@ -30,8 +30,8 @@ public static class ReviewEndpoints
     public sealed record ReviewList(IReadOnlyList<ReviewItem> Items);
 
     /// <summary>
-    /// Pending name suggestions, pending voice matches (none while voice matching is off) and low-confidence wearer labels,
-    /// newest first. <c>limit</c> is 1 to 200, default 50.
+    /// Pending name suggestions, pending voice matches (none while voice matching is off), low-confidence wearer labels and
+    /// possible duplicate tasks, newest first. <c>limit</c> is 1 to 200, default 50.
     /// </summary>
     private static async Task<IResult> ListAsync(
         int? limit, ReviewStore review, SettingsService settings, TimeProvider time, CancellationToken ct) =>
@@ -61,16 +61,26 @@ public static class ReviewEndpoints
 
     /// <summary>
     /// <c>name</c> and <c>voice</c> as <c>POST /people/suggestions/{id}/accept</c> and a card's answer do: 200 with the person.
-    /// A <c>label</c> stores Nytka's verdict as the wearer's mark: 204. 404 for an unknown kind or item, 409 for a name
-    /// suggestion that is no longer pending.
+    /// A <c>label</c> stores Nytka's verdict as the wearer's mark: 204. A <c>task</c> deletes the newer task and links its
+    /// conversation to the open one: 200 with the kept task. 404 for an unknown kind or item, 409 for a name suggestion or
+    /// task pair that is no longer pending.
     /// </summary>
     private static async Task<IResult> AcceptAsync(
         string kind, string id, NameSuggestionStore suggestions, VoiceGroupStore groups, PeopleStore people, ReviewStore review,
-        VoiceStore voices, SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, SpeechStore speech, CancellationToken ct)
+        VoiceStore voices, SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, SpeechStore speech, TaskStore tasks,
+        CancellationToken ct)
     {
         var now = time.GetUtcNow();
         switch (kind)
         {
+            case ReviewStore.TaskKind when Guid.TryParse(id, out var pair):
+                var (decision, kept) = await tasks.DecideDuplicateAsync(pair, accept: true, now, ct);
+                return decision switch
+                {
+                    SuggestionDecision.NotFound => NotFound(),
+                    SuggestionDecision.NotPending => NotPending(),
+                    _ => Results.Ok(await tasks.GetAsync(kept!.Value, ct)),
+                };
             case ReviewStore.TagKind when Guid.TryParse(id, out var tag):
                 return TagEndpoints.Accepted(await tagSuggestions.AcceptAsync(tag, now, ct));
             case ReviewStore.NameKind when Guid.TryParse(id, out var suggestion):
@@ -96,15 +106,22 @@ public static class ReviewEndpoints
 
     /// <summary>
     /// A name suggestion is never offered again for that voice, a voice match is kept as rejected, and a <c>label</c> stores
-    /// the opposite of Nytka's verdict as the wearer's mark. 204; 404 and 409 as accept.
+    /// the opposite of Nytka's verdict as the wearer's mark, and a <c>task</c> pair keeps both tasks. 204; 404 and 409 as accept.
     /// </summary>
     private static async Task<IResult> RejectAsync(
         string kind, string id, NameSuggestionStore suggestions, VoiceGroupStore groups, ReviewStore review, VoiceStore voices,
-        SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, SpeechStore speech, CancellationToken ct)
+        SettingsService settings, TimeProvider time, TagSuggestionStore tagSuggestions, SpeechStore speech, TaskStore tasks, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         switch (kind)
         {
+            case ReviewStore.TaskKind when Guid.TryParse(id, out var pair):
+                return (await tasks.DecideDuplicateAsync(pair, accept: false, now, ct)).Decision switch
+                {
+                    SuggestionDecision.NotFound => NotFound(),
+                    SuggestionDecision.NotPending => NotPending(),
+                    _ => Results.NoContent(),
+                };
             case ReviewStore.TagKind when Guid.TryParse(id, out var tag):
                 return TagEndpoints.Rejected(await tagSuggestions.RejectAsync(tag, now, ct));
             case ReviewStore.NameKind when Guid.TryParse(id, out var suggestion):

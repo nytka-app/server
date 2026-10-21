@@ -72,7 +72,7 @@ public sealed class McpTaskWriteTools(NpgsqlDataSource dataSource, TaskStore tas
             {
                 TaskCreateProblem.NoConversation => "No such conversation.",
                 TaskCreateProblem.NoPerson => "No such person.",
-                _ => "A task with this text already exists in this conversation.",
+                _ => TaskEndpoints.DuplicateTitle,
             });
         }
 
