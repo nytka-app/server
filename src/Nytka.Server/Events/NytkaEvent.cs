@@ -2,7 +2,7 @@ namespace Nytka.Server.Events;
 
 /// <summary>
 /// Something that happened, for the rest of the server to react to. <paramref name="SubjectId"/> is
-/// the id of the conversation, task, memory or bookmark it is about; <paramref name="BatchId"/> is set only by <c>segment.created</c>.
+/// the id of the conversation, task, memory, bookmark or budget alert it is about; <paramref name="BatchId"/> is set only by <c>segment.created</c>.
 /// </summary>
 public sealed record NytkaEvent(string Type, Guid SubjectId, long? BatchId = null)
 {
@@ -32,4 +32,10 @@ public sealed record NytkaEvent(string Type, Guid SubjectId, long? BatchId = nul
 
     /// <summary>A daily digest was stored; the subject is the digest.</summary>
     public const string DigestReady = "digest.ready";
+
+    /// <summary>The month's transcription spend reached <c>stt.budgetWarningPercent</c> of the budget; the subject is the alert.</summary>
+    public const string UsageBudgetWarning = "usage.budget.warning";
+
+    /// <summary>The month's transcription spend reached the budget, and batches go to <c>stt.budgetModel</c>; the subject is the alert.</summary>
+    public const string UsageBudgetReached = "usage.budget.reached";
 }

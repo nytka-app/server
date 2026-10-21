@@ -21,18 +21,20 @@ public sealed class TranscriptionClient(HttpClient http, IOptions<NytkaOptions> 
     /// <summary>The OpenAI transcription API's own limit is 244 tokens; this stays well under it in characters.</summary>
     private const int MaxVocabularyLength = 1000;
 
-    public async Task<TranscriptionResult> TranscribeAsync(byte[] wav, CancellationToken ct)
+    /// <summary>Sends <paramref name="wav"/>; <paramref name="model"/>, when given, goes as <c>model</c> instead of <c>stt.model</c>.</summary>
+    public async Task<TranscriptionResult> TranscribeAsync(byte[] wav, CancellationToken ct, string? model = null)
     {
         var stt = options.Value.Stt;
+        model ??= stt.Model;
 
         using var form = new MultipartFormDataContent();
         var file = new ByteArrayContent(wav);
         file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
         form.Add(file, "file", "audio.wav");
         form.Add(new StringContent("verbose_json"), "response_format");
-        if (!string.IsNullOrWhiteSpace(stt.Model))
+        if (!string.IsNullOrWhiteSpace(model))
         {
-            form.Add(new StringContent(stt.Model), "model");
+            form.Add(new StringContent(model), "model");
         }
 
         if (!string.IsNullOrWhiteSpace(stt.Language) && !stt.Language.Equals("auto", StringComparison.OrdinalIgnoreCase))

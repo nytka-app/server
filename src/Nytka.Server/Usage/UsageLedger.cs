@@ -1,0 +1,96 @@
+using Microsoft.Extensions.Options;
+using Npgsql;
+using Nytka.Server.Ai;
+using Nytka.Server.Digests;
+using Nytka.Server.Events;
+using Nytka.Server.Settings;
+using Nytka.Storage;
+
+namespace Nytka.Server.Usage;
+
+/// <summary>
+/// Where a batch goes: <paramref name="Model"/> is what Nytka sends as <c>model</c> (null: none), <paramref name="Engine"/>
+/// its name in the ledger and the price table. <paramref name="OverBudget"/> when the month's budget is spent and the batch
+/// goes to <c>stt.budgetModel</c> instead of the usual model.
+/// </summary>
+public sealed record UsagePlan(string? Model, string Engine, bool OverBudget);
+
+/// <summary>
+/// The transcription ledger (docs/specs/usage.md). Before a request, <see cref="PlanAsync"/> picks the model by the month's
+/// spend; once the answer is stored, <see cref="RecordAsync"/> writes what it cost in the same transaction and raises the
+/// budget events. The Audio lane sends one request at a time, so the spend a plan reads is never stale by more than one batch.
+/// </summary>
+public sealed class UsageLedger(UsageStore usage, SettingsService settings, IOptions<NytkaOptions> options, IEventPublisher events, TimeProvider time)
+{
+    public const string Warning = "warning";
+    public const string Reached = "reached";
+
+    /// <summary>The ledger's name for a model: lower case, or <c>auto</c> when none is sent and the endpoint picks.</summary>
+    public static string Engine(string? model) => string.IsNullOrWhiteSpace(model) ? "auto" : model.Trim().ToLowerInvariant();
+
+    /// <summary>The first day of the month of <paramref name="now"/> in <paramref name="zone"/>.</summary>
+    public static DateOnly MonthOf(DateTimeOffset now, TimeZoneInfo zone)
+    {
+        var today = DigestDay.Today(now, zone);
+        return new DateOnly(today.Year, today.Month, 1);
+    }
+
+    public async Task<UsagePlan> PlanAsync(CancellationToken ct)
+    {
+        var model = options.Value.Stt.Model;
+        var usual = new UsagePlan(string.IsNullOrWhiteSpace(model) ? null : model, Engine(model), false);
+        if (UsageSettings.Budget(settings) is not { } budget)
+        {
+            return usual;
+        }
+
+        var budgetModel = UsageSettings.BudgetModel(settings);
+        if (Engine(budgetModel) == usual.Engine)
+        {
+            return usual;
+        }
+
+        var zone = UserTimeZone.Resolve(settings);
+        var spent = await usage.SpentSinceAsync(DigestDay.Bounds(MonthOf(time.GetUtcNow(), zone), zone).From, ct);
+        return spent >= budget ? new UsagePlan(budgetModel, Engine(budgetModel), true) : usual;
+    }
+
+    /// <summary>
+    /// Writes the request's row inside the batch's transaction, then records and publishes each budget crossing it caused:
+    /// <c>usage.budget.warning</c> at <c>stt.budgetWarningPercent</c> of the budget, <c>usage.budget.reached</c> at all of it.
+    /// </summary>
+    public async Task RecordAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long batchId, Guid conversationId, UsagePlan plan, long audioMs, int textChars, CancellationToken ct)
+    {
+        var now = time.GetUtcNow();
+        var cost = UsageSettings.Prices(settings).RateOf(plan.Engine).Cost(audioMs, textChars);
+        await UsageStore.InsertAsync(connection, transaction, new NewUsage(batchId, conversationId, now, plan.Engine, audioMs, textChars, cost, plan.OverBudget), ct);
+
+        if (UsageSettings.Budget(settings) is not { } budget)
+        {
+            return;
+        }
+
+        var zone = UserTimeZone.Resolve(settings);
+        var month = MonthOf(now, zone);
+        var spent = await UsageStore.SpentSinceAsync(connection, transaction, DigestDay.Bounds(month, zone).From, ct);
+        var crossed = new List<(string Kind, string Event)>();
+        if (spent >= budget * UsageSettings.WarningPercent(settings) / 100m)
+        {
+            crossed.Add((Warning, NytkaEvent.UsageBudgetWarning));
+        }
+
+        if (spent >= budget)
+        {
+            crossed.Add((Reached, NytkaEvent.UsageBudgetReached));
+        }
+
+        foreach (var (kind, type) in crossed)
+        {
+            if (await UsageStore.InsertAlertAsync(connection, transaction, Guid.CreateVersion7(now), kind, month, budget, spent, now, ct) is { } id)
+            {
+                await events.PublishAsync(new NytkaEvent(type, id), connection, transaction, ct);
+            }
+        }
+    }
+}

@@ -66,12 +66,13 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// Marks the batch done with its segments, their voice verdicts and fingerprints, and its raw response, teaches the
     /// voiceprint (<paramref name="voice"/>) and drops the WAV, in one transaction. Does nothing when the batch is no
-    /// longer pending (deleted with its conversation, or already finished). <paramref name="stored"/> runs in the transaction once the segments are in. Deleting the speech audio deletes the
+    /// longer pending (deleted with its conversation, or already finished). <paramref name="stored"/> runs in the transaction once the segments are in, when there are any;
+    /// <paramref name="completed"/> runs in it once the batch is done, with or without segments. Deleting the speech audio deletes the
     /// fingerprints with it.
     /// </summary>
     public async Task CompleteAsync(
         long id, string response, IReadOnlyList<NewSegment> segments, BatchVoice? voice, bool deleteSpeechAudio, CancellationToken ct,
-        BatchStoredHook? stored = null)
+        BatchStoredHook? stored = null, BatchStoredHook? completed = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -129,6 +130,11 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
         if (stored is not null && segments.Count > 0)
         {
             await stored(connection, transaction, conversationId.Value, ct);
+        }
+
+        if (completed is not null)
+        {
+            await completed(connection, transaction, conversationId.Value, ct);
         }
 
         await transaction.CommitAsync(ct);

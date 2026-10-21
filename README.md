@@ -62,6 +62,9 @@ docs do not say.
 - **Search and Ask** over everything, in Ukrainian and English, plus a daily digest and briefs before calendar events.
 - **Webhooks and MCP.** Your other tools hear about new conversations, tasks and memories; AI agents read it all over
   MCP (Model Context Protocol, how AI tools read data) with 13 read tools and 3 that write.
+- **Usage and a budget.** Each transcription request is priced by a table you can edit, `GET /api/v1/usage` shows
+  the cost per day, the month so far and its forecast, and past a monthly budget batches go to a free engine and are
+  marked to transcribe again, never dropped ([usage and budget](docs/specs/usage.md)).
 - **Nothing is lost.** Audio the pendant stored while the phone was away arrives later at the time it was recorded, and
   an Omi export imports in one call.
 

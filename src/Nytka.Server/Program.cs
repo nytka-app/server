@@ -19,6 +19,7 @@ using Nytka.Server.Settings;
 using Nytka.Server.Speech;
 using Nytka.Server.Tags;
 using Nytka.Server.Transcription;
+using Nytka.Server.Usage;
 using Nytka.Server.Voice;
 using Nytka.Server.Webhooks;
 using Nytka.Storage;
@@ -84,6 +85,7 @@ builder.Services.AddNytkaPeople();
 builder.Services.AddNytkaTags();
 builder.Services.AddNytkaCalendar();
 builder.Services.AddNytkaSpeech();
+builder.Services.AddNytkaUsage();
 
 var app = builder.Build();
 
@@ -133,6 +135,7 @@ api.MapVoiceGroups();
 api.MapReview();
 api.MapBriefs();
 api.MapCalendarFeed();
+api.MapUsage();
 app.MapNytkaMcp();
 
 app.Run();
