@@ -7,8 +7,7 @@ section: "Project"
 
 This page describes server v0.30.0 and Android app v0.22.0, the latest GitHub releases of
 [nytka-app/server](https://github.com/nytka-app/server/releases) and
-[nytka-app/android](https://github.com/nytka-app/android/releases). Merged since v0.30.0 and
-shipping in the open release PR for 0.31.0: batch rules as settings (#165). There is no 1.0 release.
+[nytka-app/android](https://github.com/nytka-app/android/releases). There is no 1.0 release.
 Roadmap milestones have names and release numbers come from release-please, so the two differ
 ([vision](../../docs/vision.md#roadmap)).
 
@@ -40,7 +39,7 @@ been verified over a week of wear: that is listed below as partial.
 | Calendar briefs | works | [`CalendarBriefTests.cs`](../../tests/Nytka.Server.Tests/Calendar/CalendarBriefTests.cs) |
 | Coverage report for the wear test | works | [`CoverageReportTests.cs`](../../tests/Nytka.Server.Tests/Coverage/CoverageReportTests.cs) |
 | Transcription usage ledger, `GET /api/v1/usage`, monthly budget | works | [`UsageReportTests.cs`](../../tests/Nytka.Server.Tests/Usage/UsageReportTests.cs) |
-| Batch rules as settings (in the 0.31.0 release PR) | works | [`SpeechBatcherTests.cs`](../../tests/Nytka.Audio.Tests/Batching/SpeechBatcherTests.cs) |
+| Batch rules as settings | works | [`SpeechBatcherTests.cs`](../../tests/Nytka.Audio.Tests/Batching/SpeechBatcherTests.cs) |
 | Failed-batch retry, `POST /api/v1/transcriptions/retry` | works | [`BatchRetryTests.cs`](../../tests/Nytka.Server.Tests/Pipeline/BatchRetryTests.cs) |
 | Auto-applied names with undo; respelling | works | [`AutoNameTests.cs`](../../tests/Nytka.Server.Tests/People/AutoNameTests.cs), [`NameSpellingTests.cs`](../../tests/Nytka.Server.Tests/People/NameSpellingTests.cs) |
 | Review clips and context lines | works | [`ReviewClipTests.cs`](../../tests/Nytka.Server.Tests/People/ReviewClipTests.cs) |
