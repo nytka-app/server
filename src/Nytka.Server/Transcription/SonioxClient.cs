@@ -25,15 +25,30 @@ public sealed class SonioxClient(
 
     private const int MaxTermsLength = 1000;
 
-    /// <summary>Per HTTP call; the whole request waits up to <see cref="MaxWait"/> for the answer.</summary>
-    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+    /// <summary>Poll and transcript calls that fail with 429, 5xx, a timeout or no connection are tried again this often in a row.</summary>
+    private const int TransientRetries = 3;
 
     private static readonly string[] DefaultLanguages = ["uk", "ru", "en"];
 
     /// <summary>How long a request waits for Soniox to finish before it gives up (as <c>stt</c>'s pinned path does).</summary>
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(100);
 
+    /// <summary>The first wait between polls; each later one is half again as long, up to <see cref="MaxPollInterval"/>.</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    public TimeSpan MaxPollInterval { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>The wait before a poll or transcript call is tried again, when Soniox sends no usable <c>Retry-After</c>.</summary>
+    public TimeSpan RetryDelay { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>The longest <c>Retry-After</c> honoured.</summary>
+    public TimeSpan MaxRetryDelay { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Per HTTP call but the upload; the whole request waits up to <see cref="MaxWait"/> for the answer.</summary>
+    public TimeSpan CallTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The upload carries up to a minute of 16 kHz WAV (about 2 MB) and gets longer than the other calls.</summary>
+    public TimeSpan UploadTimeout { get; init; } = TimeSpan.FromSeconds(120);
 
     public async Task<TranscriptionResult> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
@@ -45,7 +60,7 @@ public sealed class SonioxClient(
         {
             transcriptionId = await CreateAsync(stt, fileId, context, ct);
             await WaitAsync(stt, transcriptionId, ct);
-            using var response = await SendAsync(stt, HttpMethod.Get, $"v1/transcriptions/{transcriptionId}/transcript", null, ct);
+            using var response = await GetAsync(stt, $"v1/transcriptions/{transcriptionId}/transcript", ct);
             return Parse(await response.Content.ReadAsStringAsync(ct));
         }
         finally
@@ -84,7 +99,7 @@ public sealed class SonioxClient(
         var file = new ByteArrayContent(wav);
         file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
         form.Add(file, "file", "audio.wav");
-        using var response = await SendAsync(stt, HttpMethod.Post, "v1/files", form, ct);
+        using var response = await SendAsync(stt, HttpMethod.Post, "v1/files", form, UploadTimeout, ct);
         return await IdAsync(response, ct);
     }
 
@@ -101,7 +116,7 @@ public sealed class SonioxClient(
             ["enable_speaker_diarization"] = true,
             ["context"] = context,
         });
-        using var response = await SendAsync(stt, HttpMethod.Post, "v1/transcriptions", body, ct);
+        using var response = await SendAsync(stt, HttpMethod.Post, "v1/transcriptions", body, CallTimeout, ct);
         return await IdAsync(response, ct);
     }
 
@@ -109,9 +124,10 @@ public sealed class SonioxClient(
     private async Task WaitAsync(NytkaOptions.SttOptions stt, string transcriptionId, CancellationToken ct)
     {
         var started = time.GetTimestamp();
+        var interval = PollInterval;
         while (true)
         {
-            using (var response = await SendAsync(stt, HttpMethod.Get, $"v1/transcriptions/{transcriptionId}", null, ct))
+            using (var response = await GetAsync(stt, $"v1/transcriptions/{transcriptionId}", ct))
             {
                 switch (await StatusAsync(response, ct))
                 {
@@ -129,15 +145,49 @@ public sealed class SonioxClient(
                     $"Soniox did not finish within {MaxWait.TotalSeconds.ToString(CultureInfo.InvariantCulture)} seconds.");
             }
 
-            await Task.Delay(PollInterval, time, ct);
+            await Task.Delay(interval, time, ct);
+            interval = TimeSpan.FromTicks(Math.Min(interval.Ticks * 3 / 2, MaxPollInterval.Ticks));
         }
+    }
+
+    /// <summary>
+    /// A GET on a transcription already in flight: a transient failure is tried again rather than thrown, since throwing deletes
+    /// the transcription and the job's retry pays for the audio again.
+    /// </summary>
+    private async Task<HttpResponseMessage> GetAsync(NytkaOptions.SttOptions stt, string path, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var response = await TrySendAsync(stt, HttpMethod.Get, path, null, CallTimeout, ct);
+            if (response is { IsSuccessStatusCode: true })
+            {
+                return response;
+            }
+
+            var transient = response is null || response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500;
+            if (!transient || attempt >= TransientRetries)
+            {
+                throw Failure(response);
+            }
+
+            var delay = RetryAfter(response) ?? RetryDelay;
+            response?.Dispose();
+            await Task.Delay(delay, time, ct);
+        }
+    }
+
+    private TimeSpan? RetryAfter(HttpResponseMessage? response)
+    {
+        var header = response?.Headers.RetryAfter;
+        var delay = header?.Delta ?? (header?.Date is { } date ? date - time.GetUtcNow() : null);
+        return delay is { } value ? TimeSpan.FromTicks(Math.Clamp(value.Ticks, 0, MaxRetryDelay.Ticks)) : null;
     }
 
     private async Task DeleteAsync(NytkaOptions.SttOptions stt, string path, string what)
     {
         try
         {
-            using var cts = new CancellationTokenSource(Timeout);
+            using var cts = new CancellationTokenSource(CallTimeout);
             using var request = Request(stt, HttpMethod.Delete, path, null);
             using var response = await http.SendAsync(request, cts.Token);
             if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.NotFound)
@@ -151,17 +201,41 @@ public sealed class SonioxClient(
         }
     }
 
-    private async Task<HttpResponseMessage> SendAsync(NytkaOptions.SttOptions stt, HttpMethod method, string path, HttpContent? content, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(
+        NytkaOptions.SttOptions stt, HttpMethod method, string path, HttpContent? content, TimeSpan timeout, CancellationToken ct)
     {
+        var response = await TrySendAsync(stt, method, path, content, timeout, ct);
+        return response is { IsSuccessStatusCode: true } ? response : throw Failure(response);
+    }
+
+    /// <summary>The response, or null when the call timed out or found no connection. Only <paramref name="ct"/> cancels.</summary>
+    private async Task<HttpResponseMessage?> TrySendAsync(
+        NytkaOptions.SttOptions stt, HttpMethod method, string path, HttpContent? content, TimeSpan timeout, CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
         using var request = Request(stt, method, path, content);
-        var response = await http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            response.Dispose();
-            throw new TranscriptionException($"Soniox answered {(int)response.StatusCode}.");
+            return await http.SendAsync(request, cts.Token);
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested && e is HttpRequestException or OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Takes the response and disposes it; the message is the status code only, never the body.</summary>
+    private static TranscriptionException Failure(HttpResponseMessage? response)
+    {
+        if (response is null)
+        {
+            return new TranscriptionException("Soniox did not answer in time or could not be reached.");
         }
 
-        return response;
+        var status = (int)response.StatusCode;
+        response.Dispose();
+        return new TranscriptionException($"Soniox answered {status}.");
     }
 
     private static HttpRequestMessage Request(NytkaOptions.SttOptions stt, HttpMethod method, string path, HttpContent? content)

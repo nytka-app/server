@@ -15,7 +15,8 @@ public class SonioxClientTests
 
     private readonly LogCapture _logs = new();
 
-    private SonioxClient Client(Action<NytkaOptions.SttOptions>? configure = null, IReadOnlyList<string>? namedPeople = null, TimeSpan? maxWait = null)
+    private SonioxClient Client(Action<NytkaOptions.SttOptions>? configure = null, IReadOnlyList<string>? namedPeople = null, TimeSpan? maxWait = null, TimeSpan? callTimeout = null,
+        TimeSpan? uploadTimeout = null)
     {
         var options = new NytkaOptions { Stt = { Url = "http://stt.test/v1/audio/transcriptions", SonioxApiKey = Key, SonioxBaseUrl = "https://soniox.test" } };
         configure?.Invoke(options.Stt);
@@ -23,6 +24,9 @@ public class SonioxClientTests
             new HttpClient(_soniox.CreateHandler()), Options.Create(options), _ => Task.FromResult(namedPeople ?? []), TimeProvider.System, _logs)
         {
             PollInterval = TimeSpan.FromMilliseconds(1),
+            RetryDelay = TimeSpan.FromMilliseconds(1),
+            CallTimeout = callTimeout ?? TimeSpan.FromSeconds(5),
+            UploadTimeout = uploadTimeout ?? TimeSpan.FromSeconds(5),
             MaxWait = maxWait ?? TimeSpan.FromSeconds(10),
         };
     }
@@ -139,13 +143,103 @@ public class SonioxClientTests
     [InlineData("POST /v1/transcriptions")]
     [InlineData("GET /v1/transcriptions/tr-2")]
     [InlineData("GET /v1/transcriptions/tr-2/transcript")]
-    public async Task A_429_anywhere_fails_with_the_status_only_and_leaves_nothing(string call)
+    public async Task A_lasting_429_anywhere_fails_with_the_status_only_and_leaves_nothing(string call)
     {
         _soniox.Fail = c => c == call ? HttpStatusCode.TooManyRequests : null;
 
         var error = await Assert.ThrowsAsync<TranscriptionException>(() => Client().TranscribeAsync([1], default));
 
         Assert.Equal("Soniox answered 429.", error.Message);
+        AssertNothingLeft();
+    }
+
+    [Theory]
+    [InlineData("GET /v1/transcriptions/tr-2", HttpStatusCode.TooManyRequests)]
+    [InlineData("GET /v1/transcriptions/tr-2", HttpStatusCode.BadGateway)]
+    [InlineData("GET /v1/transcriptions/tr-2/transcript", HttpStatusCode.TooManyRequests)]
+    public async Task A_transient_failure_on_a_transcription_in_flight_is_tried_again(string call, HttpStatusCode status)
+    {
+        _soniox.Statuses = ["processing", "completed"];
+        var failures = 0;
+        _soniox.Fail = c => c == call && failures++ < 3 ? status : null;
+
+        var result = await Client().TranscribeAsync([1], default);
+
+        Assert.Equal("hello there", result.Text);
+        Assert.Equal(1, _soniox.Calls.Count(c => c == "POST /v1/transcriptions"));
+        AssertNothingLeft();
+    }
+
+    [Fact]
+    public async Task A_poll_that_times_out_once_is_tried_again()
+    {
+        var slow = 1;
+        _soniox.Delay = c => c == "GET /v1/transcriptions/tr-2" && slow-- > 0 ? TimeSpan.FromSeconds(10) : TimeSpan.Zero;
+
+        var result = await Client(callTimeout: TimeSpan.FromMilliseconds(100)).TranscribeAsync([1], default);
+
+        Assert.Equal("hello there", result.Text);
+        AssertNothingLeft();
+    }
+
+    [Fact]
+    public async Task A_transient_failure_that_persists_fails_and_deletes_both()
+    {
+        _soniox.Fail = c => c == "GET /v1/transcriptions/tr-2" ? HttpStatusCode.ServiceUnavailable : null;
+
+        var error = await Assert.ThrowsAsync<TranscriptionException>(() => Client().TranscribeAsync([1], default));
+
+        Assert.Equal("Soniox answered 503.", error.Message);
+        Assert.Equal(4, _soniox.Calls.Count(c => c == "GET /v1/transcriptions/tr-2"));
+        AssertNothingLeft();
+    }
+
+    [Fact]
+    public async Task A_bad_request_on_a_poll_is_not_tried_again()
+    {
+        _soniox.Fail = c => c == "GET /v1/transcriptions/tr-2" ? HttpStatusCode.BadRequest : null;
+
+        await Assert.ThrowsAsync<TranscriptionException>(() => Client().TranscribeAsync([1], default));
+
+        Assert.Equal(1, _soniox.Calls.Count(c => c == "GET /v1/transcriptions/tr-2"));
+        AssertNothingLeft();
+    }
+
+    [Fact]
+    public async Task The_upload_has_its_own_timeout_and_a_timeout_is_a_transcription_failure()
+    {
+        _soniox.Delay = c => c == "POST /v1/files" ? TimeSpan.FromMilliseconds(300) : TimeSpan.Zero;
+
+        // Longer than the other calls may take: the upload still goes through.
+        var result = await Client(callTimeout: TimeSpan.FromMilliseconds(100), uploadTimeout: TimeSpan.FromSeconds(5)).TranscribeAsync([1], default);
+        Assert.Equal("hello there", result.Text);
+
+        var error = await Assert.ThrowsAsync<TranscriptionException>(
+            () => Client(uploadTimeout: TimeSpan.FromMilliseconds(100)).TranscribeAsync([1], default));
+        Assert.Equal("Soniox did not answer in time or could not be reached.", error.Message);
+        AssertNothingLeft();
+    }
+
+    [Fact]
+    public async Task Polls_further_apart_as_the_wait_grows()
+    {
+        _soniox.Statuses = ["processing"];
+        var client = new SonioxClient(
+            new HttpClient(_soniox.CreateHandler()),
+            Options.Create(new NytkaOptions { Stt = { SonioxApiKey = Key, SonioxBaseUrl = "https://soniox.test" } }),
+            _ => Task.FromResult<IReadOnlyList<string>>([]),
+            TimeProvider.System,
+            _logs)
+        {
+            PollInterval = TimeSpan.FromMilliseconds(20),
+            MaxPollInterval = TimeSpan.FromMilliseconds(80),
+            MaxWait = TimeSpan.FromMilliseconds(600),
+        };
+
+        await Assert.ThrowsAsync<TranscriptionException>(() => client.TranscribeAsync([1], default));
+
+        // At a fixed 20 ms about 30 polls fit in 600 ms; growing to 80 ms, about 10.
+        Assert.InRange(_soniox.Calls.Count(c => c == "GET /v1/transcriptions/tr-2"), 5, 16);
         AssertNothingLeft();
     }
 

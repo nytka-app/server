@@ -32,6 +32,9 @@ public sealed class FakeSoniox
     /// <summary>Called first for each request as <c>METHOD /path</c>; a status it returns answers the request instead.</summary>
     public Func<string, HttpStatusCode?> Fail { get; set; } = _ => null;
 
+    /// <summary>How long a call (<c>METHOD /path</c>) takes before it is answered; the caller's token cancels the wait.</summary>
+    public Func<string, TimeSpan> Delay { get; set; } = _ => TimeSpan.Zero;
+
     public IReadOnlyList<Recorded> Requests
     {
         get
@@ -78,6 +81,11 @@ public sealed class FakeSoniox
     {
         var path = request.RequestUri!.AbsolutePath;
         var call = $"{request.Method} {path}";
+        if (Delay(call) is { Ticks: > 0 } delay)
+        {
+            await Task.Delay(delay, ct);
+        }
+
         byte[] file = [];
         string? body = null;
         if (request.Content is MultipartContent multipart)
@@ -97,7 +105,9 @@ public sealed class FakeSoniox
             _requests.Add(new Recorded(call, request.RequestUri, request.Headers.Authorization?.ToString(), body, file));
             if (Fail(call) is { } failed)
             {
-                return Json("""{"error_message":"secret words were said"}""", failed);
+                var answer = Json("""{"error_message":"secret words were said"}""", failed);
+                answer.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero);
+                return answer;
             }
 
             var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
