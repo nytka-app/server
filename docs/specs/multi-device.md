@@ -8,6 +8,8 @@ codec can never lose audio, and what it would take to decode one. The device sur
 
 Verified against `main` at `b6d9fd1` on 2026-10-20.
 
+Status: step 1 built (NYTKA-120): codec registry, `codecs` in `/api/v1/info`. Step 2 waits for the Friend pendant.
+
 ## Done when
 
 1. `/api/v1/info` lists the chunk codecs this server decodes, as `codecs: [21]`.

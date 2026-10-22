@@ -48,7 +48,9 @@ public class ChunkFormatTests
     [Theory]
     [InlineData(3, 0x4C, "NYTK")]      // magic
     [InlineData(4, 0x02, "version")]   // version
-    [InlineData(5, 0x14, "Codec")]     // codec 20
+    [InlineData(5, 0x14, "Codec 20")]  // unknown codec
+    [InlineData(5, 40, "Codec 40")]    // LC3, reserved
+    [InlineData(5, 50, "Codec 50")]    // AAC, reserved
     public void Rejects_a_bad_header(int index, byte value, string message)
     {
         var bytes = GoldenBytes();
@@ -56,6 +58,19 @@ public class ChunkFormatTests
 
         var error = Assert.Throws<ChunkFormatException>(() => ChunkFormat.Read(bytes));
         Assert.Contains(message, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Accepts_only_opus_for_now() => Assert.Equal([21], ChunkFormat.AcceptedCodecs);
+
+    [Fact]
+    public void Reads_a_stored_v1_chunk_unchanged()
+    {
+        var chunk = ChunkFormat.Read(GoldenBytes());
+
+        Assert.Equal(ChunkFormat.OpusFs320, chunk.Codec);
+        Assert.Equal(1, ChunkFormat.Version);
+        Assert.Equal(GoldenBytes(), ChunkFormat.Write(chunk));
     }
 
     [Fact]
