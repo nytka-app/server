@@ -1,11 +1,11 @@
 ---
 title: "Status"
-description: "What works, what is partial and what is not built in Nytka server v0.30.0 and Android app v0.22.0, with the test behind each."
+description: "What works, what is partial and what is not built in Nytka server v0.31.0 and Android app v0.23.0, with the test behind each."
 order: 7
 section: "Project"
 ---
 
-This page describes server v0.30.0 and Android app v0.22.0, the latest GitHub releases of
+This page describes server v0.31.0 and Android app v0.23.0, the latest GitHub releases of
 [nytka-app/server](https://github.com/nytka-app/server/releases) and
 [nytka-app/android](https://github.com/nytka-app/android/releases). There is no 1.0 release.
 Roadmap milestones have names and release numbers come from release-please, so the two differ
