@@ -15,6 +15,9 @@ public static class TaskEndpoints
     public const int MaxLimit = 200;
     public const int MaxTextLength = 200;
 
+    /// <summary>Why a task was not added: its conversation has one with this text, or an open task made by hand has.</summary>
+    public const string DuplicateTitle = "A task with this text already exists.";
+
     public static RouteGroupBuilder MapTasks(this RouteGroupBuilder api)
     {
         var tasks = api.MapGroup("/tasks");
@@ -146,7 +149,7 @@ public static class TaskEndpoints
             case TaskCreateProblem.NoPerson:
                 return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such person.");
             case TaskCreateProblem.Duplicate:
-                return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "A task with this text already exists in this conversation.");
+                return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: TaskEndpoints.DuplicateTitle);
         }
 
         await events.PublishAsync(new NytkaEvent(NytkaEvent.TaskCreated, created.Task!.Id), connection, transaction, ct);
@@ -257,6 +260,11 @@ public static class TaskEndpoints
         catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.ForeignKeyViolation)
         {
             return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such person.");
+        }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // Reopening a task made by hand while another open one has its text.
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: DuplicateTitle);
         }
 
         if (update is null)

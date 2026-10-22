@@ -75,6 +75,19 @@ public sealed class TaskCreateTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(HttpStatusCode.Conflict, (await Post(new { text = "call ben", conversationId = conversation })).StatusCode);
     }
 
+    [Fact]
+    public async Task A_retried_task_by_hand_is_409_until_the_first_is_done()
+    {
+        var first = await Json(await Post(new { text = "Pay rent" }));
+
+        Assert.Equal(HttpStatusCode.Conflict, (await Post(new { text = "pay rent!" })).StatusCode);
+        (await Client.PatchAsJsonAsync($"/api/v1/tasks/{first.GetProperty("id").GetGuid()}", new { done = true })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Created, (await Post(new { text = "Pay rent" })).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.Conflict,
+            (await Client.PatchAsJsonAsync($"/api/v1/tasks/{first.GetProperty("id").GetGuid()}", new { done = false })).StatusCode);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("""{"text":""}""")]

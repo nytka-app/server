@@ -181,7 +181,8 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// removes or rewrites it. <paramref name="conversationId"/> may be null: a task needs no conversation.
     /// <see cref="TaskCreateProblem.NoConversation"/> or <see cref="TaskCreateProblem.NoPerson"/>
     /// when either id does not exist; <see cref="TaskCreateProblem.Duplicate"/> when the conversation already
-    /// has a task with this fingerprint.
+    /// has a task with this fingerprint or, without a conversation, an open task made by hand has it, so a retried
+    /// request adds nothing.
     /// </summary>
     public async Task<TaskCreated> CreateAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid? conversationId, string text, string fingerprint,
@@ -205,7 +206,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             """
             insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, due_at, edited, created_at, updated_at)
             values (@id, @conversationId, @text, @fingerprint, @personId, @kind, @due, true, @now, @now)
-            on conflict (conversation_id, fingerprint) do nothing
+            on conflict do nothing
             """,
             new { id, conversationId, text, fingerprint, personId, kind, due, now }, transaction, cancellationToken: ct));
         if (inserted == 0)
@@ -216,6 +217,65 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         var task = await connection.QuerySingleAsync<TaskRow>(new CommandDefinition(
             Select + "\nwhere t.id = @id", new { id }, transaction, cancellationToken: ct));
         return new TaskCreated(task, TaskCreateProblem.None);
+    }
+
+    private sealed record Pair(string Status, Guid TaskId, Guid DuplicateOf, Guid? ConversationId);
+
+    /// <summary>
+    /// Answers a possible duplicate (<c>task_duplicate_suggestions</c>). Accept deletes the newer task, keeping it as a
+    /// tombstone so its summary does not bring it back, and links its conversation to the earlier one in
+    /// <c>task_duplicates</c>; reject keeps both. <see cref="SuggestionDecision.NotPending"/> when it was answered or either
+    /// task is done or deleted since. On accept the result carries the kept task's id.
+    /// </summary>
+    public async Task<(SuggestionDecision Decision, Guid? Kept)> DecideDuplicateAsync(Guid id, bool accept, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var pair = await connection.QuerySingleOrDefaultAsync<Pair>(new CommandDefinition(
+            """
+            select s.status as Status, s.task_id as TaskId, s.duplicate_of as DuplicateOf, n.conversation_id as ConversationId
+            from task_duplicate_suggestions s join tasks n on n.id = s.task_id
+            where s.id = @id
+            for update of s
+            """,
+            new { id }, transaction, cancellationToken: ct));
+        if (pair is null)
+        {
+            return (SuggestionDecision.NotFound, null);
+        }
+
+        var live = await connection.QueryAsync<Guid>(new CommandDefinition(
+            "select id from tasks where id in (@TaskId, @DuplicateOf) and done = false and deleted_at is null for update",
+            new { pair.TaskId, pair.DuplicateOf }, transaction, cancellationToken: ct));
+        if (pair.Status != "pending" || live.Count() != 2)
+        {
+            return (SuggestionDecision.NotPending, null);
+        }
+
+        if (accept)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                update tasks set deleted_at = @now, updated_at = @now where id = @TaskId;
+                insert into task_duplicates (conversation_id, task_id, created_at) values (@ConversationId, @DuplicateOf, @now)
+                on conflict (conversation_id, task_id) do nothing;
+                """,
+                new { pair.TaskId, pair.DuplicateOf, pair.ConversationId, now }, transaction, cancellationToken: ct));
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update task_duplicate_suggestions set status = @status, decided_at = @now where id = @id",
+            new { id, status = accept ? "accepted" : "rejected", now }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return (SuggestionDecision.Ok, accept ? pair.DuplicateOf : null);
+    }
+
+    /// <summary>A task as <see cref="ListAsync"/> shows it, deleted or not; null when there is no such row.</summary>
+    public async Task<TaskRow?> GetAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<TaskRow>(new CommandDefinition(
+            Select + "\nwhere t.id = @id", new { id }, cancellationToken: ct));
     }
 
     /// <summary>Marks the task deleted and keeps the row as a tombstone, so a later summary does not bring it back.</summary>
@@ -239,10 +299,12 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// spec allows this; v0.4's webhooks will see the second event.
     /// </para>
     /// <para>
-    /// NYTKA-75: a fingerprint this conversation has not seen before that still matches an open (not
-    /// done, not deleted) task of another conversation inserts no row either; the match is recorded
-    /// in <c>task_duplicates</c> instead, since a task's <c>conversation_id</c> cannot name a second
-    /// conversation.
+    /// NYTKA-75: a fingerprint this conversation has not seen before is compared with the open (not done, not
+    /// deleted) tasks of other conversations and those made by hand (<see cref="TaskMatch"/>). A sure match inserts
+    /// no row; it is recorded in <c>task_duplicates</c> instead, since a task's <c>conversation_id</c> cannot name a
+    /// second conversation, and gives the open task its due date when it has none. A fingerprint this conversation
+    /// already joined adds nothing, even after that task is done. An unsure one inserts the task and a pending <c>task_duplicate_suggestions</c> row for the
+    /// review inbox.
     /// </para>
     /// </summary>
     public async Task<IReadOnlyList<Guid>> ReconcileAsync(
@@ -258,6 +320,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 new { conversationId }, transaction, cancellationToken: ct))).ToList();
 
         var known = existing.Select(t => t.Fingerprint).ToHashSet(StringComparer.Ordinal);
+        // A task this conversation already joined stays joined whatever happened to it since, done or deleted.
+        var joined = (await connection.QueryAsync<string>(new CommandDefinition(
+            "select t.fingerprint from task_duplicates d join tasks t on t.id = d.task_id where d.conversation_id = @conversationId",
+            new { conversationId }, transaction, cancellationToken: ct))).ToHashSet(StringComparer.Ordinal);
         var kept = returned.Select(t => t.Fingerprint).ToHashSet(StringComparer.Ordinal);
 
         var stale = existing
@@ -272,8 +338,14 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
 
         var created = new List<Guid>();
         var inserted = 0;
+        List<OpenTask>? open = null;
         foreach (var task in returned)
         {
+            if (joined.Contains(task.Fingerprint))
+            {
+                continue;
+            }
+
             if (!known.Add(task.Fingerprint))
             {
                 var row = existing.FirstOrDefault(t => t.Fingerprint == task.Fingerprint);
@@ -291,19 +363,23 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 continue;
             }
 
-            var duplicateOf = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+            open ??= (await connection.QueryAsync<OpenTask>(new CommandDefinition(
                 """
-                select id from tasks
-                where fingerprint = @Fingerprint and conversation_id <> @conversationId and done = false and deleted_at is null
+                select id as Id, fingerprint as Fingerprint, person_id as PersonId, kind as Kind, due_at as Due from tasks
+                where conversation_id is distinct from @conversationId and done = false and deleted_at is null
                 order by id
-                limit 1
                 """,
-                new { task.Fingerprint, conversationId }, transaction, cancellationToken: ct));
-            if (duplicateOf is { } existingTaskId)
+                new { conversationId }, transaction, cancellationToken: ct))).ToList();
+            var match = TaskMatch.Find(task, open);
+            if (match.Sure is { } existingTaskId)
             {
                 await connection.ExecuteAsync(new CommandDefinition(
-                    "insert into task_duplicates (conversation_id, task_id, created_at) values (@conversationId, @existingTaskId, @now)",
-                    new { conversationId, existingTaskId, now }, transaction, cancellationToken: ct));
+                    """
+                    insert into task_duplicates (conversation_id, task_id, created_at) values (@conversationId, @existingTaskId, @now)
+                    on conflict (conversation_id, task_id) do nothing;
+                    update tasks set due_at = @Due, updated_at = @now where id = @existingTaskId and due_at is null and cast(@Due as timestamptz) is not null;
+                    """,
+                    new { conversationId, existingTaskId, task.Due, now }, transaction, cancellationToken: ct));
                 continue;
             }
 
@@ -315,6 +391,16 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @Due, @now, @now)
                 """,
                 new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, task.Due, now }, transaction, cancellationToken: ct));
+            if (match.Unsure is { } duplicateOf)
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    """
+                    insert into task_duplicate_suggestions (id, task_id, duplicate_of, created_at)
+                    values (@suggestion, @id, @duplicateOf, @now)
+                    """,
+                    new { suggestion = Guid.CreateVersion7(now), id, duplicateOf, now }, transaction, cancellationToken: ct));
+            }
+
             if (task.Kind == TaskKinds.Commitment)
             {
                 created.Add(id);

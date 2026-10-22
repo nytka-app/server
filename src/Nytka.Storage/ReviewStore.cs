@@ -8,11 +8,15 @@ namespace Nytka.Storage;
 /// confidence; <c>voice</c> a person and a similarity; <c>label</c> a verdict (<see cref="IsUser"/>) and a similarity; <c>tag</c> a
 /// <see cref="Tag"/> name and, for a person's tag, the person. A
 /// <c>name</c> may carry a <see cref="Role"/>; with <see cref="Named"/> false it is the role alone, and <see cref="Name"/> its display form.
-/// A <c>speech</c> item has the guess (<see cref="SpeechKind"/>) and the <see cref="Lines"/> of its stretch.
+/// A <c>speech</c> item has the guess (<see cref="SpeechKind"/>) and the <see cref="Lines"/> of its stretch. A <c>task</c> item has the
+/// open <see cref="Task"/> its new task may duplicate.
 /// </summary>
 public sealed record ReviewProposal(
     string? Name, Guid? PersonId, float? Confidence, float? Similarity, bool? IsUser, string? Tag = null, string? Role = null, bool? Named = null,
-    string? SpeechKind = null, IReadOnlyList<ReviewLine>? Lines = null);
+    string? SpeechKind = null, IReadOnlyList<ReviewLine>? Lines = null, ReviewTask? Task = null);
+
+/// <summary>The open task a <c>task</c> item may duplicate; its conversation fields are null for a task made by hand.</summary>
+public sealed record ReviewTask(Guid Id, string Text, Guid? ConversationId, string? ConversationTitle);
 
 /// <summary>One line of a <c>speech</c> item's stretch.</summary>
 public sealed record ReviewLine(long SegmentId, DateTime StartedAt, string Text);
@@ -39,8 +43,8 @@ public sealed record ReviewClip(string Url, long StartMs, long EndMs);
 public sealed record ReviewContextLine(long SegmentId, string? Speaker, string? PersonName, bool IsUser, string Text, DateTime StartedAt, bool Evidence);
 
 /// <summary>
-/// The review inbox (docs/specs/people.md, Review inbox): pending name suggestions, pending voice matches and low-confidence
-/// wearer labels, one query each, merged newest first. It only reads; answers go through the stores that own each kind.
+/// The review inbox (docs/specs/people.md, Review inbox): pending name suggestions, pending voice matches, low-confidence
+/// wearer labels and possible duplicate tasks, one query each, merged newest first. It only reads; answers go through the stores that own each kind.
 /// </summary>
 public sealed class ReviewStore(NpgsqlDataSource dataSource)
 {
@@ -49,6 +53,7 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
     public const string LabelKind = "label";
     public const string TagKind = "tag";
     public const string SpeechKind = "speech";
+    public const string TaskKind = "task";
 
     /// <summary>The most speech items offered for one local day.</summary>
     public const int MaxSpeechPerDay = 3;
@@ -91,6 +96,10 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
     private sealed record Row(
         string Id, Guid ConversationId, string? Title, DateTime At, string Text, string? Name, Guid? PersonId, float? Confidence,
         float? Similarity, bool? IsUser, string? Role, bool? Named);
+
+    private sealed record DuplicateRow(
+        string Id, Guid ConversationId, string? Title, DateTime At, string Text, Guid TaskId, string TaskText, Guid? TaskConversationId,
+        string? TaskConversationTitle);
 
     private sealed record TagRow(string Id, Guid ConversationId, string? Title, DateTime At, string Text, string Tag, Guid? PersonId);
 
@@ -173,6 +182,24 @@ public sealed class ReviewStore(NpgsqlDataSource dataSource)
             new { limit }, cancellationToken: ct))).Select(r => new ReviewItem(
                 TagKind, r.Id, r.ConversationId, r.Title, r.At, r.Text, new ReviewProposal(null, r.PersonId, null, null, null, r.Tag))));
         items.AddRange(await SpeechItemsAsync(connection, now, zone ?? TimeZoneInfo.Utc, ct));
+        // The text is the new task's; a pair leaves the list once either task is done or deleted.
+        items.AddRange((await connection.QueryAsync<DuplicateRow>(new CommandDefinition(
+            """
+            select s.id::text as Id, n.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as Title, s.created_at as At,
+                   n.text as Text, o.id as TaskId, o.text as TaskText, o.conversation_id as TaskConversationId,
+                   coalesce(oc.title, oc.ai_title) as TaskConversationTitle
+            from task_duplicate_suggestions s
+            join tasks n on n.id = s.task_id
+            join conversations c on c.id = n.conversation_id
+            join tasks o on o.id = s.duplicate_of
+            left join conversations oc on oc.id = o.conversation_id
+            where s.status = 'pending' and not n.done and n.deleted_at is null and not o.done and o.deleted_at is null
+            order by s.created_at desc, s.id desc
+            limit @limit
+            """,
+            new { limit }, cancellationToken: ct))).Select(r => new ReviewItem(
+                TaskKind, r.Id, r.ConversationId, r.Title, r.At, r.Text,
+                new ReviewProposal(null, null, null, null, null, Task: new ReviewTask(r.TaskId, r.TaskText, r.TaskConversationId, r.TaskConversationTitle)))));
         var listed = new List<ReviewItem>();
         foreach (var item in items.OrderByDescending(i => i.At).ThenBy(i => i.Id, StringComparer.Ordinal).Take(limit))
         {
