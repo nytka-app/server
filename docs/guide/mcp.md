@@ -1,6 +1,6 @@
 ---
 title: "MCP reference"
-description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs, the twelve read-only tools and the three write tools an admin token unlocks."
+description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs, the thirteen read-only tools and the three write tools an admin token unlocks."
 order: 4
 section: "Reference"
 ---
@@ -66,7 +66,7 @@ way. Behind a reverse proxy, pass `/mcp` and that header through unchanged.
 
 ## Tools
 
-Twelve tools are read-only (`ReadOnly = true` in the source), declare an output schema and return
+Thirteen tools are read-only (`ReadOnly = true` in the source), declare an output schema and return
 structured content plus JSON text. The names below match the `McpServerTool` attributes in
 `src/Nytka.Server/Mcp/`.
 

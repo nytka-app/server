@@ -1,11 +1,11 @@
 ---
 title: "Status"
-description: "What works, what is partial and what is not built in Nytka server v0.25.0 and Android app v0.17.0, with the test behind each."
+description: "What works, what is partial and what is not built in Nytka server v0.31.0 and Android app v0.23.0, with the test behind each."
 order: 7
 section: "Project"
 ---
 
-This page describes server v0.25.0 and Android app v0.17.0, the latest GitHub releases of
+This page describes server v0.31.0 and Android app v0.23.0, the latest GitHub releases of
 [nytka-app/server](https://github.com/nytka-app/server/releases) and
 [nytka-app/android](https://github.com/nytka-app/android/releases). There is no 1.0 release.
 Roadmap milestones have names and release numbers come from release-please, so the two differ
@@ -26,7 +26,7 @@ been verified over a week of wear: that is listed below as partial.
 | Search | works | [`SearchApiTests.cs`](../../tests/Nytka.Server.Tests/Search/SearchApiTests.cs) |
 | Ukrainian search dictionary | partial | [`SearchDictionaryTests.cs`](../../tests/Nytka.Server.Tests/Search/SearchDictionaryTests.cs) |
 | Webhooks | works | [`WebhookDeliveryTests.cs`](../../tests/Nytka.Server.Tests/Webhooks/WebhookDeliveryTests.cs) |
-| MCP, 11 read-only tools | works | [`McpToolTests.cs`](../../tests/Nytka.Server.Tests/Mcp/McpToolTests.cs) |
+| MCP, 13 read tools and 3 write tools (admin token) | works | [`McpToolTests.cs`](../../tests/Nytka.Server.Tests/Mcp/McpToolTests.cs) |
 | Token scopes | works | [`ScopeTests.cs`](../../tests/Nytka.Server.Tests/Auth/ScopeTests.cs) |
 | Ask over your history | works | [`AskTests.cs`](../../tests/Nytka.Server.Tests/Ask/AskTests.cs) |
 | Omi import | works | [`OmiImportTests.cs`](../../tests/Nytka.Server.Tests/Import/OmiImportTests.cs) |
@@ -38,6 +38,16 @@ been verified over a week of wear: that is listed below as partial.
 | Voice grouping of other people | partial | [`VoiceGroupTests.cs`](../../tests/Nytka.Server.Tests/People/VoiceGroupTests.cs) |
 | Calendar briefs | works | [`CalendarBriefTests.cs`](../../tests/Nytka.Server.Tests/Calendar/CalendarBriefTests.cs) |
 | Coverage report for the wear test | works | [`CoverageReportTests.cs`](../../tests/Nytka.Server.Tests/Coverage/CoverageReportTests.cs) |
+| Transcription usage ledger, `GET /api/v1/usage`, monthly budget | works | [`UsageReportTests.cs`](../../tests/Nytka.Server.Tests/Usage/UsageReportTests.cs) |
+| Batch rules as settings | works | [`SpeechBatcherTests.cs`](../../tests/Nytka.Audio.Tests/Batching/SpeechBatcherTests.cs) |
+| Failed-batch retry, `POST /api/v1/transcriptions/retry` | works | [`BatchRetryTests.cs`](../../tests/Nytka.Server.Tests/Pipeline/BatchRetryTests.cs) |
+| Auto-applied names with undo; respelling | works | [`AutoNameTests.cs`](../../tests/Nytka.Server.Tests/People/AutoNameTests.cs), [`NameSpellingTests.cs`](../../tests/Nytka.Server.Tests/People/NameSpellingTests.cs) |
+| Review clips and context lines | works | [`ReviewClipTests.cs`](../../tests/Nytka.Server.Tests/People/ReviewClipTests.cs) |
+| Promise ledger | works | [`PersonPageTests.cs`](../../tests/Nytka.Server.Tests/People/PersonPageTests.cs) |
+| Tasks by hand with due dates | works | [`TaskCreateTests.cs`](../../tests/Nytka.Server.Tests/Tasks/TaskCreateTests.cs) |
+| Migrations through Switchknife.Migrations | works | [`MigratorAdoptionTests.cs`](../../tests/Nytka.Server.Tests/Storage/MigratorAdoptionTests.cs) |
+| Import of transcript and audio files, with range checks | works | [`FileImportTests.cs`](../../tests/Nytka.Server.Tests/Import/FileImportTests.cs) |
+| iCal feed (events, due tasks as VTODO) and Obsidian export (unique file names), webhook URLs kept out of logs | works | [`IcsWriterTests.cs`](../../tests/Nytka.Server.Tests/Calendar/IcsWriterTests.cs), [`ObsidianExportApiTests.cs`](../../tests/Nytka.Server.Tests/Api/ObsidianExportApiTests.cs) |
 
 Two rows are marked partial because of how they are gated, not because tests are missing. The
 dictionary tests skip until you fetch the Ukrainian dictionary, and CI sets
@@ -62,7 +72,7 @@ The app is documented in [its own README](https://github.com/nytka-app/android#r
 checked against it:
 
 - Installs from an APK on [GitHub Releases](https://github.com/nytka-app/android/releases/latest).
-- Ask, tags, people and the review inbox are described there as shipped.
+- Ask, tags, people, the review inbox with clips, tasks with due dates and names the server applied (with Undo) are described there as shipped.
 - Offline sync and voice enrollment are described there.
 
 ## Not built

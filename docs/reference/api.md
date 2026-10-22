@@ -1,6 +1,6 @@
 # HTTP API, webhooks and MCP
 
-The HTTP API v1, the webhooks the server sends and the read-only MCP endpoint for AI agents.
+The HTTP API v1, the webhooks the server sends and the MCP endpoint for AI agents (13 read tools, 3 write tools).
 
 ## API
 
@@ -235,7 +235,7 @@ through OAuth cannot connect.
 | `list_tags` | `query?` (names starting with it) | `{ items: [{ name, conversations, people, uses }] }`, most used first, as `GET /api/v1/tags` (see [Tags](../explanation/features.md#tags)) |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](../explanation/features.md#ask)); a tool error when no model is set or it fails |
 
-These twelve are read-only (`readOnlyHint`), declare an output schema and return their result as
+These thirteen are read-only (`readOnlyHint`), declare an output schema and return their result as
 structured content and as JSON text. A tool returns the fields its REST endpoint returns, with the
 limits and defaults in the table (`search` has no `offset`). Pass `nextBefore` as `before` to read the
 next page. An unknown id is a tool error ("No such conversation."); a malformed id, time, status or
