@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.32.0](https://github.com/nytka-app/server/compare/v0.31.0...v0.32.0) (2026-10-22)
+
+
+### Features
+
+* **import:** restore Nytka's own export (NYTKA-87) ([#168](https://github.com/nytka-app/server/issues/168)) ([944688b](https://github.com/nytka-app/server/commit/944688bd0c090999c49d755870c4c41e9732f1ff))
+* **stt:** direct Soniox client with your own key, context once (NYTKA-132) ([#171](https://github.com/nytka-app/server/issues/171)) ([69a5ef8](https://github.com/nytka-app/server/commit/69a5ef8b24b8a99cf2c896e3acb047f88d91ffa0))
+* **tasks:** duplicate tasks across conversations join the open one or wait for review ([#169](https://github.com/nytka-app/server/issues/169)) ([7b8a512](https://github.com/nytka-app/server/commit/7b8a51260d49e64177d15bd7429190e9fbfa4822))
+
+
+### Bug Fixes
+
+* validate Memories__Enabled and Search__Dictionary at start ([#170](https://github.com/nytka-app/server/issues/170)) ([9669f9d](https://github.com/nytka-app/server/commit/9669f9dd608d404d00e0cf93d2f72a989bdf9618))
+
 ## [0.31.0](https://github.com/nytka-app/server/compare/v0.30.0...v0.31.0) (2026-10-21)
 
 
