@@ -28,6 +28,21 @@ public sealed class ChunkUploadTests(PostgresFixture db) : IAsyncLifetime
         return await connection.ExecuteScalarAsync<long>(sql);
     }
 
+    [Theory]
+    [InlineData(40)]
+    [InlineData(50)]
+    public async Task Refuses_a_reserved_codec_with_400_naming_it(byte codec)
+    {
+        var bytes = TestChunks.Build(_session, 0, 10);
+        bytes[5] = codec;
+
+        var response = await _factory.CreateAuthorizedClient().PostAsync("/api/v1/chunks", TestChunks.Content(bytes));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains($"Codec {codec}", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Equal(0, await Count("select count(*) from audio_chunks"));
+    }
+
     [Fact]
     public async Task Stores_a_new_chunk()
     {

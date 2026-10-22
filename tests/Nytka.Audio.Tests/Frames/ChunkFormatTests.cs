@@ -70,6 +70,7 @@ public class ChunkFormatTests
 
         Assert.Equal(ChunkFormat.OpusFs320, chunk.Codec);
         Assert.Equal(1, ChunkFormat.Version);
+        Assert.Equal(GoldenBytes(), ChunkFormat.Write(chunk));
     }
 
     [Fact]
