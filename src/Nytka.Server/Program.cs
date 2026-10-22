@@ -94,6 +94,11 @@ var app = builder.Build();
 // this sees the environment and the defaults only. ValidateOnStart only runs in app.Run().
 _ = app.Services.GetRequiredService<IOptions<NytkaOptions>>().Value;
 
+// Only the options above are read at start; these two would otherwise fail at first use.
+var startupSettings = app.Services.GetRequiredService<SettingsService>();
+_ = startupSettings.Get(MemorySettings.EnabledKey);
+_ = startupSettings.Get(SearchSettings.Key);
+
 var connectionString = app.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings__Postgres is required.");
 NytkaMigrations.Run(connectionString, app.Services.GetRequiredService<ILogger<DatabaseMigrator>>());

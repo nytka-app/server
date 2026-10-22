@@ -112,7 +112,7 @@ text of each conversation goes to the endpoint you set and nowhere else
 | `Nytka__Digest__Enabled` | `false` | edit | Daily digest |
 | `Nytka__Digest__Hour` | `21` | edit | Local hour after which it is made |
 
-These need the language model. Several are checked when first used, so a bad value in `.env`
+These need the language model. Most are checked when first used (`Nytka__Memories__Enabled` is checked at start), so a bad value in `.env`
 fails at that point, not at start ([README](../reference/configuration.md#configuration)).
 `Nytka__People__VoiceMatching=true` is refused with `400` until your own voice is enrolled.
 
