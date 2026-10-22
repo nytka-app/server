@@ -394,13 +394,17 @@ first, with the title and day of their conversation.
 A summary's new task is compared with every open (not done, not deleted) task of other conversations and every open task
 made by hand, by its fingerprint: the text lower-cased, letters and digits only. A done task never absorbs a new one.
 
-- **Sure:** the same fingerprint, the same kind and no two different people (a task with no person matches either). The task
-  is not created again: a task's `conversation_id` cannot name a second conversation, so the conversation is linked to the
-  open task in `task_duplicates` (`conversation_id`, `task_id`, `created_at`, once per pair), and no `task.created` is raised.
-- **Unsure:** the same fingerprint with another kind or another person, or, with the same kind and no two different people,
-  texts of 3 words or more that share at least 60% of their distinct words ("Send Ben the report" and "Send the report to
-  Ben"). The task is created, and the pair waits in the [review inbox](#review) as a `task` item; the closest open task is
-  proposed.
+- **Sure:** the same fingerprint, the same kind, no two different people and no two different due dates (a task with no
+  person or no due date matches either). The task is not created again: a task's `conversation_id` cannot name a second
+  conversation, so the conversation is linked to the open task in `task_duplicates` (`conversation_id`, `task_id`,
+  `created_at`, once per pair), and no `task.created` is raised. An open task with no due date takes the new one's; one it
+  has is never changed. A conversation stays joined: once its task is done, a later summary of that conversation does not add
+  it again.
+- **Unsure:** the same fingerprint with another kind, person or due date, or, with the same kind and no two different people,
+  texts that share at least 60% of their distinct words, filler words such as "the", "to", "на" or "для" left out, when each
+  has 3 such words or more ("Send Ben the quarterly report" and "Send the quarterly report to Ben"). The task is created, and the pair waits in the [review inbox](#review) as a `task` item; the closest open task is
+  proposed. Accepting deletes the new task without an event (no task deletion raises one); a pair whose task is done or
+  deleted stays in the table but leaves the inbox and answers `409`.
 - Anything else is a new task.
 
 Matching is by words, not by the language model: nothing else in Nytka asks the model whether two things are the same, and the
@@ -409,7 +413,7 @@ merge them by hand. `task_duplicates` has no API.
 
 `POST /api/v1/tasks` without a conversation answers `409` when an open task made by hand already has the same fingerprint, so
 a retried request adds nothing; once that task is done the same text can be added again, and reopening the old one is then
-`409` too.
+`409` too. Copies made before this rule stay as they were: the oldest counts, the others are left out of it.
 
 A task can name the person it is owed to or who asked for it (`personId`, `personName`). A summary
 sets it when it is created, only to a person whose voice you named in that conversation (the wearer

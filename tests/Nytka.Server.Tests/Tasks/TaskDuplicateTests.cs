@@ -45,6 +45,56 @@ public sealed class TaskDuplicateTests(PostgresFixture db) : AiTestBase(db)
         Assert.Empty(await TaskItems());
     }
 
+    private async Task<Guid> SummarizeDue(string text, string due)
+    {
+        var id = await Seed(Talk);
+        Llm.Respond = _ => FakeLlm.AnswerItems("t", "s", new FakeLlm.Item(text, TaskKinds.Commitment, Due: due));
+        await TickAndRun();
+        return id;
+    }
+
+    private Task<DateTime?> DueOf(Guid taskId) =>
+        Db.ScalarAsync<DateTime?>("select due_at from tasks where id = @taskId", new { taskId });
+
+    [Fact]
+    public async Task A_joined_task_stays_joined_after_the_open_one_is_done()
+    {
+        var first = await Summarize("Call Ben");
+        var second = await Summarize("Call Ben");
+        (await Client.PatchAsJsonAsync($"/api/v1/tasks/{await TaskId(first)}", new { done = true })).EnsureSuccessStatusCode();
+
+        Server.Time.Advance(TimeSpan.FromMinutes(5));
+        await AddSegment(second, Talk, Now, "SPEAKER_5", "5", false);
+        await TickAndRun();
+
+        Assert.Empty(await Tasks(second));
+        Assert.Equal(1, await Links(second));
+    }
+
+    [Fact]
+    public async Task Two_different_due_dates_are_only_a_possible_duplicate()
+    {
+        var first = await SummarizeDue("Pay rent", "2026-10-02");
+        var second = await SummarizeDue("Pay rent", "2026-10-20");
+
+        Assert.Equal(["Pay rent"], (await Tasks(second)).Select(t => t.Text));
+        Assert.Equal(0, await Links(second));
+        Assert.Equal(await TaskId(first), Assert.Single(await TaskItems()).GetProperty("proposal").GetProperty("task").GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task A_join_gives_the_open_task_the_due_date_it_lacks_and_never_changes_one()
+    {
+        var first = await Summarize("Pay rent");
+        await SummarizeDue("Pay rent", "2026-10-02");
+        Assert.Equal(new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc), await DueOf(await TaskId(first)));
+
+        var third = await Summarize("Pay rent");
+
+        Assert.Empty(await Tasks(third));
+        Assert.Equal(new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc), await DueOf(await TaskId(first)));
+    }
+
     [Fact]
     public async Task A_task_made_by_hand_absorbs_a_summary_task()
     {

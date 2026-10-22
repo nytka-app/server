@@ -25,13 +25,21 @@ create index task_duplicate_suggestions_pending on task_duplicate_suggestions (c
 create index task_duplicate_suggestions_by_duplicate_of on task_duplicate_suggestions (duplicate_of);
 
 -- unique (conversation_id, fingerprint) never collides for a task made by hand (no conversation), so a retried
--- POST /api/v1/tasks added it twice. Open hand-made tasks are now unique by fingerprint; of any open copies already
--- there the oldest stays and the others become deleted, which keeps their rows.
-update tasks t
-set deleted_at = now(), updated_at = now()
-where t.conversation_id is null and not t.done and t.deleted_at is null
-  and exists (select 1 from tasks o
-              where o.conversation_id is null and not o.done and o.deleted_at is null
-                and o.fingerprint = t.fingerprint and o.id < t.id);
-
-create unique index tasks_open_by_hand on tasks (fingerprint) where conversation_id is null and not done and deleted_at is null;
+-- POST /api/v1/tasks added it twice. Open hand-made tasks are now unique by fingerprint. Copies already there are left
+-- as they are: the oldest of each counts, and the index leaves the later ones out by id.
+do $$
+declare
+    copies uuid[];
+begin
+    select coalesce(array_agg(t.id order by t.id), '{}') into copies
+    from tasks t
+    where t.conversation_id is null and not t.done and t.deleted_at is null
+      and exists (select 1 from tasks o
+                  where o.conversation_id is null and not o.done and o.deleted_at is null
+                    and o.fingerprint = t.fingerprint and o.id < t.id);
+    execute format(
+        'create unique index tasks_open_by_hand on tasks (fingerprint) '
+        'where conversation_id is null and not done and deleted_at is null%s',
+        case when cardinality(copies) = 0 then '' else format(' and id <> all (%L::uuid[])', copies) end);
+end
+$$;

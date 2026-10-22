@@ -302,7 +302,8 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// NYTKA-75: a fingerprint this conversation has not seen before is compared with the open (not done, not
     /// deleted) tasks of other conversations and those made by hand (<see cref="TaskMatch"/>). A sure match inserts
     /// no row; it is recorded in <c>task_duplicates</c> instead, since a task's <c>conversation_id</c> cannot name a
-    /// second conversation. An unsure one inserts the task and a pending <c>task_duplicate_suggestions</c> row for the
+    /// second conversation, and gives the open task its due date when it has none. A fingerprint this conversation
+    /// already joined adds nothing, even after that task is done. An unsure one inserts the task and a pending <c>task_duplicate_suggestions</c> row for the
     /// review inbox.
     /// </para>
     /// </summary>
@@ -319,6 +320,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 new { conversationId }, transaction, cancellationToken: ct))).ToList();
 
         var known = existing.Select(t => t.Fingerprint).ToHashSet(StringComparer.Ordinal);
+        // A task this conversation already joined stays joined whatever happened to it since, done or deleted.
+        var joined = (await connection.QueryAsync<string>(new CommandDefinition(
+            "select t.fingerprint from task_duplicates d join tasks t on t.id = d.task_id where d.conversation_id = @conversationId",
+            new { conversationId }, transaction, cancellationToken: ct))).ToHashSet(StringComparer.Ordinal);
         var kept = returned.Select(t => t.Fingerprint).ToHashSet(StringComparer.Ordinal);
 
         var stale = existing
@@ -336,6 +341,11 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         List<OpenTask>? open = null;
         foreach (var task in returned)
         {
+            if (joined.Contains(task.Fingerprint))
+            {
+                continue;
+            }
+
             if (!known.Add(task.Fingerprint))
             {
                 var row = existing.FirstOrDefault(t => t.Fingerprint == task.Fingerprint);
@@ -355,7 +365,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
 
             open ??= (await connection.QueryAsync<OpenTask>(new CommandDefinition(
                 """
-                select id as Id, fingerprint as Fingerprint, person_id as PersonId, kind as Kind from tasks
+                select id as Id, fingerprint as Fingerprint, person_id as PersonId, kind as Kind, due_at as Due from tasks
                 where conversation_id is distinct from @conversationId and done = false and deleted_at is null
                 order by id
                 """,
@@ -366,9 +376,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 await connection.ExecuteAsync(new CommandDefinition(
                     """
                     insert into task_duplicates (conversation_id, task_id, created_at) values (@conversationId, @existingTaskId, @now)
-                    on conflict (conversation_id, task_id) do nothing
+                    on conflict (conversation_id, task_id) do nothing;
+                    update tasks set due_at = @Due, updated_at = @now where id = @existingTaskId and due_at is null and cast(@Due as timestamptz) is not null;
                     """,
-                    new { conversationId, existingTaskId, now }, transaction, cancellationToken: ct));
+                    new { conversationId, existingTaskId, task.Due, now }, transaction, cancellationToken: ct));
                 continue;
             }
 

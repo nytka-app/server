@@ -48,6 +48,25 @@ public sealed class TaskMatchTests
     }
 
     [Fact]
+    public void Two_due_dates_are_unsure_and_a_missing_one_matches_either()
+    {
+        var friday = new DateTime(2026, 10, 23, 0, 0, 0, DateTimeKind.Utc);
+        var open = Open("Pay rent") with { Due = friday };
+
+        Assert.Equal(new TaskMatchResult(null, open.Id), TaskMatch.Find(New("Pay rent") with { Due = friday.AddMonths(1) }, [open]));
+        Assert.Equal(open.Id, TaskMatch.Find(New("Pay rent") with { Due = friday }, [open]).Sure);
+        Assert.Equal(open.Id, TaskMatch.Find(New("Pay rent"), [open]).Sure);
+        Assert.Equal(open.Id, TaskMatch.Find(New("Pay rent") with { Due = friday }, [Open("Pay rent") with { Id = open.Id }]).Sure);
+    }
+
+    [Fact]
+    public void Filler_words_do_not_count_toward_the_overlap()
+    {
+        // All words: 6 of 8 shared (0.75). Without filler: {send, report, train} and {send, photos, train}, 2 of 4.
+        Assert.Equal(new TaskMatchResult(null, null), TaskMatch.Find(New("Send the report to me on the train"), [Open("Send the photos to me on the train")]));
+    }
+
+    [Fact]
     public void Mostly_the_same_words_are_unsure_and_the_closest_wins()
     {
         var far = Open("Send Ben the quarterly report by Friday evening");
