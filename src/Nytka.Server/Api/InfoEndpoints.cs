@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Security.Claims;
+using Nytka.Audio.Frames;
 using Nytka.Server.Auth;
 using Nytka.Server.People;
 using Nytka.Server.Settings;
@@ -68,10 +69,10 @@ public static class InfoEndpoints
     {
         // The app reads scope to refuse a read token; a server without it counts as admin.
         api.MapGet("/info", (ClaimsPrincipal user, SpeakerModel voice, SettingsService settings) => Results.Ok(new InfoResponse(
-            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice, settings))))
+            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice, settings), ChunkFormat.AcceptedCodecs)))
             .AllowRead();
         return api;
     }
 
-    public sealed record InfoResponse(string ServerVersion, int ApiVersion, string Scope, IReadOnlyList<string> Features);
+    public sealed record InfoResponse(string ServerVersion, int ApiVersion, string Scope, IReadOnlyList<string> Features, IReadOnlyList<int> Codecs);
 }

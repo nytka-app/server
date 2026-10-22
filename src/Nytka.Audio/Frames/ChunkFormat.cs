@@ -11,12 +11,26 @@ public static class ChunkFormat
     public const string MediaType = "application/vnd.nytka.frames.v1";
     public const byte Version = 1;
     public const byte OpusFs320 = 21;
+    public const byte Lc3 = 40;
+    public const byte AacAdts = 50;
     public const int HeaderSize = 38;
     public const int MaxFrames = 1500;
     public const int MaxBytes = 512 * 1024;
 
     /// <summary>Latest base time that keeps every frame time (base + a u32 offset) a valid <see cref="DateTimeOffset"/>.</summary>
     public const long MaxBaseTimeMs = 253_402_300_799_999L - uint.MaxValue;
+
+    /// <summary>Codec values and whether this server decodes them. A reserved value is refused like an unknown one.</summary>
+    private static readonly (byte Value, bool Accepted)[] Registry =
+    [
+        (OpusFs320, true),
+        (Lc3, false),
+        (AacAdts, false),
+    ];
+
+    /// <summary>The codec values chunks may carry, as <c>/api/v1/info</c> lists them.</summary>
+    public static IReadOnlyList<int> AcceptedCodecs { get; } =
+        [.. Registry.Where(c => c.Accepted).Select(c => (int)c.Value)];
 
     private const int RecordHeaderSize = 6;
 
@@ -44,9 +58,10 @@ public static class ChunkFormat
             throw new ChunkFormatException($"Chunk version {data[4]} is not supported.");
         }
 
-        if (data[5] != OpusFs320)
+        var codec = data[5];
+        if (!AcceptedCodecs.Contains(codec))
         {
-            throw new ChunkFormatException($"Codec {data[5]} is not supported; expected {OpusFs320}.");
+            throw new ChunkFormatException($"Codec {codec} is not supported; accepted: {string.Join(", ", AcceptedCodecs)}.");
         }
 
         var session = new Guid(data.Slice(6, 16), bigEndian: true);
@@ -105,7 +120,7 @@ public static class ChunkFormat
             throw new ChunkFormatException($"The chunk has {data.Length - position} trailing bytes.");
         }
 
-        return new Chunk(session, OpusFs320, firstSeq, baseTime, frames);
+        return new Chunk(session, codec, firstSeq, baseTime, frames);
     }
 
     /// <summary>

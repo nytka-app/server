@@ -51,6 +51,7 @@ public class HostTests(PostgresFixture db)
         Assert.Equal(1, info.GetProperty("apiVersion").GetInt32());
         Assert.False(string.IsNullOrEmpty(info.GetProperty("serverVersion").GetString()));
         Assert.Equal("admin", info.GetProperty("scope").GetString());
+        Assert.Equal([21], info.GetProperty("codecs").EnumerateArray().Select(c => c.GetInt32()));
         // The build copies the speaker model beside the binaries when scripts/fetch-speaker-model.sh fetched it.
         Assert.Equal(
             File.Exists(SpeakerEmbedder.DefaultPath) ? ["offline-sync", "voice", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage"] : ["offline-sync", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage"],
