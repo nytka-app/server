@@ -527,7 +527,8 @@ short. Times are UTC, ids are stable between exports.
   true|false` is), name suggestions, voice matches, calendar events, briefs and proposed tags are not either; `tags` holds only the tags you set or accepted. API keys, tokens, webhooks and their secrets, and every
   URL setting are left out; the `setting` lines are the non-secret settings in effect.
 - No audio: fetch `GET /api/v1/conversations/{id}/audio` for the conversations you want.
-- Nytka cannot import its own export yet. Every field is specified in
+- `POST /api/v1/import/nytka` reads the file back, to restore a server or move to another one; see
+  [Restore a Nytka export](../how-to/install.md#restore-a-nytka-export). Every field is specified in
   [docs/specs/export.md](../specs/export.md).
 
 `GET /api/v1/export/obsidian` (admin token) answers a ZIP of Markdown notes for an Obsidian vault:

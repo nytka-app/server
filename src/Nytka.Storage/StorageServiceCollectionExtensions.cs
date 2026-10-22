@@ -32,6 +32,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<PersonFactStore>();
         services.AddSingleton<PeopleBackfillStore>();
         services.AddSingleton<ImportStore>();
+        services.AddSingleton<RestoreStore>();
         services.AddSingleton<BookmarkStore>();
         services.AddSingleton<DigestStore>();
         services.AddSingleton<ExportStore>();

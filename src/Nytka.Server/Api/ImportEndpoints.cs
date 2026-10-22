@@ -4,19 +4,22 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Net.Http.Headers;
+using Npgsql;
 using Nytka.Audio.Containers;
 using Nytka.Audio.Decoding;
 using Nytka.Audio.Frames;
+using Nytka.Server.Ai;
 using Nytka.Server.Import;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
 
 /// <summary>
-/// File imports, admin only: the Omi export (docs/specs/v0.7.md), a plain transcript file and an audio file
-/// (NYTKA-69). A transcript file becomes one conversation, source 'import'; an audio file is decoded, re-encoded
+/// File imports, admin only: the Omi export (docs/specs/v0.7.md), Nytka's own export (docs/specs/export.md,
+/// Re-importing), a plain transcript file and an audio file (NYTKA-69). A transcript file becomes one conversation, source 'import'; an audio file is decoded, re-encoded
 /// to the pendant's own chunk format and run through the ordinary chunk upload and process-session pipeline, so
 /// it is indistinguishable from a live capture once stored.
 /// </summary>
@@ -28,6 +31,7 @@ public static partial class ImportEndpoints
     {
         var import = api.MapGroup("/import");
         import.MapPost("/omi", OmiAsync);
+        import.MapPost("/nytka", NytkaAsync);
         import.MapPost("/transcript", TranscriptAsync);
         import.MapPost("/audio", AudioAsync);
         return api;
@@ -81,6 +85,92 @@ public static partial class ImportEndpoints
                 return NotAnExport();
             }
         }
+    }
+
+    public sealed record NytkaImportResponse(
+        ImportCounts People, ImportCounts Conversations, int Segments, ImportCounts Tasks, ImportCounts Memories, ImportCounts PersonFacts,
+        ImportCounts Bookmarks, ImportCounts Digests, ImportCounts Settings);
+
+    /// <summary>
+    /// Body: a file of <c>GET /api/v1/export</c>, at most 100 MB. Writes it back in one transaction, keeping every id, and
+    /// skips what is already here, so the same file imported twice changes nothing the second time. Its settings are applied
+    /// after the data commits, each one only where it is not locked and differs from the value in effect.
+    /// </summary>
+    private static async Task<IResult> NytkaAsync(
+        HttpRequest http, RestoreStore store, SettingsService settings, TimeProvider time, CancellationToken ct)
+    {
+        if (http.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+        {
+            limit.MaxRequestBodySize = MaxBodyBytes;
+        }
+
+        if (http.ContentLength > MaxBodyBytes)
+        {
+            return TooLarge();
+        }
+
+        var reader = new NytkaExportReader();
+        RestoreResult restored;
+        try
+        {
+            restored = await store.RestoreAsync(reader.ReadAsync(new LimitedStream(http.Body, MaxBodyBytes), ct), TextFingerprint.Of, time.GetUtcNow(), ct);
+        }
+        catch (NytkaExportException error)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: error.Message);
+        }
+        catch (BodyTooLargeException)
+        {
+            return TooLarge();
+        }
+        catch (BadHttpRequestException error) when (error.StatusCode == StatusCodes.Status413PayloadTooLarge)
+        {
+            return TooLarge();
+        }
+        catch (PostgresException error) when (error.SqlState.StartsWith("22", StringComparison.Ordinal) || error.SqlState.StartsWith("23", StringComparison.Ordinal))
+        {
+            // A value the schema refuses (too long, an unknown kind): the file was changed or comes from a server whose rules differ.
+            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "The export holds a record this server cannot store.");
+        }
+
+        var applied = await RestoreSettingsAsync(settings, reader.Settings, ct);
+        return Results.Ok(new NytkaImportResponse(
+            restored.People, restored.Conversations, restored.Segments, restored.Tasks, restored.Memories, restored.PersonFacts,
+            restored.Bookmarks, restored.Digests, applied));
+    }
+
+    /// <summary>
+    /// Writes the file's settings that the export may carry (no secret, URL or environment-only key) where the environment does
+    /// not set them and they differ from the value in effect. A value this server refuses is skipped, not the whole set.
+    /// </summary>
+    private static async Task<ImportCounts> RestoreSettingsAsync(
+        SettingsService settings, IReadOnlyList<ExportEndpoints.ExportSetting> lines, CancellationToken ct)
+    {
+        var changes = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            if (settings.Find(line.Key) is { } definition && !definition.IsSecret && definition.Type != SettingType.Url
+                && !settings.IsLocked(definition) && settings.Resolve(definition).Value != line.Value)
+            {
+                changes[line.Key] = line.Value;
+            }
+        }
+
+        if (changes.Count == 0 || await settings.UpdateAsync(changes, ct) is SettingsUpdate.Applied)
+        {
+            return new ImportCounts(changes.Count, lines.Count - changes.Count);
+        }
+
+        var applied = 0;
+        foreach (var change in changes)
+        {
+            if (await settings.UpdateAsync(new Dictionary<string, string?> { [change.Key] = change.Value }, ct) is SettingsUpdate.Applied)
+            {
+                applied++;
+            }
+        }
+
+        return new ImportCounts(applied, lines.Count - applied);
     }
 
     public sealed record TranscriptImportResponse(Guid ConversationId, int Segments);
