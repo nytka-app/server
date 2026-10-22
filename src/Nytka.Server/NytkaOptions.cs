@@ -17,6 +17,8 @@ public sealed class NytkaOptions
 
     public sealed class SttOptions
     {
+        public const string DefaultSonioxBaseUrl = "https://api.soniox.com";
+
         public string Url { get; set; } = "";
 
         public string? ApiKey { get; set; }
@@ -26,6 +28,14 @@ public sealed class NytkaOptions
         public string? Language { get; set; }
 
         public string? Vocabulary { get; set; }
+
+        /// <summary>Env only. When set, batches go to Soniox directly (<c>SonioxClient</c>) instead of <see cref="Url"/>.</summary>
+        public string? SonioxApiKey { get; set; }
+
+        /// <summary>Env only; empty is <see cref="DefaultSonioxBaseUrl"/>.</summary>
+        public string? SonioxBaseUrl { get; set; }
+
+        public bool UsesSoniox => !string.IsNullOrWhiteSpace(SonioxApiKey);
     }
 
     public sealed class ConversationOptions

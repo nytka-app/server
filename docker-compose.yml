@@ -49,6 +49,8 @@ services:
       Nytka__Stt__Model: "${Nytka__Stt__Model:-}"
       Nytka__Stt__Language: "${Nytka__Stt__Language:-}"
       Nytka__Stt__Vocabulary: "${Nytka__Stt__Vocabulary:-}"
+      Nytka__Stt__SonioxApiKey: "${Nytka__Stt__SonioxApiKey:-}"
+      Nytka__Stt__SonioxBaseUrl: "${Nytka__Stt__SonioxBaseUrl:-}"
       Nytka__Stt__Prices: "${Nytka__Stt__Prices:-}"
       Nytka__Stt__MonthlyBudgetUsd: "${Nytka__Stt__MonthlyBudgetUsd:-}"
       Nytka__Stt__BudgetWarningPercent: "${Nytka__Stt__BudgetWarningPercent:-}"

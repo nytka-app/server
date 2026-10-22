@@ -34,6 +34,8 @@ public sealed class NytkaApiFactory(
 
     public FakeStt Stt { get; } = new();
 
+    public FakeSoniox Soniox { get; } = new();
+
     public HttpClient CreateAuthorizedClient()
     {
         var client = CreateClient();
@@ -117,6 +119,7 @@ public sealed class NytkaApiFactory(
             // The last primary-handler registration wins: every test host talks to the fake.
             s.AddHttpClient<TranscriptionClient>().ConfigurePrimaryHttpMessageHandler(Stt.CreateHandler);
             s.AddHttpClient<VoiceprintClient>().ConfigurePrimaryHttpMessageHandler(Stt.CreateHandler);
+            s.AddHttpClient<SonioxClient>().ConfigurePrimaryHttpMessageHandler(Soniox.CreateHandler);
 
             s.AddSingleton<IVoiceActivityDetector, EnergyVad>();
 

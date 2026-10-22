@@ -11,7 +11,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Pipeline;
 
 public sealed class TranscribeHandler(
-    BatchStore batches, TranscriptionClient client, VoiceMatcher voice, UsageLedger usage, IEventPublisher events, IOptions<NytkaOptions> options)
+    BatchStore batches, TranscriptionClient client, SonioxClient soniox, VoiceMatcher voice, UsageLedger usage, IEventPublisher events, IOptions<NytkaOptions> options)
     : IJobHandler
 {
     public string Kind => JobKinds.Transcribe;
@@ -26,7 +26,7 @@ public sealed class TranscribeHandler(
 
         // Past the month's budget the batch goes to the budget model, and is marked to transcribe again; it is never skipped.
         var plan = await usage.PlanAsync(ct);
-        var result = await client.TranscribeAsync(batch.Wav, ct, plan.Model);
+        var result = plan.Soniox ? await soniox.TranscribeAsync(batch.Wav, ct) : await client.TranscribeAsync(batch.Wav, ct, plan.Model);
         var map = OffsetMap.FromJson(batch.OffsetMap);
         var segments = ToSegments(result, map, batch.StartedAt, batch.EndedAt);
 

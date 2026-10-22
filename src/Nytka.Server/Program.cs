@@ -59,6 +59,9 @@ builder.Services.AddHostedService<JobRunnerService>();
 builder.Services.AddHostedService<SchedulerService>();
 builder.Services.AddSingleton<NamedPeopleLookup>(sp => sp.GetRequiredService<PeopleStore>().NamesAsync);
 builder.Services.AddHttpClient<TranscriptionClient>(client => client.Timeout = TranscriptionClient.Timeout);
+// Each call has its own timeout (SonioxClient), and the default loggers would log every call's URL.
+builder.Services.AddHttpClient<SonioxClient>(client => client.Timeout = Timeout.InfiniteTimeSpan)
+    .RemoveAllLoggers();
 builder.Services.AddHttpClient<VoiceprintClient>(client => client.Timeout = VoiceprintClient.Timeout)
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
