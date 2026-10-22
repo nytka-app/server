@@ -60,6 +60,7 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
                         bookmark));
                     break;
                 case ExportDigest digest:
+                    var highlights = digest.Highlights.Select(h => h with { ConversationId = run.Conversation(h.ConversationId) }).ToList();
                     run.Digests = Count(run.Digests, await run.ExecuteAsync(
                         """
                         insert into digests (id, local_date, headline, overview, body, created_at)
@@ -69,7 +70,7 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
                         new
                         {
                             digest.Id, digest.LocalDate, digest.Headline, digest.Overview, digest.CreatedAt,
-                            body = JsonSerializer.Serialize(new DigestBody(digest.Highlights, digest.Decisions, digest.OpenQuestions), Json),
+                            body = JsonSerializer.Serialize(new DigestBody(highlights, digest.Decisions, digest.OpenQuestions), Json),
                         }));
                     break;
             }
@@ -92,6 +93,9 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
         private readonly Dictionary<Guid, Guid> _people = [];
 
         private readonly Dictionary<string, Guid> _names = new(StringComparer.Ordinal);
+
+        /// <summary>The file's conversation ids to the ids they have here, where they differ (an Omi conversation imported on both).</summary>
+        private readonly Dictionary<Guid, Guid> _conversations = [];
 
         /// <summary>Which person each provider voice id is named after here; read once, before the first conversation.</summary>
         private Dictionary<string, Guid>? _voices;
@@ -118,11 +122,23 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
         private Task<T?> ScalarAsync<T>(string sql, object args) =>
             connection.ExecuteScalarAsync<T?>(new CommandDefinition(sql, args, transaction, cancellationToken: ct));
 
-        /// <summary>A person whose id or name is already here maps to that one and is left as it is.</summary>
+        public Guid Conversation(Guid id) => _conversations.GetValueOrDefault(id, id);
+
+        /// <summary>
+        /// A person whose id or name is already here maps to that one and is left as it is. The insert skips a row another
+        /// import wrote meanwhile, and the lookup runs again for it.
+        /// </summary>
         public async Task PersonAsync(ExportPerson person)
         {
-            var existing = await ScalarAsync<Guid?>(
-                "select id from people where id = @Id or lower(name) = lower(@Name) order by id = @Id desc limit 1", new { person.Id, person.Name });
+            const string Existing = "select id from people where id = @Id or lower(name) = lower(@Name) order by id = @Id desc limit 1";
+            var existing = await ScalarAsync<Guid?>(Existing, new { person.Id, person.Name });
+            if (existing is null && await ExecuteAsync(
+                    "insert into people (id, name, note, named, created_at) values (@Id, @Name, @Note, @Named, @CreatedAt) on conflict do nothing",
+                    person) == 0)
+            {
+                existing = await ScalarAsync<Guid?>(Existing, new { person.Id, person.Name });
+            }
+
             var id = existing ?? person.Id;
             _people[person.Id] = id;
             _names[person.Name.ToLowerInvariant()] = id;
@@ -132,8 +148,6 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
                 return;
             }
 
-            await ExecuteAsync(
-                "insert into people (id, name, note, named, created_at) values (@Id, @Name, @Note, @Named, @CreatedAt)", person);
             foreach (var voice in person.Voices)
             {
                 await ExecuteAsync(
@@ -150,18 +164,46 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
         }
 
         /// <summary>
-        /// A conversation whose id, or whose <c>source</c>/<c>external_id</c> pair, is already here is left as it is. A segment
-        /// keeps the provider's label and voice id; its person is set on it only when its voice is not already named after them.
+        /// A conversation whose id, or whose <c>source</c>/<c>external_id</c> pair, is already here is left as it is, and the
+        /// file's records that name it land on the one here. A segment keeps the provider's label and voice id; its person is
+        /// set on it only when its voice is not already named after them. A conversation of Nytka's own that is open or has no
+        /// summary was never summarized: it is left for enrichment as a captured one would be, the rest marked as read.
         /// </summary>
         public async Task ConversationAsync(ExportConversation conversation)
         {
-            if (await ScalarAsync<bool>(
+            const string Existing =
+                """
+                select id from conversations
+                where id = @Id or (cast(@ExternalId as text) is not null and source = @Source and external_id = @ExternalId)
+                order by id = @Id desc limit 1
+                """;
+            var args = new { conversation.Id, conversation.Source, conversation.ExternalId };
+            var enriched = conversation.Status == "closed" && (conversation.Summary is not null || conversation.Source != "nytka");
+            var existing = await ScalarAsync<Guid?>(Existing, args);
+            if (existing is null && await ExecuteAsync(
                     """
-                    select exists (select 1 from conversations
-                                   where id = @Id or (@ExternalId is not null and source = @Source and external_id = @ExternalId))
+                    insert into conversations (id, started_at, ended_at, status, title, ai_title, ai_summary, ai_status, ai_updated_at,
+                                               source, external_id, created_at, updated_at)
+                    values (@Id, @StartedAt, @EndedAt, @Status, @title, @aiTitle, @Summary, @aiStatus, @aiUpdatedAt, @Source, @ExternalId, @now, @now)
+                    on conflict do nothing
                     """,
-                    new { conversation.Id, conversation.Source, conversation.ExternalId }))
+                    new
+                    {
+                        conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Summary,
+                        conversation.Source, conversation.ExternalId, now,
+                        title = conversation.TitleEdited ? conversation.Title : null,
+                        aiTitle = conversation.TitleEdited ? null : conversation.Title,
+                        aiStatus = enriched ? "done" : "none",
+                        aiUpdatedAt = enriched ? now : (DateTimeOffset?)null,
+                    }) == 0)
             {
+                // Another import wrote it meanwhile.
+                existing = await ScalarAsync<Guid?>(Existing, args) ?? conversation.Id;
+            }
+
+            if (existing is { } known)
+            {
+                _conversations[conversation.Id] = known;
                 Conversations = Count(Conversations, 0);
                 return;
             }
@@ -169,20 +211,6 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
             _voices ??= (await connection.QueryAsync<(string SpeakerId, Guid PersonId)>(new CommandDefinition(
                 "select speaker_id, person_id from person_voices", transaction: transaction, cancellationToken: ct)))
                 .ToDictionary(v => v.SpeakerId, v => v.PersonId, StringComparer.Ordinal);
-
-            await ExecuteAsync(
-                """
-                insert into conversations (id, started_at, ended_at, status, title, ai_title, ai_summary, ai_status, ai_updated_at,
-                                           source, external_id, created_at, updated_at)
-                values (@Id, @StartedAt, @EndedAt, @Status, @title, @aiTitle, @Summary, 'done', @now, @Source, @ExternalId, @now, @now)
-                """,
-                new
-                {
-                    conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Summary,
-                    conversation.Source, conversation.ExternalId, now,
-                    title = conversation.TitleEdited ? conversation.Title : null,
-                    aiTitle = conversation.TitleEdited ? null : conversation.Title,
-                });
 
             var segments = conversation.Segments;
             var throughSegmentId = await ScalarAsync<long?>(
@@ -214,8 +242,11 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
             Segments += segments.Count;
 
             // Read through the last segment, so enrichment does not queue itself for what the file already carries.
-            await ExecuteAsync(
-                "update conversations set ai_through_segment_id = @throughSegmentId where id = @Id", new { conversation.Id, throughSegmentId });
+            if (enriched)
+            {
+                await ExecuteAsync(
+                    "update conversations set ai_through_segment_id = @throughSegmentId where id = @Id", new { conversation.Id, throughSegmentId });
+            }
 
             foreach (var tag in conversation.Tags)
             {
@@ -243,7 +274,8 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
         /// <summary>A task whose conversation is not here is skipped: it must not turn into one added by hand.</summary>
         public async Task TaskAsync(ExportTask task)
         {
-            if (task.ConversationId is { } conversation
+            Guid? conversationId = task.ConversationId is { } fileId ? Conversation(fileId) : null;
+            if (conversationId is { } conversation
                 && !await ScalarAsync<bool>("select exists (select 1 from conversations where id = @conversation)", new { conversation }))
             {
                 Tasks = Count(Tasks, 0);
@@ -253,12 +285,12 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
             Tasks = Count(Tasks, await ExecuteAsync(
                 """
                 insert into tasks (id, conversation_id, person_id, text, fingerprint, done, done_at, kind, due_at, created_at, updated_at)
-                values (@Id, @ConversationId, @personId, @Text, @fingerprint, @Done, @DoneAt, @Kind, @Due, @CreatedAt, @UpdatedAt)
+                values (@Id, @conversationId, @personId, @Text, @fingerprint, @Done, @DoneAt, @Kind, @Due, @CreatedAt, @UpdatedAt)
                 on conflict do nothing
                 """,
                 new
                 {
-                    task.Id, task.ConversationId, task.Text, task.Done, task.DoneAt, task.Kind, task.Due, task.CreatedAt, task.UpdatedAt,
+                    task.Id, conversationId, task.Text, task.Done, task.DoneAt, task.Kind, task.Due, task.CreatedAt, task.UpdatedAt,
                     personId = await PersonAsync(task.PersonId), fingerprint = fingerprint(task.Text),
                 }));
         }
@@ -267,10 +299,14 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
             Memories = Count(Memories, await ExecuteAsync(
                 """
                 insert into memories (id, text, fingerprint, source, conversation_id, created_at, updated_at)
-                values (@Id, @Text, @fingerprint, @Source, (select id from conversations where id = @ConversationId), @CreatedAt, @UpdatedAt)
+                values (@Id, @Text, @fingerprint, @Source, (select id from conversations where id = @conversationId), @CreatedAt, @UpdatedAt)
                 on conflict do nothing
                 """,
-                new { memory.Id, memory.Text, memory.Source, memory.ConversationId, memory.CreatedAt, memory.UpdatedAt, fingerprint = fingerprint(memory.Text) }));
+                new
+                {
+                    memory.Id, memory.Text, memory.Source, conversationId = memory.ConversationId is { } id ? Conversation(id) : (Guid?)null, memory.CreatedAt, memory.UpdatedAt,
+                    fingerprint = fingerprint(memory.Text),
+                }));
 
         /// <summary>A fact about a person who is not here is skipped.</summary>
         public async Task FactAsync(ExportPersonFact fact)
@@ -284,13 +320,14 @@ public sealed class RestoreStore(NpgsqlDataSource dataSource)
             PersonFacts = Count(PersonFacts, await ExecuteAsync(
                 """
                 insert into person_facts (id, person_id, text, fingerprint, source, basis, conversation_id, edited, created_at, updated_at)
-                values (@Id, @person, @Text, @fingerprint, @Source, @Basis, (select id from conversations where id = @ConversationId), @Edited,
+                values (@Id, @person, @Text, @fingerprint, @Source, @Basis, (select id from conversations where id = @conversationId), @Edited,
                         @CreatedAt, @UpdatedAt)
                 on conflict do nothing
                 """,
                 new
                 {
-                    fact.Id, person, fact.Text, fact.Source, fact.Basis, fact.ConversationId, fact.Edited, fact.CreatedAt, fact.UpdatedAt,
+                    fact.Id, person, fact.Text, fact.Source, fact.Basis, fact.Edited, fact.CreatedAt, fact.UpdatedAt,
+                    conversationId = fact.ConversationId is { } id ? Conversation(id) : (Guid?)null,
                     fingerprint = fingerprint(fact.Text),
                 }));
         }

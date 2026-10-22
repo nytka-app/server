@@ -134,7 +134,8 @@ wrote, `{ people, conversations, tasks, memories, personFacts, bookmarks, digest
 it is, and so is one whose natural key is: a person of the same name (any case), a conversation with the same
 `source`/`externalId` pair (an Omi conversation imported on both servers), a task with the same text in the
 same conversation, a memory with the same text, a fact with the same text about the same person. The file's
-person ids map to the ones they matched, so tasks and facts land on the right person. Importing the same file
+person and conversation ids map to the ones they matched, so tasks, memories and facts land on the right person
+and conversation. Inserts skip a row another import wrote meanwhile, so two imports at once do not fail. Importing the same file
 twice changes nothing the second time, and importing a file into the server it came from changes nothing.
 
 **One transaction.** The file is read one line at a time and written in one transaction. The first line must
@@ -148,8 +149,11 @@ server cannot store."). An unknown `type` is skipped, as for any reader. No erro
 user's), summary, tags and segments; a segment's speaker label, voice id, wearer flag, speech kind (an owner's
 mark stays a mark) and person. People with their note, `named`, tags and the voice ids named after them;
 tasks with their person, kind, due time and done state, standalone ones included; memories; person facts;
-bookmarks; digests. A restored conversation is marked as read by enrichment through its last segment, and no
-event, webhook or job is raised for any record, as with the Omi import; search indexes the new rows on its own.
+bookmarks; digests. A closed conversation with a summary, and any Omi or file import, is marked as read by
+enrichment through its last segment. One of Nytka's own that is open or has no summary was never summarized
+(pending, failed or too short: the file does not say which), so it is restored with no run, as a captured one
+would be, and enrichment takes it up by its usual rules. No event, webhook or job is raised for any record, as
+with the Omi import; search indexes the new rows on its own.
 
 **What does not.** Voiceprints (the export carries only whether one existed: the person's voice is learnt
 again), and audio, which the export does not carry. A generated title that the user's own title replaced is

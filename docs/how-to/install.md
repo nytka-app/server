@@ -197,8 +197,8 @@ settings }`, each `{ imported, skipped }`, and `segments`.
 - Every record keeps its id. What the server already has (the same id, a person of the same name, an Omi
   conversation imported there too, a task or memory with the same text) is `skipped` and left as it is, so
   posting the file twice changes nothing.
-- Restored conversations trigger no webhook, summary or memory extraction, and are searchable once the
-  indexer has run.
+- Restored conversations trigger no webhook, and are searchable once the indexer has run. One that had a
+  summary keeps it and is not summarized again; one of Nytka's own without a summary is left for enrichment.
 - Voiceprints and audio are not in the export, so they do not come back: the server learns voices again.
 - Settings in the file apply where your environment does not set them.
 - One transaction: `400` for a file that is no Nytka export, one from a newer format version, one cut short

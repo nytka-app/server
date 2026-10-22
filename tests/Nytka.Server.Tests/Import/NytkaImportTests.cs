@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Nytka.Server.Api;
 using Nytka.Server.Settings;
 using Nytka.Server.Tests.Ai;
 
@@ -62,6 +63,8 @@ public sealed class NytkaImportTests(PostgresFixture db) : AiTestBase(db)
         await Db.ExecuteAsync(
             "update conversations set source = 'omi', external_id = 'omi-1', title = 'Mine', ai_title = 'Generated' where id = @omi", new { omi });
 
+        await SeedAt(Now.AddHours(-2), "closed", "An untitled chat.");
+
         var anna = Guid.CreateVersion7(Now);
         var repairman = Guid.CreateVersion7(Now.AddSeconds(1));
         await Db.ExecuteAsync(
@@ -83,20 +86,22 @@ public sealed class NytkaImportTests(PostgresFixture db) : AiTestBase(db)
             insert into tasks (id, conversation_id, person_id, text, fingerprint, done, done_at, kind, due_at, created_at, updated_at)
             values (@t1, @talk, @anna, 'Book the cabin', 'a', true, @Now, 'commitment', null, @Now, @Now),
                    (@t2, null, null, 'Buy a new tent', 'b', false, null, 'idea', @due, @Later, @Later),
-                   (@t3, @talk, null, 'Deleted task', 'c', false, null, 'commitment', null, @Now, @Now)
+                   (@t3, @talk, null, 'Deleted task', 'c', false, null, 'commitment', null, @Now, @Now),
+                   (@t4, @omi, null, 'Call the ranger', 'd', false, null, 'commitment', null, @Later, @Later)
             """,
             new
             {
-                t1 = Guid.CreateVersion7(Now), t2 = Guid.CreateVersion7(Now), t3 = Guid.CreateVersion7(Now), talk, anna, Now,
+                t1 = Guid.CreateVersion7(Now), t2 = Guid.CreateVersion7(Now), t3 = Guid.CreateVersion7(Now), t4 = Guid.CreateVersion7(Now), talk, omi, anna, Now,
                 Later = Now.AddMinutes(1), due = Now.AddDays(3),
             });
         await Db.ExecuteAsync("update tasks set deleted_at = @Now where text = 'Deleted task'", new { Now });
         await Db.ExecuteAsync(
             """
             insert into memories (id, text, fingerprint, source, conversation_id, created_at, updated_at)
-            values (@m1, 'Likes the lake', 'm1', 'ai', @talk, @Now, @Now), (@m2, 'Walks at dawn', 'm2', 'user', null, @Later, @Later)
+            values (@m1, 'Likes the lake', 'm1', 'ai', @talk, @Now, @Now), (@m2, 'Walks at dawn', 'm2', 'user', null, @Later, @Later),
+                   (@m3, 'Prefers trains', 'm3', 'omi', @omi, @Later, @Later)
             """,
-            new { m1 = Guid.CreateVersion7(Now), m2 = Guid.CreateVersion7(Now), talk, Now, Later = Now.AddMinutes(1) });
+            new { m1 = Guid.CreateVersion7(Now), m2 = Guid.CreateVersion7(Now), m3 = Guid.CreateVersion7(Now), talk, omi, Now, Later = Now.AddMinutes(1) });
         await Db.ExecuteAsync(
             """
             insert into person_facts (id, person_id, text, fingerprint, source, basis, conversation_id, edited, created_at, updated_at)
@@ -132,10 +137,10 @@ public sealed class NytkaImportTests(PostgresFixture db) : AiTestBase(db)
         var result = await Import(original);
 
         Assert.Equal([2, 0], Counts(result, "people"));
-        Assert.Equal([2, 0], Counts(result, "conversations"));
-        Assert.Equal(5, result.GetProperty("segments").GetInt32());
-        Assert.Equal([2, 0], Counts(result, "tasks"));
-        Assert.Equal([2, 0], Counts(result, "memories"));
+        Assert.Equal([3, 0], Counts(result, "conversations"));
+        Assert.Equal(6, result.GetProperty("segments").GetInt32());
+        Assert.Equal([3, 0], Counts(result, "tasks"));
+        Assert.Equal([3, 0], Counts(result, "memories"));
         Assert.Equal([2, 0], Counts(result, "personFacts"));
         Assert.Equal([1, 0], Counts(result, "bookmarks"));
         Assert.Equal([1, 0], Counts(result, "digests"));
@@ -175,8 +180,8 @@ public sealed class NytkaImportTests(PostgresFixture db) : AiTestBase(db)
 
         var result = await Import(original);
 
-        Assert.Equal([0, 2], Counts(result, "conversations"));
-        Assert.Equal([0, 2], Counts(result, "tasks"));
+        Assert.Equal([0, 3], Counts(result, "conversations"));
+        Assert.Equal([0, 3], Counts(result, "tasks"));
         Assert.Equal(rows, await Rows());
         Assert.Equal(original, await Export());
     }
@@ -195,10 +200,45 @@ public sealed class NytkaImportTests(PostgresFixture db) : AiTestBase(db)
         var result = await Import(original);
 
         Assert.Equal([1, 1], Counts(result, "people"));
-        Assert.Equal([1, 1], Counts(result, "conversations"));
+        Assert.Equal([2, 1], Counts(result, "conversations"));
         Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from conversations where external_id = 'omi-1'"));
+        // The file's records on the matched Omi conversation land on the one already here.
+        Assert.Equal(omi, await Db.ScalarAsync<Guid>("select conversation_id from tasks where text = 'Call the ranger'"));
+        Assert.Equal(omi, await Db.ScalarAsync<Guid>("select conversation_id from memories where text = 'Prefers trains'"));
         Assert.Equal(local, await Db.ScalarAsync<Guid>("select person_id from tasks where text = 'Book the cabin'"));
         Assert.Equal(2, await Db.ScalarAsync<long>("select count(*) from person_facts where person_id = @local", new { local }));
+    }
+
+    [Fact]
+    public async Task A_conversation_never_summarized_is_left_for_enrichment_and_the_rest_marked_as_read()
+    {
+        await SeedEverything();
+        var original = await Export();
+        await Wipe();
+
+        await Import(original);
+
+        var rows = await Db.QueryAsync<(string Text, string AiStatus, bool Read)>(
+            """
+            select min(s.text), c.ai_status, c.ai_through_segment_id is not distinct from max(s.id)
+            from conversations c join segments s on s.conversation_id = c.id group by c.id order by min(s.text)
+            """);
+        Assert.Equal(
+            [("An old Omi talk.", "done", true), ("An untitled chat.", "none", false), ("Fix the sink first.", "done", true)],
+            rows);
+    }
+
+    [Fact]
+    public async Task A_body_over_100_MB_is_a_413()
+    {
+        var body = new byte[ImportEndpoints.MaxBodyBytes + 1];
+        Array.Fill(body, (byte)' ');
+        using var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new("application/x-ndjson");
+
+        var response = await Client.PostAsync("/api/v1/import/nytka", content);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
     }
 
     [Fact]
