@@ -472,6 +472,18 @@ topic goes to `general`. A conversation has up to five notes of up to ten points
 conversation replaces them. `GET /api/v1/notes` and the MCP `list_notes` list them; deleting the conversation deletes its
 notes.
 
+## Paid transcript pass
+
+Every batch gets a draft from the engine the server is set to. A **pass** sends a conversation's stored speech to a paid engine once and swaps its text for the draft lines (spec: [Auto transcription](../specs/auto-transcription.md), steps 5 of 11; Auto itself, which queues passes by itself, comes later). Today a pass starts with `POST /api/v1/conversations/{id}/upgrade`.
+
+- **Engine.** Soniox with `Nytka__Stt__SonioxApiKey`; without it the route answers `409` and nothing is upgradable (the engine behind `stt.url` is the draft engine, and a second paid engine that differs from `stt.liveModel` comes with Auto). Soniox is polled every 5 seconds across job runs, so a slow answer never blocks the Audio lane. The file and the transcription at Soniox are deleted after every outcome.
+- **What is sent.** The stored speech of the finished batches no pass covered, cut into stretches of continuous capture time and joined with 300 ms of silence, at most 30 minutes per pass. A longer conversation becomes `mixed`; ask again for the rest. Times of the paid lines go through the pass's offset map, so they are capture times.
+- **The swap** is one transaction with the ledger row (`pass_id`, no batch) and the `transcript.upgraded` event: a crash leaves the whole draft or the whole swap. A draft line is replaced when the paid lines cover at least half of its length, and is then kept in `segment_drafts` until its speech audio expires; a draft line they barely touch stays as it is. The voice group of a replaced line's fingerprint moves to the new line's fingerprint (already counted, so the grouping job does not add it again); a group left with no fingerprint is deleted. A paid line takes `is_user_manual`, `speech_manual` and `person_id` when the draft lines it shares at least half a line with agree, and a speaker label takes the `speaker_id` that 60% of its draft time carries. Name suggestions, person facts and voice matches move to the new lines (a rejected name stays rejected); the summary, tasks and memories run again.
+- **Money.** A pass does not start when the month's spend is at the budget or its estimate would pass it (`409` from the route; a queued pass waits as `waiting`).
+- **Tier.** `final` when every finished batch that still has speech audio is covered and none is pending; `mixed` otherwise. A batch without audio, or a failed one, does not hold it at `mixed`. The route answers `409` with `The speech audio is gone.` or `The draft is still being transcribed.` when nothing is left to send.
+- **Cleanup.** The file and transcription at Soniox are deleted after every outcome, including a conversation deleted or merged while its pass is out (the pass row stays until its job has done that and written the ledger row). A file stored without its transcription id is deleted before the pass goes out again.
+- **State.** `GET /api/v1/conversations/{id}` has `transcript.tier` (`draft`, `final`, `mixed`) and the latest pass; a pass that fails keeps the draft and can be asked for again.
+
 ## Memories
 
 A memory is a lasting fact about you: who you are, family, friends, home, work, health, habits,

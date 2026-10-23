@@ -6,6 +6,7 @@ public static class JobKinds
 {
     public const string ProcessSession = "process-session";
     public const string Transcribe = "transcribe";
+    public const string TranscribeConversation = "transcribe-conversation";
     public const string CloseConversations = "close-conversations";
     public const string Retention = "retention";
     public const string EnrichConversation = "enrich-conversation";
@@ -22,7 +23,7 @@ public static class JobKinds
     public const string MakeBrief = "make-brief";
 
     /// <summary>
-    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, rescore-voice, apply-speech, classify-speech and one nobody
+    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, apply-speech, classify-speech and one nobody
     /// handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
@@ -40,6 +41,8 @@ public static class JobKinds
     public static string ProcessSessionKey(Guid session) => $"{ProcessSession}:{session}";
 
     public static string TranscribeKey(long batchId) => $"{Transcribe}:{batchId}";
+
+    public static string TranscribeConversationKey(Guid conversation) => $"{TranscribeConversation}:{conversation}";
 
     public static string EnrichConversationKey(Guid conversation) => $"{EnrichConversation}:{conversation}";
 

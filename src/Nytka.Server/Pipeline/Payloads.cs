@@ -4,6 +4,9 @@ public sealed record SessionPayload(Guid SessionId);
 
 public sealed record BatchPayload(long BatchId);
 
+/// <summary><paramref name="Reason"/> is the <c>transcript_passes.reason</c> a new pass gets; a pass already in flight keeps its own.</summary>
+public sealed record TranscribeConversationPayload(Guid ConversationId, string Reason);
+
 public sealed record EnrichPayload(Guid ConversationId, bool Force);
 
 public sealed record ExtractPayload(Guid ConversationId);

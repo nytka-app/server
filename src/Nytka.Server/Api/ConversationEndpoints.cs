@@ -1,7 +1,11 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
 using Nytka.Server.Auth;
+using Nytka.Server.Jobs;
+using Nytka.Server.Pipeline;
 using Nytka.Server.Speech;
+using Nytka.Server.Usage;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -20,6 +24,7 @@ public static class ConversationEndpoints
         conversations.MapGet("/{id:guid}", GetAsync).AllowRead();
         conversations.MapPatch("/{id:guid}", PatchAsync);
         conversations.MapPost("/{id:guid}/enrich", EnrichAsync);
+        conversations.MapPost("/{id:guid}/upgrade", UpgradeAsync);
         conversations.MapPost("/{id:guid}/speech", MarkSpeechAsync);
         conversations.MapDelete("/{id:guid}", DeleteAsync);
         conversations.MapPut("/{id:guid}/tags/{name}", AddTagAsync);
@@ -33,7 +38,16 @@ public static class ConversationEndpoints
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, TranscriptView Transcript);
+
+    /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
+    public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
+
+    public sealed record UpgradeResponse(string Status);
+
+    public const string AudioGone = "The speech audio is gone.";
+
+    public const string StillTranscribing = "The draft is still being transcribed.";
 
     public sealed record EnrichResponse(string AiStatus);
 
@@ -66,11 +80,13 @@ public static class ConversationEndpoints
     }
 
     private static async Task<IResult> GetAsync(
-        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, CancellationToken ct) =>
-        await DetailAsync(id, conversations, tasks, bookmarks, tags, ct);
+        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
+        IOptions<NytkaOptions> options, CancellationToken ct) =>
+        await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, options, ct);
 
     private static async Task<IResult> DetailAsync(
-        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, CancellationToken ct)
+        Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
+        IOptions<NytkaOptions> options, CancellationToken ct)
     {
         if (await conversations.GetAsync(id, ct) is not { } conversation)
         {
@@ -82,13 +98,16 @@ public static class ConversationEndpoints
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Title,
             conversation.Summary, conversation.AiStatus, conversation.TitleEdited, conversation.AiMessage,
             conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments,
-            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct)));
+            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct),
+            new TranscriptView(
+                conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
+                TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0)));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
     private static async Task<IResult> PatchAsync(
         Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags,
-        TimeProvider time, CancellationToken ct)
+        TranscriptPassStore passes, IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
     {
         string? title = null;
         if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("title", out var value))
@@ -110,9 +129,63 @@ public static class ConversationEndpoints
         }
 
         return await conversations.SetTitleAsync(id, title, time.GetUtcNow(), ct)
-            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, ct)
+            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, options, ct)
             : NotFound();
     }
+
+    /// <summary>
+    /// Queues a paid pass over the conversation's draft lines (docs/specs/auto-transcription.md, The paid pass). <c>202</c> when queued
+    /// or already running, <c>200</c> when the whole conversation is final, <c>409</c> with a <c>reason</c> when no paid engine is configured,
+    /// the month's budget is spent or the speech audio is gone. <c>reason=manual</c> marks a pass the owner asked for; the app's own call
+    /// on opening a conversation sends none (<c>opened</c>).
+    /// </summary>
+    private static async Task<IResult> UpgradeAsync(
+        Guid id, string? reason, ConversationStore conversations, TranscriptPassStore passes, BatchStore batches, UsageLedger usage, JobQueue queue,
+        IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
+    {
+        if (reason is not (null or "opened" or "manual"))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["reason"] = ["Must be opened or manual, or left out."] });
+        }
+
+        if (await conversations.GetAsync(id, ct) is not { } conversation)
+        {
+            return NotFound();
+        }
+
+        if (await passes.ActiveAsync(id, ct) is not null)
+        {
+            return Results.Accepted(value: new UpgradeResponse("upgrading"));
+        }
+
+        if ((await passes.UncoveredBatchesAsync(id, ct)).Count == 0)
+        {
+            if (await batches.HasPendingAsync(id, ct))
+            {
+                return Refused(StillTranscribing);
+            }
+
+            return conversation.TranscriptTier == "final" ? Results.Ok(new UpgradeResponse("final")) : Refused(AudioGone);
+        }
+
+        if (TranscribeConversationHandler.EngineOf(options.Value.Stt) is not { } engine)
+        {
+            return Refused(TranscribeConversationHandler.NoEngine);
+        }
+
+        if (!await usage.CanAffordAsync(engine, 0, 0, ct))
+        {
+            return Refused(TranscribeConversationHandler.BudgetSpent);
+        }
+
+        await queue.EnqueueAsync(
+            JobKinds.TranscribeConversation, new TranscribeConversationPayload(id, reason ?? "opened"), JobKinds.TranscribeConversationKey(id),
+            time.GetUtcNow(), ct);
+        return Results.Accepted(value: new UpgradeResponse("queued"));
+    }
+
+    private static IResult Refused(string reason) =>
+        Results.Problem(statusCode: StatusCodes.Status409Conflict, title: reason, extensions: new Dictionary<string, object?> { ["reason"] = reason });
 
     /// <summary>Queues a run that ignores "nothing new" and resets the failure count.</summary>
     private static async Task<IResult> EnrichAsync(

@@ -38,6 +38,7 @@ public static class InfoEndpoints
     /// "auto-names": a name suggestion may be <c>auto_applied</c>, <c>GET /api/v1/people/suggestions?status=auto_applied</c> lists them and
     /// <c>POST /api/v1/people/suggestions/{id}/undo</c> takes one back (docs/specs/people.md, Auto-applied names), whether or not auto-apply is on.
     /// "review-clips": review items carry <c>clip</c> and <c>context</c>, and <c>GET /api/v1/review/{kind}/{id}/clip</c> exists.
+    /// "transcript-upgrade": <c>POST /api/v1/conversations/{id}/upgrade</c> exists, and a conversation carries <c>transcript</c> (docs/specs/auto-transcription.md).
     /// "usage": <c>GET /api/v1/usage</c> exists, with the <c>stt.prices</c> and <c>stt.monthlyBudgetUsd</c> settings (docs/specs/usage.md).
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
@@ -61,6 +62,7 @@ public static class InfoEndpoints
         features.Add("auto-names");
         features.Add("review-clips");
         features.Add("usage");
+        features.Add("transcript-upgrade");
 
         return features;
     }
