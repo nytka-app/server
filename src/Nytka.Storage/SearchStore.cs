@@ -146,7 +146,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 union all
                 select 'memory', m.id, ts_rank_cd(m.search, q.query), null, m.text, m.updated_at, m.conversation_id, null::bigint
                 from memories m cross join q
-                where @memories and cast(@tag as text) is null and m.deleted_at is null and m.search @@ q.query
+                where @memories and cast(@tag as text) is null and m.deleted_at is null and m.confirmed and m.search @@ q.query
                   and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
                   and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
                 union all

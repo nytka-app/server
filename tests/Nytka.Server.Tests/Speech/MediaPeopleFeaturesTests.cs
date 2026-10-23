@@ -160,7 +160,7 @@ public sealed partial class MediaPeopleFeaturesTests(PostgresFixture db) : AiTes
         await Run(guesses: true, SpeechKinds.On);
 
         var request = Assert.Single(Llm.Requests, r => r.SchemaName == "conversation");
-        Assert.Contains("] Media: " + EnrichConversationHandler.MediaPlaying, request.User, StringComparison.Ordinal);
+        Assert.Matches(@"\] #\d+ Media: \(media playing\)", request.User);
         Assert.DoesNotContain(Media, request.User, StringComparison.Ordinal);
         Assert.Contains("Take no task from lines labelled Media.", request.System, StringComparison.Ordinal);
         Assert.Contains("Audio from a TV, video, podcast", request.System, StringComparison.Ordinal);

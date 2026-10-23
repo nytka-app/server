@@ -526,6 +526,11 @@ each stored summary the server asks the model for up to five new memories of up 
 `Nytka__Memories__UserName`, so facts about other speakers stay out. Without a name, "you" is the
 person wearing the pendant.
 
+- **Grounded.** Every line in the prompt carries its segment id, and a line nobody is known to have said reads
+  `Unknown`, never as yours. The model cites the lines each fact comes from (`memory_sources`). A fact none of whose cited lines
+  is yours by the [label rule](#your-voice) (so at or above `Nytka__Voice__UserThreshold` when the voice decided) is stored
+  unconfirmed: it is not listed, searched, sent to MCP, a digest or a webhook, and it never rewrites a memory you have.
+  Tasks cite their lines the same way (`task_sources`), only lines of their own conversation.
 - Some facts are true only for a while: where you are staying, an illness, a plan with a date. The model may give such a
   fact the last date it holds (`expiresAt` is the start of the next day in `Nytka__User__TimeZone`); from then on
   `GET /api/v1/memories` and the MCP `list_memories` leave it out unless asked with `expired=true`. Search still finds it.

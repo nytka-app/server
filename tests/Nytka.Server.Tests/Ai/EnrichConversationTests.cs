@@ -56,8 +56,8 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         Assert.Contains("\"additionalProperties\": false", request.SchemaJson, StringComparison.Ordinal);
         var start = Now.AddMinutes(-6);
         Assert.Equal(
-            $"Date: 2026-09-29 Tuesday\n\nTranscript:\n[{start:HH:mm:ss}] Anna: {Talk}\n[{start.AddSeconds(1):HH:mm:ss}] {Talk}",
-            request.User);
+            $"Date: 2026-09-29 Tuesday\n\nTranscript:\n[{start:HH:mm:ss}] Anna: {Talk}\n[{start.AddSeconds(1):HH:mm:ss}] Unknown: {Talk}",
+            System.Text.RegularExpressions.Regex.Replace(request.User, @"\] #\d+ ", "] "));
         Assert.Contains("language the conversation is in", request.System, StringComparison.Ordinal);
         Assert.Contains("committed to do, or was asked to do", request.System, StringComparison.Ordinal);
         Assert.Contains("speaker label may differ", request.System, StringComparison.Ordinal);
@@ -78,7 +78,9 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         await TickAndRun();
 
         var lines = Assert.Single(Llm.Requests).User.Split('\n').Skip(4).ToList(); // date, People, blank, "Transcript:"
-        Assert.Equal([$"Wearer: {Talk}", $"Anna: {Talk}", $"Voice 6: {Talk}"], lines.Select(l => l[(l.IndexOf(' ') + 1)..]));
+        Assert.Equal(
+            [$"Wearer: {Talk}", $"Anna: {Talk}", $"Voice 6: {Talk}"],
+            lines.Select(l => System.Text.RegularExpressions.Regex.Replace(l, @"^\[[^\]]+\] #\d+ ", "")));
     }
 
     [Fact]

@@ -180,7 +180,7 @@ public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal("My title", result.GetProperty("title").GetString());
         Assert.Equal("A summary.", result.GetProperty("summary").GetString());
-        Assert.Equal("[09:00:00] Anna: Hello there\n[09:00:05] Hi", result.GetProperty("transcript").GetString());
+        Assert.Equal("[09:00:00] Anna: Hello there\n[09:00:05] Unknown: Hi", result.GetProperty("transcript").GetString());
         Assert.False(result.GetProperty("truncated").GetBoolean());
         Assert.Equal(1, result.GetProperty("part").GetInt32());
         Assert.Equal(1, result.GetProperty("parts").GetInt32());

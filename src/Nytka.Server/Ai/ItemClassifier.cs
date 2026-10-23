@@ -59,7 +59,7 @@ public static class ItemClassifier
             if (kind == TaskKinds.Commitment && ownerKnown && owner == TaskKinds.Other && waitingOn < MaxWaitingOn)
             {
                 waitingOn++;
-                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn, Due(item.Due, from), Salience.Parse(item.Salience)));
+                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn, Due(item.Due, from), Salience.Parse(item.Salience), item.SegmentIds));
                 continue;
             }
 
@@ -77,11 +77,11 @@ public static class ItemClassifier
             {
                 case TaskKinds.Commitment when commitments < ConversationPrompt.MaxTasks:
                     commitments++;
-                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Commitment, Due(item.Due, from), Salience.Parse(item.Salience)));
+                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Commitment, Due(item.Due, from), Salience.Parse(item.Salience), item.SegmentIds));
                     break;
                 case TaskKinds.Idea when ideas < MaxIdeas:
                     ideas++;
-                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Idea, Due(item.Due, from), Salience.Parse(item.Salience)));
+                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Idea, Due(item.Due, from), Salience.Parse(item.Salience), item.SegmentIds));
                     break;
                 case TaskKinds.Advice:
                     var topic = TagName.Normalize(item.Topic) ?? GeneralTopic;

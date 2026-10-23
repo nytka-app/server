@@ -47,7 +47,7 @@ public sealed class FakeLlm : ILlmClient
         JsonSerializer.Serialize(new
         {
             title, summary,
-            items = items.Select(i => new { text = i.Text, kind = i.Kind, owner = i.Owner, person = i.Person, topic = i.Topic, due = i.Due, salience = i.Salience }),
+            items = items.Select(i => new { text = i.Text, kind = i.Kind, owner = i.Owner, person = i.Person, topic = i.Topic, due = i.Due, salience = i.Salience, segmentIds = i.SegmentIds }),
             tags = Array.Empty<string>(),
         });
 
@@ -56,7 +56,7 @@ public sealed class FakeLlm : ILlmClient
         JsonSerializer.Serialize(new { title, summary, items = Array.Empty<string>(), tags });
 
     /// <summary>One labelled item of an answer.</summary>
-    public sealed record Item(string Text, string Kind, string Owner = TaskKinds.Wearer, string? Person = null, string? Topic = null, string? Due = null, string? Salience = null);
+    public sealed record Item(string Text, string Kind, string Owner = TaskKinds.Wearer, string? Person = null, string? Topic = null, string? Due = null, string? Salience = null, long[]? SegmentIds = null);
 
     public Task<string> CompleteJsonAsync(LlmRequest request, CancellationToken ct)
     {

@@ -40,10 +40,11 @@ public sealed class ExtractMemoriesHandler(
         """
         { "type": "object", "additionalProperties": false, "required": ["memories"],
           "properties": { "memories": { "type": "array", "items": { "type": "object",
-            "additionalProperties": false, "required": ["text", "replaces", "salience", "expires"],
+            "additionalProperties": false, "required": ["text", "replaces", "salience", "expires", "segmentIds"],
             "properties": { "text": { "type": "string" }, "replaces": { "type": ["string", "null"] },
                             "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
-                            "expires": { "type": ["string", "null"] } } } } } }
+                            "expires": { "type": ["string", "null"] },
+                            "segmentIds": { "type": "array", "items": { "type": "integer" } } } } } } }
         """;
 
     public string Kind => JobKinds.ExtractMemories;
@@ -52,7 +53,8 @@ public sealed class ExtractMemoriesHandler(
     public const int MaxExpiryDays = 730;
 
     /// <summary>A proposed fact. <paramref name="Salience"/> and <paramref name="Expires"/> are missing in answers from before they existed.</summary>
-    public sealed record Candidate(string Text, string? Replaces, string? Salience = null, string? Expires = null);
+    public sealed record Candidate(
+        string Text, string? Replaces, string? Salience = null, string? Expires = null, IReadOnlyList<long>? SegmentIds = null);
 
     public sealed record Answer(IReadOnlyList<Candidate> Memories);
 
@@ -97,7 +99,7 @@ public sealed class ExtractMemoriesHandler(
     private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ExtractionInput input, CancellationToken ct)
     {
         var lines = TranscriptText.Render(input.Segments.Where(s => !s.IsMedia).Select(s =>
-            new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text)), UserTimeZone.Resolve(settings));
+            new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text, s.Id)), UserTimeZone.Resolve(settings));
         var windows = TranscriptWindows.Split(lines, llmOptions.CurrentValue.MaxInputChars);
         var known = await memories.NewestAsync(KnownMemories, ct);
         var listed = known.Select(k => k.Id).ToHashSet();
@@ -121,11 +123,33 @@ public sealed class ExtractMemoriesHandler(
                 }
 
                 Guid? replaces = Guid.TryParse(candidate.Replaces, out var id) && listed.Contains(id) ? id : null;
-                pooled.Add(new MemoryCandidate(text, fingerprint, replaces, Salience.Parse(candidate.Salience), ExpiresAt(candidate.Expires, from, zone)));
+                var cited = Cited(candidate.SegmentIds, input.Segments);
+                pooled.Add(new MemoryCandidate(
+                    text, fingerprint, replaces, Salience.Parse(candidate.Salience), ExpiresAt(candidate.Expires, from, zone),
+                    cited, candidate.SegmentIds is null || IsGrounded(cited, input.Segments)));
             }
         }
 
         return pooled.Take(MaxMemoriesPerRun).ToList();
+    }
+
+    /// <summary>The cited ids that are lines of the transcript, each once; the model's other ids are dropped.</summary>
+    public static IReadOnlyList<long> Cited(IReadOnlyList<long>? ids, IReadOnlyList<SegmentLine> segments)
+    {
+        var known = segments.Select(s => s.Id).ToHashSet();
+        return [.. (ids ?? []).Where(known.Contains).Distinct()];
+    }
+
+    /// <summary>
+    /// Whether a fact about "you" is grounded: one of its cited lines is the wearer's by the label rule (so at or above
+    /// <c>voice.userThreshold</c> when the voice decided) and is no media. A fact from an unlabelled or another person's line alone
+    /// is stored unconfirmed and never shown (docs/explanation/features.md, Memories). The schema makes the model cite; an answer
+    /// without the field at all (from before it) is taken as before.
+    /// </summary>
+    public static bool IsGrounded(IReadOnlyList<long> cited, IReadOnlyList<SegmentLine> segments)
+    {
+        var wearer = segments.Where(s => !s.IsMedia && s.Speaker == SpeakerLabel.Wearer).Select(s => s.Id).ToHashSet();
+        return cited.Any(wearer.Contains);
     }
 
     /// <summary>
@@ -167,7 +191,8 @@ public sealed class ExtractMemoriesHandler(
         A lasting fact is about you, stays true beyond this conversation, and comes from you saying it about yourself or from someone saying it about you and you confirming it: who you are, your family, friends, home, work, health, habits, preferences, goals and commitments.
         Never report facts about other speakers or third parties, one-off events, tasks, plans for a single day, or what someone else said they would do. A fact about another person counts only as your relation to them (for example, that a named person is your sister).
         Audio from a TV, video, podcast, radio, song or game playing nearby, and text you read aloud from a script or screen, is not your life: take no facts from it. Take no facts inferred from your tone, manner of speech or vocabulary (for example swearing or humour).
-        Lines labelled "Wearer" are yours. Other speaker labels may differ between parts of the transcript; the user message says who "you" is.
+        Lines labelled "Wearer" are yours. Other speaker labels may differ between parts of the transcript; the user message says who "you" is. A line labelled "Unknown" has no known speaker and is never yours: never take a fact about you from it alone, however it is worded.
+        Each line starts with its time and its segment id ("#48121"). Give each fact the ids (without "#") of the lines it comes from in segmentIds, your own line among them. A fact no line of yours states or confirms is not yours.
         Times and dates are in the time zone {timeZone}. Write dates in a fact as absolute dates, never as "tomorrow" or "Friday".
         Write each fact as one short sentence, at most {MaxTextLength} characters, in {outputLanguage}.
         Some facts are true only for a while: where you are staying, an illness, a job you are about to leave, a plan with a date. Set "expires" to the last date (YYYY-MM-DD) the fact is still true when the transcript says it or makes it plain, and to null for a lasting fact; never guess a date.

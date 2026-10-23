@@ -14,7 +14,8 @@ public sealed record TaskRow(
 /// (a commitment, an idea or something awaited), and its due instant when the speaker named one.
 /// </summary>
 public sealed record AiTask(
-    string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null, string? Salience = null);
+    string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null, string? Salience = null,
+    IReadOnlyList<long>? SegmentIds = null);
 
 /// <summary>A user's change of a task's person: <see langword="null"/> clears it.</summary>
 public sealed record PersonChange(Guid? PersonId);
@@ -220,6 +221,19 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         return new TaskCreated(task, TaskCreateProblem.None);
     }
 
+    /// <summary>Replaces the lines a task cites, in the caller's transaction: only lines of its conversation, so an id the model made up is skipped.</summary>
+    private static Task SourcesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid taskId, IReadOnlyList<long>? segmentIds, CancellationToken ct) =>
+        connection.ExecuteAsync(new CommandDefinition(
+            """
+            delete from task_sources where task_id = @taskId;
+            insert into task_sources (task_id, segment_id)
+            select @taskId, s.id from segments s join tasks t on t.id = @taskId and t.conversation_id = s.conversation_id
+            where s.id = any(@ids)
+            on conflict do nothing;
+            """,
+            new { taskId, ids = (segmentIds ?? []).ToArray() }, transaction, cancellationToken: ct));
+
     private sealed record Pair(string Status, Guid TaskId, Guid DuplicateOf, Guid? ConversationId);
 
     /// <summary>
@@ -394,6 +408,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @Due, @Salience, @now, @now)
                 """,
                 new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
+            await SourcesAsync(connection, transaction, id, task.SegmentIds, ct);
             if (match.Unsure is { } duplicateOf)
             {
                 await connection.ExecuteAsync(new CommandDefinition(

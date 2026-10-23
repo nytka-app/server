@@ -52,7 +52,7 @@ public static class NamePrompt
         return TranscriptText.Render(input.Segments.Where(s => !s.IsMedia).Select(s =>
         {
             var label = voices.TryGetValue(s.Id, out var voice) ? voice : s.Label;
-            return new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), string.IsNullOrWhiteSpace(label) ? $"#{s.Id}" : $"#{s.Id} {label}", s.Text);
+            return new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), label, s.Text, s.Id);
         }), zone);
     }
 
