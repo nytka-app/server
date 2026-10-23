@@ -146,6 +146,14 @@ again in the background ([README](../explanation/features.md#speech-kind)).
 | Variable | Default | App | Meaning |
 |---|---|---|---|
 | `Nytka__Search__Dictionary` | `simple` | edit | `simple` or `uk_hunspell` |
+| `Nytka__Embeddings__BaseUrl` | | edit | OpenAI-compatible embeddings base URL; turns on vector search |
+| `Nytka__Embeddings__ApiKey` | | env only | Bearer token; omit for a local server |
+| `Nytka__Embeddings__Model` | | edit | Sent as `model` |
+| `Nytka__Embeddings__Dimensions` | | edit | Vector size, 1 to 2000; unset is the model's own |
+| `Nytka__Embeddings__QueryPrefix` | empty | env only | Put before questions only |
+| `Nytka__Embeddings__MaxDistance` | `0.5` | env only | Largest cosine distance of a vector hit |
+| `Nytka__Embeddings__TimeoutSeconds` | `30` | env only | Wait per embeddings request |
+| `Nytka__Embeddings__BatchSize` | `16` | env only | Texts per indexing request |
 | `Nytka__Calendar__IcsUrl` | | env only | Read-only ICS feed for briefs |
 | `Nytka__Calendar__BriefMinutes` | `30` | edit | Minutes before a meeting; 5 to 240 |
 
@@ -154,6 +162,11 @@ again in the background ([README](../explanation/features.md#speech-kind)).
 not ship it ([vision](../../docs/vision.md#key-decisions),
 [script](../../scripts/fetch-uk-dictionary.sh)). The calendar address usually carries a token, so
 the API shows only `isSet` and no log repeats it.
+
+Vector search needs pgvector in Postgres (the `pgvector/pgvector:0.8.7-pg17` image instead of
+`postgres:17-alpine`) and an embeddings endpoint such as Text Embeddings Inference with `BAAI/bge-m3`.
+Without either, search stays full-text and nothing else changes
+([vector search](../reference/configuration.md#vector-search)).
 
 ## Compose
 

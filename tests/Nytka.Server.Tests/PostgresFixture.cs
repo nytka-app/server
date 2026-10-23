@@ -6,10 +6,17 @@ using Testcontainers.PostgreSql;
 
 namespace Nytka.Server.Tests;
 
-/// <summary>A real Postgres, migrated with the real scripts. Needs a running Docker daemon.</summary>
-public sealed class PostgresFixture : IAsyncLifetime
+/// <summary>A real Postgres (the Compose image, without pgvector), migrated with the real scripts. Needs a running Docker daemon.</summary>
+public class PostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:17-alpine")
+    private readonly PostgreSqlContainer _container;
+
+    public PostgresFixture()
+        : this("postgres:17-alpine")
+    {
+    }
+
+    protected PostgresFixture(string image) => _container = new PostgreSqlBuilder(image)
         .WithDatabase("nytka")
         .WithUsername("nytka")
         .WithPassword("nytka")

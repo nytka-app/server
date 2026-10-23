@@ -58,7 +58,9 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
             [
                 "stt.url", "stt.apiKey", "stt.model", "stt.language", "stt.vocabulary", "conversations.gap", "user.timeZone", "mute.windows", "audio.retentionDays",
                 "llm.baseUrl", "llm.apiKey", "llm.model", "llm.outputLanguage",
-                "memories.enabled", "memories.userName", "search.dictionary", "digest.enabled", "digest.hour",
+                "memories.enabled", "memories.userName", "search.dictionary",
+                "embeddings.baseUrl", "embeddings.apiKey", "embeddings.model", "embeddings.dimensions",
+                "digest.enabled", "digest.hour",
                 "voice.enabled", "voice.userThreshold", "voice.learnThreshold", "voice.learn", "voice.minSegmentSeconds",
                 "people.suggestNames",
                 "people.voiceMatching", "people.voiceThreshold",
