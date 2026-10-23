@@ -3,6 +3,19 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
+/// <summary>The payload shapes a webhook can ask for.</summary>
+public static class WebhookFormats
+{
+    public const string Nytka = "nytka";
+
+    public const string Omi = "omi";
+
+    public static readonly IReadOnlyList<string> All = [Nytka, Omi];
+}
+
+/// <summary>An active webhook that wants an event, and the shape it wants it in.</summary>
+public sealed record WebhookTarget(Guid Id, string Format);
+
 /// <summary>A webhook as the API shows it: no secret, and its newest delivery's status and time.</summary>
 /// <remarks>A class, not a record: Dapper cannot pass a <c>text[]</c> to a constructor parameter of type <c>string[]</c>.</remarks>
 public sealed class WebhookRow
@@ -12,6 +25,8 @@ public sealed class WebhookRow
     public string Url { get; init; } = "";
 
     public string[] Events { get; init; } = [];
+
+    public string Format { get; init; } = WebhookFormats.Nytka;
 
     public string? Description { get; init; }
 
@@ -42,7 +57,7 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
 
     private const string WebhookColumns =
         """
-        w.id as Id, w.url as Url, w.events as Events, w.description as Description, w.active as Active,
+        w.id as Id, w.url as Url, w.events as Events, w.format as Format, w.description as Description, w.active as Active,
         w.created_at as CreatedAt, d.status as LastDeliveryStatus, d.created_at as LastDeliveryAt
         """;
 
@@ -56,16 +71,16 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
 
     /// <summary>Stores a webhook; false when <see cref="MaxWebhooks"/> already exist.</summary>
     public async Task<bool> CreateAsync(
-        Guid id, string url, string secret, string[] events, string? description, DateTimeOffset now, CancellationToken ct)
+        Guid id, string url, string secret, string[] events, string format, string? description, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into webhooks (id, url, secret, events, description, created_at, updated_at)
-            select @id, @url, @secret, @events, @description, @now, @now
+            insert into webhooks (id, url, secret, events, format, description, created_at, updated_at)
+            select @id, @url, @secret, @events, @format, @description, @now, @now
             where (select count(*) from webhooks) < @max
             """,
-            new { id, url, secret, events, description, now, max = MaxWebhooks },
+            new { id, url, secret, events, format, description, now, max = MaxWebhooks },
             cancellationToken: ct)) == 1;
     }
 
@@ -85,7 +100,7 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
 
     /// <summary>Changes only what is given (<paramref name="setDescription"/> says whether a null description clears it); false when there is no such webhook.</summary>
     public async Task<bool> UpdateAsync(
-        Guid id, string? url, string[]? events, bool setDescription, string? description, bool? active,
+        Guid id, string? url, string[]? events, string? format, bool setDescription, string? description, bool? active,
         DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -94,12 +109,13 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
             update webhooks set
                 url = coalesce(@url, url),
                 events = coalesce(@events, events),
+                format = coalesce(@format, format),
                 description = case when @setDescription then @description else description end,
                 active = coalesce(@active, active),
                 updated_at = @now
             where id = @id
             """,
-            new { id, url, events, setDescription, description, active, now },
+            new { id, url, events, format, setDescription, description, active, now },
             cancellationToken: ct)) == 1;
     }
 
@@ -118,11 +134,11 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
             "select exists (select 1 from webhooks where id = @id)", new { id }, cancellationToken: ct));
     }
 
-    /// <summary>The ids of the active webhooks that want <paramref name="eventType"/> (or <c>*</c>, unless <paramref name="wildcard"/> is false), read in the caller's transaction.</summary>
-    public async Task<IReadOnlyList<Guid>> ActiveFor(
+    /// <summary>The active webhooks (id and format) that want <paramref name="eventType"/> (or <c>*</c>, unless <paramref name="wildcard"/> is false), read in the caller's transaction.</summary>
+    public async Task<IReadOnlyList<WebhookTarget>> ActiveFor(
         NpgsqlConnection connection, NpgsqlTransaction? transaction, string eventType, bool wildcard, CancellationToken ct) =>
-        (await connection.QueryAsync<Guid>(new CommandDefinition(
-            "select id from webhooks where active and (@eventType = any(events) or (@wildcard and '*' = any(events))) order by created_at, id",
+        (await connection.QueryAsync<WebhookTarget>(new CommandDefinition(
+            "select id as Id, format as Format from webhooks where active and (@eventType = any(events) or (@wildcard and '*' = any(events))) order by created_at, id",
             new { eventType, wildcard }, transaction, cancellationToken: ct))).ToList();
 
     /// <summary>
