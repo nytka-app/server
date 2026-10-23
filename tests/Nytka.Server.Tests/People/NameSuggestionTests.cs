@@ -97,7 +97,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         Assert.Contains($"#{voice} Voice A: Hi, I'm Olena.", request.User);
         Assert.Contains($"#{label} Voice B: Thanks, Marko.", request.User);
         Assert.Contains($"#{wearer} Wearer: Nice to meet you.", request.User);
-        Assert.Contains($"#{talk}: ", request.User);
+        Assert.Contains($"#{talk} Unknown: ", request.User);
         Assert.DoesNotContain("SPEAKER_", request.User);
     }
 
