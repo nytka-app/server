@@ -54,6 +54,7 @@ you copy without thinking would lock its setting.
 | `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](../explanation/features.md#people) and [roles](../explanation/features.md#roles) for unnamed voices; it needs the language model |
 | `Nytka__People__AutoApplyNames` | no | `true` | editable | `true` lets a sure [name suggestion](../explanation/features.md#auto-applied-names) name its voice at once, undoable; `false` leaves every suggestion for you |
 | `Nytka__People__AutoApplyConfidence` | no | `0.85` | editable | Confidence, 0.5 to 1, at or above which a suggestion applies itself |
+| `Nytka__People__CardMinConversations` | no | `3` | editable | Conversations, 1 to 50, a voice group must be heard in before a card asks who it is |
 | `Nytka__People__Facts` | no | `true` | editable | `false` stops [facts about people](../explanation/features.md#facts-about-people) from being taken from conversations; it needs the language model |
 | `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](../explanation/features.md#tags) for conversations and people and stops sending it tag names; it needs the language model |
 | `Nytka__Tags__Auto` | no | `true` | editable | `true` applies a conversation's proposed tags at once and tidies tags nightly (synonyms merged by the model, one-off tags removed after 60 days); `false` leaves proposals for you |

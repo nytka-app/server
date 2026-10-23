@@ -76,6 +76,7 @@ services:
       Nytka__People__SuggestNames: "${Nytka__People__SuggestNames:-}"
       Nytka__People__AutoApplyNames: "${Nytka__People__AutoApplyNames:-}"
       Nytka__People__AutoApplyConfidence: "${Nytka__People__AutoApplyConfidence:-}"
+      Nytka__People__CardMinConversations: "${Nytka__People__CardMinConversations:-}"
       Nytka__People__Facts: "${Nytka__People__Facts:-}"
       Nytka__Tags__Suggest: "${Nytka__Tags__Suggest:-}"
       Nytka__Tags__Auto: "${Nytka__Tags__Auto:-}"

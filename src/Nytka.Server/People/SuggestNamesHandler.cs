@@ -29,7 +29,11 @@ public sealed class SuggestNamesHandler(
 
     public string Kind => JobKinds.SuggestNames;
 
-    public sealed record Suggestion(string Voice, string? Name, long SegmentId, double Confidence, string? Role);
+    /// <summary>
+    /// One suggestion as the model gives it. <paramref name="Entity"/> is what the name names (<see cref="NamePrompt.Person"/>, a place,
+    /// an organization, a media character or something else); missing in answers from before it, which count as a person.
+    /// </summary>
+    public sealed record Suggestion(string Voice, string? Name, long SegmentId, double Confidence, string? Role, string? Entity = null);
 
     public sealed record Answer(IReadOnlyList<Suggestion> Suggestions);
 
@@ -126,7 +130,8 @@ public sealed class SuggestNamesHandler(
                 continue;
             }
 
-            var name = suggestion.Name is null ? "" : ExtractMemoriesHandler.OneLine(suggestion.Name);
+            // A place, an organization or a character on a screen is never a person's name, however sure the model is.
+            var name = suggestion.Name is null || !NamePrompt.IsPerson(suggestion.Entity) ? "" : ExtractMemoriesHandler.OneLine(suggestion.Name);
             var nameLine = name.Length > 0
                 && !wearer.Any(w => NameValidator.SameName(name, w))
                 && !(target.KnownAs is { } own && string.Equals(name, own, StringComparison.OrdinalIgnoreCase))
