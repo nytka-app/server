@@ -45,6 +45,9 @@ public sealed class EnrichConversationHandler(
 
     public const string TooShort = "Too short to summarize.";
 
+    /// <summary>The text that stands for a run of media lines in the prompt.</summary>
+    public const string MediaPlaying = "(media playing)";
+
     public static readonly TimeSpan RetryAfter = TimeSpan.FromHours(1);
 
     private static readonly TimeSpan Wait = TimeSpan.FromMinutes(1);
@@ -72,7 +75,7 @@ public sealed class EnrichConversationHandler(
             return JobOutcome.Done; // a repeated job: these segments are summarized already
         }
 
-        if (segments.Sum(s => Words(s.Text)) < MinWords)
+        if (SpokenWords(segments) < MinWords)
         {
             // False: the conversation changed since the read (or is gone, which the next run finds out).
             return await conversations.SkipEnrichmentAsync(conversationId, through, segments.Count, TooShort, time.GetUtcNow(), ct)
@@ -81,15 +84,15 @@ public sealed class EnrichConversationHandler(
         }
 
         var zone = UserTimeZone.Resolve(settings);
-        var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text)), zone);
+        var lines = TranscriptText.Render(WithoutMediaText(segments), zone);
         var people = segments
             .Where(s => s.IsUser != true && s.PersonId is not null)
             .Select(s => new TaskPerson(s.PersonId!.Value, s.PersonName!))
             .DistinctBy(p => p.Id)
             .ToList();
-        var brief = IsBrief(segments.Sum(s => Words(s.Text)));
+        var brief = IsBrief(SpokenWords(segments));
         var mediaLines = segments.Any(s => s.SpeechKind == SpeechKinds.Media && Words(s.Text) > 0);
-        var suggestTags = TagSettings.Suggest(settings);
+        var suggestTags = TagSettings.Suggest(settings) && MediaShare(segments) < SpeechKinds.MediaShareLimit;
         ConversationAnswer answer;
         var template = await ChooseTemplateAsync(conversationId, brief, ct);
         try
@@ -302,6 +305,41 @@ public sealed class EnrichConversationHandler(
     private static bool IsPermanent(LlmException error) => error.StatusCode is >= 400 and < 500 and not 429;
 
     public static bool IsBrief(int words) => words < BriefWords;
+
+    /// <summary>The words of the lines that are not media: a conversation that is only a TV playing is too short to summarize.</summary>
+    public static int SpokenWords(IEnumerable<SegmentRow> segments) =>
+        segments.Where(s => s.SpeechKind != SpeechKinds.Media).Sum(s => Words(s.Text));
+
+    /// <summary>The share of speech time whose kind is media, as <see cref="SpeechKinds.MediaShareJoin"/> computes it; 0 with no speech.</summary>
+    public static double MediaShare(IReadOnlyList<SegmentRow> segments)
+    {
+        var total = segments.Sum(s => (s.EndedAt - s.StartedAt).TotalSeconds);
+        return total <= 0 ? 0 : segments.Where(s => s.SpeechKind == SpeechKinds.Media).Sum(s => (s.EndedAt - s.StartedAt).TotalSeconds) / total;
+    }
+
+    /// <summary>
+    /// The transcript as the model reads it: each run of media lines becomes one <c>Media</c> line without their words, so song lyrics
+    /// or a film's dialogue never reach a summary, a task or a tag, while the summary may still say that media was playing.
+    /// </summary>
+    public static IEnumerable<TranscriptSegment> WithoutMediaText(IReadOnlyList<SegmentRow> segments)
+    {
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var s = segments[i];
+            if (s.SpeechKind != SpeechKinds.Media)
+            {
+                yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text);
+                continue;
+            }
+
+            while (i + 1 < segments.Count && segments[i + 1].SpeechKind == SpeechKinds.Media)
+            {
+                i++;
+            }
+
+            yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), MediaPlaying);
+        }
+    }
 
     public static int Words(string text) => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
 

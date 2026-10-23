@@ -6,10 +6,11 @@ namespace Nytka.Storage;
 /// <summary>
 /// <paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.
 /// <paramref name="MediaShare"/> is the share of the conversation's speech time whose speech kind is media, 0 with no speech.
+/// <paramref name="Noise"/> is true for a closed fragment with fewer than <see cref="ConversationStore.NoiseWords"/> words outside media.
 /// </summary>
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
-    int Bookmarks, string Source, double MediaShare, string TranscriptTier)
+    int Bookmarks, string Source, double MediaShare, string TranscriptTier, bool Noise = false)
 {
     /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -219,8 +220,22 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// (normalized) keeps only conversations that have it. <paramref name="media"/> is <c>hide</c> to leave out the conversations
     /// that are mostly media (<see cref="SpeechKinds.MediaShareLimit"/> or more of their speech time), <c>only</c> to keep just those.
     /// </summary>
+    /// <summary>A closed conversation with fewer words than this outside media is noise: too short to summarize, as enrichment counts.</summary>
+    public const int NoiseWords = 20;
+
+    /// <summary>
+    /// SQL for whether the conversation aliased <c>c</c> is noise: closed, with fewer than <see cref="NoiseWords"/> words in lines that
+    /// are not media (none at all for a conversation that never had speech).
+    /// </summary>
+    public static readonly string IsNoise =
+        $"""
+        (c.status = 'closed' and (select coalesce(sum(cardinality(regexp_split_to_array(btrim(s.text), '\s+'))), 0)
+                                  from segments s where s.conversation_id = c.id and btrim(s.text) <> ''
+                                    and s.speech_kind is distinct from 'media') < {NoiseWords})
+        """;
+
     public async Task<IReadOnlyList<ConversationSummary>> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct, string? noise = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
@@ -230,7 +245,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    c.ai_status as AiStatus,
                    (select count(*)::int from bookmarks b
                     where b.at >= c.started_at - interval '30 seconds' and b.at <= c.ended_at + interval '30 seconds') as Bookmarks,
-                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier
+                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier, {IsNoise} as Noise
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -246,10 +261,11 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                     where ct.conversation_id = c.id and t.name = @tag))
               and (cast(@media as text) is null or (@media = 'hide' and m.share < @mediaShareLimit)
                     or (@media = 'only' and m.share >= @mediaShareLimit))
+              and (cast(@noise as text) is null or (@noise = 'hide' and not {IsNoise}) or (@noise = 'only' and {IsNoise}))
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { before, since, limit, tag, media, mediaShareLimit = SpeechKinds.MediaShareLimit }, cancellationToken: ct));
+            new { before, since, limit, tag, media, noise, mediaShareLimit = SpeechKinds.MediaShareLimit }, cancellationToken: ct));
         var items = rows.ToList();
         var tags = await TagStore.OfConversationsAsync(connection, null, items.Select(c => c.Id).ToList(), ct);
         return items.Select(c => tags.TryGetValue(c.Id, out var names) ? c with { Tags = names } : c).ToList();
