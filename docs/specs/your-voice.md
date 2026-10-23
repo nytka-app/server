@@ -9,9 +9,9 @@ Telling other people apart stays with the provider and the people API of v0.6.
 
 1. The wearer enrolls by reading prompts into the pendant for 30 to 60 seconds; the server answers
    with how much speech it used and whether the samples agree with each other.
-2. With a voice enrolled, every new segment of at least `voice.minSegmentSeconds` (default 1 s) and
-   at most 30 s gets a similarity to the wearer's voice, and `isUser` follows it; shorter or longer
-   segments get no label from Nytka.
+2. With a voice enrolled, every new segment of at least `voice.minSegmentSeconds` (default 1 s)
+   gets a similarity to the wearer's voice (over 30 s, from its weakest 10 s window), and `isUser`
+   follows it; shorter segments get no label from Nytka.
 3. A provider's `is_user` still applies to segments Nytka did not check, and a person's own "this is
    me / this is not me" on a segment beats both.
 4. `DELETE /api/v1/voice` removes the wearer's voiceprint, every segment fingerprint and every
@@ -93,13 +93,21 @@ provider answers, using the batch WAV it already holds and each segment's start 
 |---|---|
 | shorter than `voice.minSegmentSeconds` (1 s) | none: checked, no similarity, no label |
 | 1 s to 30 s | fingerprint; `isUser` true when similarity ≥ `voice.userThreshold` (0.38), else false |
-| longer than 30 s | none: such a segment is usually the whole batch from a provider without segments, often several voices |
+| longer than 30 s | fingerprinted in 10 s windows (a last window under 1 s is left out); the segment keeps the window least like the wearer, so it is the wearer's only when every window is, and never teaches the voiceprint |
 
 Short segments get no label rather than a borrowed one: in the `stt` service, giving a short line its
 neighbour's label marked the other person's sub-second lines as the wearer's 88% of the time, and a
 wrong "Wearer" line becomes a task or memory under the wearer's name, while an unlabelled one costs
 little. Raising the threshold from 0.38 to 0.5 there cut false "wearer" lines only from 8% to 6% and
 lost 4% of the wearer's own, so 0.38 is the default.
+
+A segment over 30 s is usually the whole batch from a provider without segments, often several voices, so
+the weakest window decides: a wrong "Wearer" line costs more than a missed one. Earlier versions left such
+segments unchecked; while their batch's speech audio is held, the scheduler queues `rematch-voice`
+(Audio lane), which fingerprints them from the stored audio without teaching the voiceprint. The audio
+decides the windows: a line whose capture times span 31 s but whose stored speech is 24 s is fingerprinted
+whole. A batch whose audio does not decode, or whose fingerprinting throws, has those segments checked
+without a verdict, so it is not tried again.
 
 Fingerprinting never blocks transcription: if it throws, the segments are stored unchecked and the
 log carries the exception type only.
@@ -184,7 +192,7 @@ new enrollment.
 | `DELETE /api/v1/voice` | admin | Forget my voice (Privacy). `204`, also when none was enrolled |
 | `PATCH /api/v1/segments/{id}` `{ isUser }` | admin | `true`, `false` or `null` (clears the mark). `200` with the segment. `true` on a fingerprinted segment of 2 s or longer also teaches the voiceprint |
 | `GET /api/v1/voice/segments?since&until&limit` | admin | For evaluation: `{ items: [{ segmentId, conversationId, startedAt, endedAt, similarity, voiceIsUser, providerIsUser, manualIsUser }], nextSince }`, no text; `limit` defaults to 500, caps at 5000 |
-| `GET /api/v1/conversations/{id}` | read | segments gain `isUserSource`: `manual`, `voice`, `provider` or null; `isUser` is the rule's result |
+| `GET /api/v1/conversations/{id}` | read | segments gain `isUserSource`: `manual`, `voice`, `provider` or null; `isUser` is the rule's result; `wearerConfidence`: 1 or 0 for a mark, the similarity for a voice verdict, else null |
 
 ## Limits
 
@@ -241,6 +249,6 @@ as the dictionary is).
   provider's `speaker_id` and the people API stay the way. It would mean keeping fingerprints of
   people who never agreed to it, for longer than their audio.
 - Labelling segments transcribed before enrollment from their stored audio.
-- Splitting a segment where the voice changes, or labelling segments over 30 s in windows.
+- Splitting a segment where the voice changes.
 - A second wearer, or a voiceprint per pendant.
 - Deleting the provider's voiceprint of the wearer: the `stt` service refuses it over HTTP on purpose.
