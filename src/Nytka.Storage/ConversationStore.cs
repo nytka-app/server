@@ -40,6 +40,9 @@ public sealed class SegmentRow
 
     public string? Speaker { get; init; }
 
+    /// <summary>The provider's label as readers see it (<see cref="SpeakerLabel.Voice"/>): <c>Voice n+1</c> for <c>SPEAKER_n</c>.</summary>
+    public string? Voice { get; init; }
+
     public string? SpeakerId { get; init; }
 
     public bool? IsUser { get; init; }
@@ -293,7 +296,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     }
 
     private const string SegmentSelect = $"""
-        select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
+        select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker, {SpeakerLabel.Voice} as Voice,
                s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser,
                {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
                {SpeakerLabel.IsUserSource} as IsUserSource, {SpeakerLabel.WearerConfidence} as WearerConfidence,
