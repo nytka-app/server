@@ -60,7 +60,8 @@ public sealed class ExtractMemoriesHandler(
 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
     {
-        var conversationId = JsonSerializer.Deserialize<ExtractPayload>(job.Payload)!.ConversationId;
+        var payload = JsonSerializer.Deserialize<ExtractPayload>(job.Payload)!;
+        var conversationId = payload.ConversationId;
         if (!MemorySettings.IsEnabled(settings) || !llm.IsConfigured)
         {
             await memories.ForgetRunAsync(conversationId, ct);
@@ -75,7 +76,7 @@ public sealed class ExtractMemoriesHandler(
         try
         {
             var run = await memories.GetRunAsync(conversationId, ct);
-            var covered = input.LastSegmentId is null || run?.ThroughSegmentId >= input.LastSegmentId;
+            var covered = input.LastSegmentId is null || (!payload.Again && run?.ThroughSegmentId >= input.LastSegmentId);
             // A conversation too short for tasks has no lasting facts either (see EnrichConversationHandler.BriefWords).
             var brief = EnrichConversationHandler.IsBrief(input.Segments.Sum(s => EnrichConversationHandler.Words(s.Text)));
             var candidates = covered || brief ? [] : await AskAsync(input, ct);
