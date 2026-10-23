@@ -40,9 +40,9 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// The owners cards may be made from, after the filters <c>@kind</c>, <c>@id</c> (each may be null) and <c>@visibleAt</c>
-    /// (null counts skipped ones too): every group, and every pending match whose person still exists.
+    /// (null counts skipped ones too): every group heard in <c>@minConversations</c> conversations (any group when one is asked
+    /// for by id), and every pending match whose person still exists.
     /// </summary>
-    /// <summary>The card owners; a group needs <c>@minConversations</c> conversations unless one card is asked for by id.</summary>
     private const string CardOwners =
         """
         owners as (
