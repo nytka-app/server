@@ -308,6 +308,10 @@ and kinds again from the scores and your marks, with no audio and no model.
 conversation's speech time whose kind is `media`, 0 with none. `media=hide` leaves out the conversations at
 0.8 or more, `media=only` keeps just those.
 
+**Noise.** Each item also carries `noise`: true for a closed conversation with fewer than 20 words outside
+media lines (a fragment, a cough, a TV left on), the same count under which no summary is made. `noise=hide`
+leaves those out, `noise=only` keeps just those; nothing is deleted.
+
 **What media stops feeding.** With `Nytka__Speech__Mode` `on`, a line whose kind is `media` leaves the features
 that learn about people. The lines are dropped after they are read, so a conversation whose only new line is
 media is not read again and again. A `call` line is named and used for facts like a person's, and only
@@ -319,7 +323,8 @@ excluded from voice grouping.
 | [Voice grouping and cards](#voice-grouping) | it is not grouped or offered (a `call` line neither); a line waits for its guess before it joins a group |
 | [Facts about people](#facts-about-people) | it is never a fact's evidence, with no `mentioned` basis either, and not in the prompt |
 | [Memories](#memories) | it is not in the prompt |
-| Summary, tasks and tags | it stays, labelled `Media`, and the model is told to take no task from it |
+| Summary, tasks and tags | each run of media lines reaches the model as one `Media: (media playing)` line without its words, so the summary may say media played but lyrics and dialogue never become a summary line, a task or a tag; its words do not count towards the 20 a summary needs, and a conversation that is 0.8 or more media is offered no tags |
+| [Digest](#digest) | a conversation that is 0.8 or more media is left out |
 | [Ask](#ask) | a media snippet is labelled `Media` in the context |
 
 When the kinds of a conversation change while the mode is `on` (`apply-speech`, or your mark), its summary,
@@ -487,6 +492,31 @@ Every batch gets a draft from the engine the server is set to. A **pass** sends 
 - **Cleanup.** The file and transcription at Soniox are deleted after every outcome, including a conversation deleted or merged while its pass is out (the pass row stays until its job has done that and written the ledger row). A file stored without its transcription id is deleted before the pass goes out again.
 - **State.** `GET /api/v1/conversations/{id}` has `transcript.tier` (`draft`, `final`, `mixed`) and the latest pass; a pass that fails keeps the draft and can be asked for again.
 
+## Summary templates
+
+A summary can follow a template by the kind of conversation: `meeting` (decisions, owners, open questions), `lecture`
+(topic, main points, terms), `doctor` (complaint, findings, advice, what was agreed) and `call` (who, what about, what was
+agreed), plus `default`, which is the wording the server has always used for a summary. A template is one line of up
+to 600 characters that says what the summary holds; it replaces only that part of the prompt. The title, the tasks, the
+notes, the proposed tags, the output language (`llm.outputLanguage`) and the rule that a deadline is never invented stay the
+same in every template, and the summary is cut to 1200 characters whatever the template says.
+
+Until you turn it on, nothing changes: every summary follows the `default` template. Editing the default template changes
+them all, and takes effect on the next summary. With `Nytka__Summary__Templates__Enabled` on, the template is chosen so:
+
+1. A [tag](#tags) of the conversation named `meeting`, `lecture`, `doctor` or `call` wins (the first of them in that order).
+2. Else the model names the kind of the conversation in the same request that writes the summary, and the template of that
+   kind applies. A kind that is none of the four (`other`, or anything else) uses `default`.
+3. A conversation too short for tasks (under 60 words) always gets a one-sentence summary and no template.
+
+`GET /api/v1/conversations/{id}` says which template wrote the summary in `summaryTemplate` (`null` for a summary made before
+this existed, or a brief one). `GET`, `PUT` and `DELETE` on `/api/v1/summary-templates` list, edit and reset the texts; they
+are the `Nytka__Summary__Templates__*` settings, so an edit applies to the next job without a restart, and a text set by
+the environment cannot be changed there. A text in the environment that breaks the rules (over 600 characters, a line break)
+is ignored for the built-in one. A template reaches the model like the rest of the summary prompt, so the same
+[privacy](../reference/configuration.md#the-language-model) applies. Re-run a summary with
+`POST /api/v1/conversations/{id}/enrich` after changing a template or tag.
+
 ## Memories
 
 A memory is a lasting fact about you: who you are, family, friends, home, work, health, habits,
@@ -496,6 +526,12 @@ each stored summary the server asks the model for up to five new memories of up 
 `Nytka__Memories__UserName`, so facts about other speakers stay out. Without a name, "you" is the
 person wearing the pendant.
 
+- Some facts are true only for a while: where you are staying, an illness, a plan with a date. The model may give such a
+  fact the last date it holds (`expiresAt` is the start of the next day in `Nytka__User__TimeZone`); from then on
+  `GET /api/v1/memories` and the MCP `list_memories` leave it out unless asked with `expired=true`. Search still finds it.
+  A date before the conversation or more than two years after it is dropped as a guess.
+- Each memory, task and note made by the model carries `salience`: `vital` (shapes your life or your day), `ordinary`,
+  or `noise` (trivia, kept but never shown first); null for items made by hand or before this field.
 - A fact the server already holds is not added again with the same wording, even one you deleted. Extraction never rewrites
   a memory you edited or added yourself.
 - Add, edit and delete memories in the Memories tab, or with `POST`, `PATCH` and `DELETE` on

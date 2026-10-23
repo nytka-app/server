@@ -32,6 +32,7 @@ public sealed class MemoryTools(MemoryStore memories, NpgsqlDataSource dataSourc
     public async Task<CallToolResult> ListMemoriesAsync(
         [Description("A memory id (UUID): only memories older than it.")] string? before = null,
         [Description("How many to return, 1 to 200; the default is 50.")] int limit = MemoryEndpoints.DefaultLimit,
+        [Description("Whether to include facts that are no longer true (their expiresAt has passed); the default is false.")] bool expired = false,
         CancellationToken ct = default)
     {
         Guid? cursor = null;
@@ -43,7 +44,7 @@ public sealed class MemoryTools(MemoryStore memories, NpgsqlDataSource dataSourc
         }
 
         var take = Math.Clamp(limit, 1, MemoryEndpoints.MaxLimit);
-        var element = JsonSerializer.SerializeToElement(await memories.ListAsync(cursor, take, ct), Json);
+        var element = JsonSerializer.SerializeToElement(await memories.ListAsync(cursor, take, time.GetUtcNow(), ct, expired), Json);
         return new CallToolResult
         {
             Content = [new TextContentBlock { Text = element.GetRawText() }],

@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Nytka.Server.Ai;
 using Nytka.Server.Memories;
 using Nytka.Server.Tests.Ai;
 using Nytka.Storage;
@@ -154,12 +155,13 @@ public sealed partial class MediaPeopleFeaturesTests(PostgresFixture db) : AiTes
     }
 
     [Fact]
-    public async Task In_on_the_enrichment_prompt_labels_the_media_line_and_takes_no_task_from_it()
+    public async Task In_on_the_enrichment_prompt_labels_the_media_line_without_its_words_and_takes_no_task_from_it()
     {
         await Run(guesses: true, SpeechKinds.On);
 
         var request = Assert.Single(Llm.Requests, r => r.SchemaName == "conversation");
-        Assert.Contains("] Media: " + Media, request.User, StringComparison.Ordinal);
+        Assert.Contains("] Media: " + EnrichConversationHandler.MediaPlaying, request.User, StringComparison.Ordinal);
+        Assert.DoesNotContain(Media, request.User, StringComparison.Ordinal);
         Assert.Contains("Take no task from lines labelled Media.", request.System, StringComparison.Ordinal);
         Assert.Contains("Audio from a TV, video, podcast", request.System, StringComparison.Ordinal);
         Assert.DoesNotContain("] Media: " + Marked, request.User, StringComparison.Ordinal);

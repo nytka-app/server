@@ -40,6 +40,7 @@ public static class InfoEndpoints
     /// "review-clips": review items carry <c>clip</c> and <c>context</c>, and <c>GET /api/v1/review/{kind}/{id}/clip</c> exists.
     /// "transcript-upgrade": <c>POST /api/v1/conversations/{id}/upgrade</c> exists, and a conversation carries <c>transcript</c> (docs/specs/auto-transcription.md).
     /// "usage": <c>GET /api/v1/usage</c> exists, with the <c>stt.prices</c> and <c>stt.monthlyBudgetUsd</c> settings (docs/specs/usage.md).
+    /// "summary-templates": <c>/api/v1/summary-templates</c> exists, a conversation has <c>summaryTemplate</c>, and the <c>summary.templates.*</c> settings (NYTKA-82).
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
     {
@@ -63,6 +64,7 @@ public static class InfoEndpoints
         features.Add("review-clips");
         features.Add("usage");
         features.Add("transcript-upgrade");
+        features.Add("summary-templates");
 
         return features;
     }

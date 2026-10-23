@@ -54,7 +54,7 @@ public class HostTests(PostgresFixture db)
         Assert.Equal([21], info.GetProperty("codecs").EnumerateArray().Select(c => c.GetInt32()));
         // The build copies the speaker model beside the binaries when scripts/fetch-speaker-model.sh fetched it.
         Assert.Equal(
-            File.Exists(SpeakerEmbedder.DefaultPath) ? ["offline-sync", "voice", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade"] : ["offline-sync", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade"],
+            File.Exists(SpeakerEmbedder.DefaultPath) ? ["offline-sync", "voice", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade", "summary-templates"] : ["offline-sync", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade", "summary-templates"],
             info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
     }
 

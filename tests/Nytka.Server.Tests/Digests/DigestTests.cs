@@ -98,6 +98,27 @@ public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task A_conversation_that_is_mostly_media_stays_out_of_the_digest()
+    {
+        Start();
+        await Conversation(Morning);
+        var film = await Conversation(Morning.AddHours(2), "A film", "A film played.");
+        await Db.ExecuteAsync(
+            """
+            insert into segments (conversation_id, started_at, ended_at, text, speech_kind)
+            values (@film, @start, @start + interval '9 minutes', 'dialogue', 'media'),
+                   (@film, @start + interval '9 minutes', @start + interval '10 minutes', 'a remark', null)
+            """,
+            new { film, start = Morning.AddHours(2) });
+
+        await TickAndRun();
+
+        var user = Assert.Single(DigestRequests).User;
+        Assert.Contains("Trip planning", user, StringComparison.Ordinal);
+        Assert.DoesNotContain("A film", user, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task The_next_day_gets_its_own_digest()
     {
         Start();
