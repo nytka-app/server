@@ -147,8 +147,8 @@ public sealed class PeopleApiTests(PostgresFixture db) : AiTestBase(db)
         var memory = await Server.Get<MemoryStore>().ReadInputAsync(id, CancellationToken.None);
         var mcp = await Server.Get<McpQueries>().SegmentsAsync(id, 10_000, CancellationToken.None);
 
-        Assert.Equal(["Anna", "Wearer", "SPEAKER_4"], memory!.Segments.Select(l => l.Speaker));
-        Assert.Equal(["Anna", "Wearer", "SPEAKER_4"], mcp.Select(l => l.Speaker));
+        Assert.Equal(["Anna", "Wearer", "Voice 5"], memory!.Segments.Select(l => l.Speaker));
+        Assert.Equal(["Anna", "Wearer", "Voice 5"], mcp.Select(l => l.Speaker));
     }
 
     private async Task<JsonElement> Person(string name, params string[] speakerIds)

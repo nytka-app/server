@@ -213,7 +213,7 @@ called and no label changes: only you naming a group, or accepting a match, link
 (the cards below). A group's fingerprints are the ones still held.
 
 **Cards.** `GET /api/v1/people/cards` offers what is waiting for your answer: a group with no person ("Who
-is this?") and a pending match ("Is this Olena?"). A card has one clean stretch of that voice: consecutive
+is this?") heard in at least `Nytka__People__CardMinConversations` (3) conversations, and a pending match ("Is this Olena?"). A card has one clean stretch of that voice: consecutive
 segments in one conversation with no other segment between them, together at least 5 s, with their speech
 audio still stored. Its clip is the stretch's first 10 s at most, cut from the stored frames by capture
 time (`GET /api/v1/people/cards/{kind}/{id}/clip`, `audio/ogg`), and its `lines` are the segments that

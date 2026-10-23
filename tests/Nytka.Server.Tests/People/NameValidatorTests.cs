@@ -128,6 +128,34 @@ public sealed class NameValidatorTests
     }
 
     [Fact]
+    public void Apply_never_names_a_voice_after_a_place_an_organization_or_a_character_but_keeps_its_role()
+    {
+        var segments = new[]
+        {
+            Line(1, "Наступна станція Метро Арена.", speakerId: "4"),
+            Line(2, "Дякую, майстре, все працює.", wearer: true, speakerId: "0"),
+            Line(3, "Привіт, Олено, як справи?", speakerId: "5"),
+        };
+        var targets = new[] { new NameTarget('A', "speaker", "4", [1]), new NameTarget('B', "speaker", "5", [3]) };
+
+        var result = SuggestNamesHandler.Apply(
+            [new("Voice A", "Метро", 1, 0.95, "майстер", "place"), new("Voice B", "Олено", 3, 0.9, null, "person")],
+            targets, segments, null, new Dictionary<string, PersonName>());
+
+        var place = Assert.Single(result, c => c.SpeakerId == "4");
+        Assert.False(place.Named);
+        Assert.Equal("майстер", place.Role);
+        Assert.True(Assert.Single(result, c => c.SpeakerId == "5").Named);
+    }
+
+    [Theory]
+    [InlineData("Метро")]
+    [InlineData("Аптека")]
+    [InlineData("Office")]
+    public void A_place_word_is_no_name_unless_capitalized_mid_sentence(string word) =>
+        Assert.False(NameValidator.IsName(word, $"{word}."));
+
+    [Fact]
     public void Apply_drops_a_name_whose_only_evidence_is_a_one_word_line()
     {
         var segments = new[] { Line(1, "Пока.", speakerId: "4"), Line(2, "Дякую.", speakerId: "4"), Line(3, "Привіт, Оля!", speakerId: "5") };
@@ -141,9 +169,9 @@ public sealed class NameValidatorTests
     }
 
     [Fact]
-    public void The_version_is_3()
+    public void The_version_is_4()
     {
-        Assert.Equal(3, NameValidator.Version);
+        Assert.Equal(4, NameValidator.Version);
     }
 
     [Theory]

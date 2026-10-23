@@ -25,11 +25,25 @@ public static class SpeakerLabel
         + "when s.is_user is not null then 'provider' end";
 
     /// <summary>
+    /// SQL for the provider's label of a segment aliased <c>s</c> as a reader sees it: <c>SPEAKER_n</c> becomes <c>Voice n+1</c>, so
+    /// a raw label never reaches a prompt, an MCP client or an export; any other label as stored, null for none.
+    /// </summary>
+    public const string Voice =
+        "case when s.speaker ~ '^SPEAKER_[0-9]{1,6}$' then 'Voice ' || (substring(s.speaker from 9)::int + 1) else s.speaker end";
+
+    /// <summary>
     /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>, following docs/specs/people.md (Which
     /// label wins): the wearer, else the person set on the segment, else the person the voice was named after, else the
-    /// provider's own label.
+    /// provider's own label as <see cref="Voice"/> shows it.
     /// </summary>
-    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(sp.name, p.name, s.speaker) end";
+    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(sp.name, p.name, {Voice}) end";
+
+    /// <summary>The C# twin of <see cref="Voice"/>.</summary>
+    public static string? Display(string? speaker) =>
+        speaker is { Length: > 8 and <= 14 } && speaker.StartsWith("SPEAKER_", StringComparison.Ordinal)
+        && int.TryParse(speaker.AsSpan(8), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n)
+            ? $"Voice {n + 1}"
+            : speaker;
 
     /// <summary>SQL for the id of the person a segment aliased <c>s</c> belongs to, after <see cref="Joins"/>; null when none.</summary>
     public const string PersonId = "coalesce(s.person_id, pv.person_id)";
