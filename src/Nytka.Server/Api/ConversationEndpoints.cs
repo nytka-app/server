@@ -45,6 +45,10 @@ public static class ConversationEndpoints
 
     public sealed record UpgradeResponse(string Status);
 
+    public const string AudioGone = "The speech audio is gone.";
+
+    public const string StillTranscribing = "The draft is still being transcribed.";
+
     public sealed record EnrichResponse(string AiStatus);
 
     public sealed record SpeechMarked(int Marked);
@@ -136,7 +140,7 @@ public static class ConversationEndpoints
     /// on opening a conversation sends none (<c>opened</c>).
     /// </summary>
     private static async Task<IResult> UpgradeAsync(
-        Guid id, string? reason, ConversationStore conversations, TranscriptPassStore passes, UsageLedger usage, JobQueue queue,
+        Guid id, string? reason, ConversationStore conversations, TranscriptPassStore passes, BatchStore batches, UsageLedger usage, JobQueue queue,
         IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
     {
         if (reason is not (null or "opened" or "manual"))
@@ -156,12 +160,17 @@ public static class ConversationEndpoints
 
         if ((await passes.UncoveredBatchesAsync(id, ct)).Count == 0)
         {
-            return conversation.TranscriptTier == "final" ? Results.Ok(new UpgradeResponse("final")) : Refused("The speech audio is gone.");
+            if (await batches.HasPendingAsync(id, ct))
+            {
+                return Refused(StillTranscribing);
+            }
+
+            return conversation.TranscriptTier == "final" ? Results.Ok(new UpgradeResponse("final")) : Refused(AudioGone);
         }
 
         if (TranscribeConversationHandler.EngineOf(options.Value.Stt) is not { } engine)
         {
-            return Refused("No paid transcription engine is configured.");
+            return Refused(TranscribeConversationHandler.NoEngine);
         }
 
         if (!await usage.CanAffordAsync(engine, 0, 0, ct))

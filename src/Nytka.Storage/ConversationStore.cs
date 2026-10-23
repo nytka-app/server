@@ -200,6 +200,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             update memory_runs set status = 'pending', through_segment_id = null, failures = 0, message = null
             where conversation_id = @survivor
             """);
+        // Finished passes are history of the survivor's text now; one at the engine is left for its job to clean up.
+        await Run("update transcript_passes set conversation_id = @survivor where conversation_id = any(@others) and status not in ('planned', 'submitted')");
         await Run("delete from conversations where id = any(@others)");
     }
 
@@ -305,6 +307,10 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var deleted = await connection.ExecuteAsync(new CommandDefinition(
             "delete from conversations where id = @id", new { id }, transaction, cancellationToken: ct)) > 0;
+        // A pass at the engine stays until its job has cleaned up there (transcript_passes has no foreign key for that).
+        await connection.ExecuteAsync(new CommandDefinition(
+            "delete from transcript_passes where conversation_id = @id and status not in ('planned', 'submitted')",
+            new { id }, transaction, cancellationToken: ct));
         await VoiceGroupStore.DeleteEmptyGroupsAsync(connection, transaction, ct);
         await transaction.CommitAsync(ct);
         return deleted;

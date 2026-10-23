@@ -76,6 +76,15 @@ public delegate Task SwapHook(NpgsqlConnection connection, NpgsqlTransaction tra
 /// <summary>Transcript passes (docs/specs/auto-transcription.md): one paid request per conversation piece, and the atomic swap of its text for the draft.</summary>
 public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
 {
+    /// <summary>
+    /// A finished batch (aliased <c>b</c>) a pass could still pay for: no pass covered it and its speech audio is still held. The one test
+    /// the route, the plan and the tier share.
+    /// </summary>
+    public const string Uncovered = "b.status = 'done' and b.pass_id is null and exists (select 1 from speech_audio a where a.batch_id = b.id)";
+
+    /// <summary>A batch whose text is still a draft or on its way: <see cref="Uncovered"/>, or not finished yet. A batch without audio or a failed one is not.</summary>
+    public const string Unfinished = $"b.status = 'pending' or ({Uncovered})";
+
     private const string PassSelect =
         """
         select id as Id, conversation_id as ConversationId, reason as Reason, status as Status, engine as Engine,
@@ -134,11 +143,10 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<PassBatch>(new CommandDefinition(
-            """
+            $"""
             select b.id as Id, b.started_at as StartedAt, b.ended_at as EndedAt
             from transcription_batches b
-            where b.conversation_id = @conversationId and b.status = 'done' and b.pass_id is null
-              and exists (select 1 from speech_audio a where a.batch_id = b.id)
+            where b.conversation_id = @conversationId and {Uncovered}
             order by b.started_at, b.id
             """,
             new { conversationId }, cancellationToken: ct))).AsList();
@@ -205,28 +213,40 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
     /// pass turns out stale: the request was paid for all the same.
     /// </summary>
     public async Task<SwapResult> SwapAsync(
-        long passId, IReadOnlyList<PaidSegment> paid, string engine, bool enrich, DateTimeOffset now, CancellationToken ct,
+        PassRow row, IReadOnlyList<PaidSegment> paid, string engine, bool enrich, DateTimeOffset now, CancellationToken ct,
         SwapHook? recorded = null, SwapHook? stale = null)
     {
+        var passId = row.Id;
+        var conversationId = row.ConversationId;
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
 
-        var conversationId = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
-            "select conversation_id from transcript_passes where id = @passId", new { passId }, transaction, cancellationToken: ct));
-        if (conversationId is null)
+        // The request was paid for whatever became of the pass: the ledger row is written on every path out of here but a failure.
+        async Task<SwapResult> SpentAsync(SwapStatus status)
         {
-            return new SwapResult(SwapStatus.NotCurrent);
+            if (stale is not null)
+            {
+                await stale(connection, transaction, conversationId, passId, 0, 0, "draft", ct);
+            }
+
+            // The conversation is gone: nothing is left to hold the pass, and the job has cleaned up at the engine.
+            await connection.ExecuteAsync(new CommandDefinition(
+                "delete from transcript_passes where id = @passId and not exists (select 1 from conversations where id = @conversationId)",
+                new { passId, conversationId }, transaction, cancellationToken: ct));
+            await transaction.CommitAsync(ct);
+            return new SwapResult(status);
         }
 
         // The conversation first, as a merge takes it, then the pass.
-        await connection.ExecuteAsync(new CommandDefinition(
-            "select id from conversations where id = @id for update", new { id = conversationId }, transaction, cancellationToken: ct));
-        var pass = await connection.QuerySingleOrDefaultAsync<PassRow>(new CommandDefinition(
-            $"{PassSelect} where id = @passId and status in ('planned', 'submitted') for update", new { passId }, transaction, cancellationToken: ct));
-        if (pass is null || !await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
-                "select exists (select 1 from conversations where id = @id)", new { id = conversationId }, transaction, cancellationToken: ct)))
+        var exists = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+            "select id from conversations where id = @conversationId for update", new { conversationId }, transaction, cancellationToken: ct));
+        var pass = exists is null
+            ? null
+            : await connection.QuerySingleOrDefaultAsync<PassRow>(new CommandDefinition(
+                $"{PassSelect} where id = @passId and status in ('planned', 'submitted') for update", new { passId }, transaction, cancellationToken: ct));
+        if (pass is null)
         {
-            return new SwapResult(SwapStatus.NotCurrent);
+            return await SpentAsync(SwapStatus.NotCurrent);
         }
 
         var batches = (await connection.QueryAsync<PassBatch>(new CommandDefinition(
@@ -242,13 +262,7 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
             await connection.ExecuteAsync(new CommandDefinition(
                 "update transcript_passes set status = 'stale', finished_at = @now, external_id = null, external_file_id = null where id = @passId",
                 new { passId, now }, transaction, cancellationToken: ct));
-            if (stale is not null)
-            {
-                await stale(connection, transaction, conversationId.Value, passId, 0, 0, "draft", ct);
-            }
-
-            await transaction.CommitAsync(ct);
-            return new SwapResult(SwapStatus.Stale);
+            return await SpentAsync(SwapStatus.Stale);
         }
 
         var drafts = (await connection.QueryAsync<DraftRow>(new CommandDefinition(
@@ -266,6 +280,7 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
             [.. drafts.Select(d => new DraftLine(d.Id, Ms(d.StartedAt), Ms(d.EndedAt), d.SpeakerId, d.IsUserManual, d.SpeechManual, d.PersonId))],
             [.. ordered.Select(p => new PaidLine(p.StartedAt.ToUnixTimeMilliseconds(), p.EndedAt.ToUnixTimeMilliseconds(), p.Speaker, p.SpeakerId))]);
 
+        var inherited = await InheritedGroupsAsync(connection, transaction, drafts, map, ordered.Count, ct);
         var newIds = new long[ordered.Count];
         for (var i = 0; i < ordered.Count; i++)
         {
@@ -289,6 +304,12 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
             if (p.Voice?.Fingerprint is { } fingerprint && await VoiceModelAsync(connection, transaction, ct) is { } model)
             {
                 await VoiceStore.InsertFingerprintAsync(connection, transaction, newIds[i], BatchOf(batches, p.StartedAt.ToUnixTimeMilliseconds()), model, fingerprint, ct);
+                if (inherited[i] is { } membership)
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(
+                        "update segment_fingerprints set group_id = @GroupId, grouped = true where segment_id = @segmentId",
+                        new { membership.GroupId, segmentId = newIds[i] }, transaction, cancellationToken: ct));
+                }
             }
         }
 
@@ -297,7 +318,7 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
         {
             var oldIds = replacedIds.Select(d => d.Id).ToArray();
             var newFor = replacedIds.Select(d => newIds[map.Replaced[d.Id]]).ToArray();
-            await RepointAsync(connection, transaction, conversationId.Value, oldIds, newFor, ct);
+            await RepointAsync(connection, transaction, conversationId, oldIds, newFor, ct);
             await connection.ExecuteAsync(new CommandDefinition(
                 """
                 insert into segment_drafts (id, conversation_id, pass_id, started_at, ended_at, text, engine)
@@ -309,13 +330,15 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
                 "delete from segments where id = any(@oldIds)", new { oldIds }, transaction, cancellationToken: ct));
         }
 
+        // A group whose every fingerprint went with a replaced line (no voice model to make new ones) goes too, as in retention.
+        await VoiceGroupStore.DeleteEmptyGroupsAsync(connection, transaction, ct);
         await connection.ExecuteAsync(new CommandDefinition(
             "update transcription_batches set pass_id = @passId where id = any(@ids)",
             new { passId, ids = pass.BatchIds }, transaction, cancellationToken: ct));
-        await ResetRunsAsync(connection, transaction, conversationId.Value, enrich, ct);
+        await ResetRunsAsync(connection, transaction, conversationId, enrich, ct);
 
         var tier = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
-            "select exists (select 1 from transcription_batches where conversation_id = @conversationId and (pass_id is null or status <> 'done'))",
+            $"select exists (select 1 from transcription_batches b where b.conversation_id = @conversationId and ({Unfinished}))",
             new { conversationId }, transaction, cancellationToken: ct)) ? "mixed" : "final";
         await connection.ExecuteAsync(new CommandDefinition(
             "update conversations set transcript_tier = @tier, updated_at = @now where id = @conversationId",
@@ -330,11 +353,42 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
 
         if (recorded is not null)
         {
-            await recorded(connection, transaction, conversationId.Value, passId, replacedIds.Count, ordered.Count, tier, ct);
+            await recorded(connection, transaction, conversationId, passId, replacedIds.Count, ordered.Count, tier, ct);
         }
 
         await transaction.CommitAsync(ct);
         return new SwapResult(SwapStatus.Done, replacedIds.Count, ordered.Count, tier);
+    }
+
+    private sealed record Membership(Guid GroupId);
+
+    /// <summary>
+    /// For each paid line, the voice group of the first replaced draft line it takes over that had one. The new fingerprint joins that
+    /// group already counted (<c>grouped</c>), so the grouping job neither adds it to the centroid a second time nor leaves the
+    /// group's count standing on fingerprints that went with the draft.
+    /// </summary>
+    private static async Task<Membership?[]> InheritedGroupsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyList<DraftRow> drafts, SwapMap map, int paidCount, CancellationToken ct)
+    {
+        var inherited = new Membership?[paidCount];
+        var ids = drafts.Where(d => map.Replaced.ContainsKey(d.Id)).Select(d => d.Id).ToArray();
+        if (ids.Length == 0)
+        {
+            return inherited;
+        }
+
+        var groups = (await connection.QueryAsync<(long SegmentId, Guid GroupId)>(new CommandDefinition(
+            "select segment_id, group_id from segment_fingerprints where segment_id = any(@ids) and group_id is not null",
+            new { ids }, transaction, cancellationToken: ct))).ToDictionary(g => g.SegmentId, g => g.GroupId);
+        foreach (var draft in drafts)
+        {
+            if (map.Replaced.TryGetValue(draft.Id, out var index) && inherited[index] is null && groups.TryGetValue(draft.Id, out var group))
+            {
+                inherited[index] = new Membership(group);
+            }
+        }
+
+        return inherited;
     }
 
     /// <summary>

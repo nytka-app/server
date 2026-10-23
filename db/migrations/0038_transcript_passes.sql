@@ -2,9 +2,12 @@ set local lock_timeout = '5s';
 
 -- NYTKA-133, docs/specs/auto-transcription.md (Storage). A pass sends the kept speech of a conversation to the paid engine
 -- once and swaps its text for the draft lines in one transaction. stretches and offset_map hold times and categories, never text.
+-- No foreign key on conversation_id: a conversation deleted or merged away while its pass is at the engine leaves the row, so the job
+-- can still delete the file and the transcription there and write the ledger row; it removes the row itself. Finished passes go with
+-- the conversation (ConversationStore.DeleteAsync) or move to the merge survivor.
 create table transcript_passes (
     id               bigint      generated always as identity primary key,
-    conversation_id  uuid        not null references conversations (id) on delete cascade,
+    conversation_id  uuid        not null,
     reason           text        not null check (reason in (
                                      'settled', 'piece', 'opened', 'ask', 'bookmark', 'tag', 'task', 'meeting', 'person', 'correction', 'manual')),
     status           text        not null check (status in ('planned', 'submitted', 'done', 'failed', 'stale', 'waiting')),

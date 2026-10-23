@@ -81,15 +81,17 @@ public sealed class SonioxClient(
     /// <summary>
     /// The first half of <see cref="TranscribeAsync"/>, for a request that outlives one job run (a transcript pass): uploads the WAV and
     /// creates the transcription, and returns without waiting. A failure after the upload deletes the file; the caller owns the
-    /// two ids from here and ends with <see cref="CleanUpAsync"/>.
+    /// two ids from here and ends with <see cref="CleanUpAsync"/>; <paramref name="uploaded"/> hands it the file id as soon as there is one.
     /// </summary>
-    public async Task<SonioxSubmission> SubmitAsync(byte[] wav, CancellationToken ct)
+    public async Task<SonioxSubmission> SubmitAsync(byte[] wav, Func<string, Task> uploaded, CancellationToken ct)
     {
         var stt = options.Value.Stt;
         var context = await ContextAsync(stt.Vocabulary, ct);
         var fileId = await UploadAsync(stt, wav, ct);
         try
         {
+            // The caller stores the file id before the transcription exists, so a death in between leaves a file it can still delete.
+            await uploaded(fileId);
             return new SonioxSubmission(fileId, await CreateAsync(stt, fileId, context, ct));
         }
         catch

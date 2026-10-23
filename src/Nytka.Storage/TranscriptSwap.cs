@@ -20,12 +20,15 @@ public sealed record SwapMap(IReadOnlyList<Carried> Paid, IReadOnlyDictionary<lo
 
 /// <summary>
 /// The pure part of the swap (docs/specs/auto-transcription.md, Swap): which draft line each paid line replaces, and what the
-/// paid line carries over. A draft line that overlaps no paid line is not replaced, so no draft is dropped without a replacement.
+/// paid line carries over. A draft line the paid lines cover less than half of is not replaced, so no draft is dropped for lines that hold little of it.
 /// </summary>
 public static class TranscriptSwapMap
 {
     /// <summary>A speaker label takes the voice id that this share of its overlapping draft time carries.</summary>
     public const double SpeakerShare = 0.6;
+
+    /// <summary>A draft line is replaced when the paid lines cover at least this share of its length.</summary>
+    public const double MinCoverage = 0.5;
 
     /// <summary><paramref name="paid"/> must be in time order: of two equal overlaps the earlier line wins.</summary>
     public static SwapMap Build(IReadOnlyList<DraftLine> drafts, IReadOnlyList<PaidLine> paid)
@@ -41,6 +44,7 @@ public static class TranscriptSwapMap
         {
             var best = -1;
             var bestOverlap = 0L;
+            var covered = 0L;
             for (var i = 0; i < paid.Count; i++)
             {
                 var overlap = Overlap(draft.StartMs, draft.EndMs, paid[i].StartMs, paid[i].EndMs);
@@ -50,6 +54,7 @@ public static class TranscriptSwapMap
                 }
 
                 overlapping[i].Add((draft, overlap));
+                covered += overlap;
                 if (overlap > bestOverlap)
                 {
                     best = i;
@@ -57,10 +62,17 @@ public static class TranscriptSwapMap
                 }
             }
 
-            if (best >= 0)
+            // A draft the paid lines barely touch keeps its text: the words are mostly somewhere the paid engine heard nothing.
+            if (best >= 0 && covered >= (draft.EndMs - draft.StartMs) * MinCoverage)
             {
                 replaced[draft.Id] = best;
             }
+        }
+
+        // Only the lines the swap replaces hand anything on.
+        foreach (var list in overlapping)
+        {
+            list.RemoveAll(o => !replaced.ContainsKey(o.Draft.Id));
         }
 
         var voices = SpeakerVoices(paid, overlapping);

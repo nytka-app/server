@@ -22,6 +22,20 @@ public sealed class TranscriptSwapMapTests
     }
 
     [Fact]
+    public void A_draft_the_paid_lines_barely_touch_is_kept_with_its_marks_and_a_split_draft_follows_the_larger_share()
+    {
+        var few = TranscriptSwapMap.Build([Draft(1, 0, 10_000, user: true)], [Paid(9_950, 12_000)]);
+        Assert.Empty(few.Replaced);
+        Assert.Null(few.Paid[0].IsUserManual);
+
+        var split = TranscriptSwapMap.Build([Draft(1, 0, 10_000)], [Paid(0, 3_000), Paid(3_000, 10_000)]);
+        Assert.Equal(1, split.Replaced[1]);
+
+        var thirds = TranscriptSwapMap.Build([Draft(1, 0, 9_000)], [Paid(0, 2_000), Paid(4_000, 6_000)]);
+        Assert.Empty(thirds.Replaced);
+    }
+
+    [Fact]
     public void A_draft_no_paid_line_overlaps_is_not_replaced()
     {
         var map = TranscriptSwapMap.Build([Draft(1, 5_000, 6_000)], [Paid(0, 1_000)]);
@@ -49,7 +63,7 @@ public sealed class TranscriptSwapMapTests
     {
         var map = TranscriptSwapMap.Build([Draft(1, 0, 10_000, user: true), ], [Paid(9_000, 19_000)]);
 
-        Assert.Equal(0, map.Replaced[1]);
+        Assert.Empty(map.Replaced);
         Assert.Null(map.Paid[0].IsUserManual);
     }
 

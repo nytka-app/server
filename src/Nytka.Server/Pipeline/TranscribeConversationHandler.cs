@@ -22,18 +22,17 @@ namespace Nytka.Server.Pipeline;
 /// engine answers within the run.
 /// </summary>
 public sealed class TranscribeConversationHandler(
-    TranscriptPassStore passes, SonioxClient soniox, TranscriptionClient client, VoiceMatcher voice, UsageLedger usage,
+    TranscriptPassStore passes, SonioxClient soniox, VoiceMatcher voice, UsageLedger usage,
     IEventPublisher events, JobQueue queue, ILlmClient llm, IOptions<NytkaOptions> options, TimeProvider time,
     ILogger<TranscribeConversationHandler> logger)
     : IJobHandler
 {
+    public const string NoEngine = "No paid transcription engine is configured.";
+
     public const string BudgetSpent = "The monthly transcription budget is spent.";
 
     /// <summary>One pass carries at most this much audio, so its WAV and decoded samples stay small beside the process's memory.</summary>
     public static readonly TimeSpan MaxPassAudio = TimeSpan.FromMinutes(30);
-
-    /// <summary>An engine that answers the request itself waits on it, so a pass for it is shorter (as <c>stt</c>'s pinned path allows).</summary>
-    public static readonly TimeSpan MaxSyncPassAudio = TimeSpan.FromMinutes(10);
 
     public static readonly TimeSpan PollEvery = TimeSpan.FromSeconds(5);
 
@@ -44,11 +43,11 @@ public sealed class TranscribeConversationHandler(
 
     public string Kind => JobKinds.TranscribeConversation;
 
-    /// <summary>The paid engine's name in the ledger, or null when none is configured: Soniox with a key, else <c>stt.model</c> at <c>stt.url</c>.</summary>
-    public static string? EngineOf(NytkaOptions.SttOptions stt) =>
-        stt.UsesSoniox ? SonioxClient.Engine
-        : !string.IsNullOrWhiteSpace(stt.Model) && !string.IsNullOrWhiteSpace(stt.Url) ? UsageLedger.Engine(stt.Model)
-        : null;
+    /// <summary>
+    /// The paid engine's name in the ledger, or null when none is configured. Only Soniox with its own key counts: an engine behind
+    /// <c>stt.url</c> is the draft engine today, and the spec asks for a paid one that differs from <c>stt.liveModel</c> (Auto, a later step).
+    /// </summary>
+    public static string? EngineOf(NytkaOptions.SttOptions stt) => stt.UsesSoniox ? SonioxClient.Engine : null;
 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
     {
@@ -65,17 +64,23 @@ public sealed class TranscribeConversationHandler(
             (pass, audio) = planned;
         }
 
-        var stt = options.Value.Stt;
+        if (EngineOf(options.Value.Stt) is not { } engine)
+        {
+            await passes.EndAsync(pass.Id, PassStatus.Failed, NoEngine, time.GetUtcNow(), ct);
+            return JobOutcome.Done;
+        }
+
         var map = OffsetMap.FromJson(pass.OffsetMap);
         if (pass.Status == PassStatus.Submitted && pass.ExternalId is not null)
         {
-            return await PollAsync(pass, map, ct);
+            return await PollAsync(pass, map, engine, ct);
         }
 
-        if (pass.Engine is { } engine && EngineOf(stt) != engine)
+        // Planned, or submitted but the run died before it kept the transcription id: a file stored without one is deleted, and the
+        // pass goes out again. The budget is read again, since the pass may have waited since it was planned.
+        if (pass.ExternalFileId is not null)
         {
-            await passes.EndAsync(pass.Id, PassStatus.Failed, "The paid engine changed.", time.GetUtcNow(), ct);
-            return JobOutcome.Done;
+            await soniox.CleanUpAsync(pass.ExternalFileId, null);
         }
 
         audio ??= await CutAsync(pass, ct);
@@ -85,17 +90,25 @@ public sealed class TranscribeConversationHandler(
             return JobOutcome.Done;
         }
 
-        if (stt.UsesSoniox)
+        if (!await usage.CanAffordAsync(engine, audio.Map.TotalMs, await passes.DraftCharsAsync(pass.BatchIds, ct), ct))
         {
-            var submission = await soniox.SubmitAsync(audio.Wav, ct);
-            await passes.SubmittedAsync(pass.Id, SonioxClient.Engine, submission.TranscriptionId, submission.FileId, time.GetUtcNow(), ct);
-            return JobOutcome.RunAgain(PollEvery);
+            await passes.EndAsync(pass.Id, PassStatus.Waiting, BudgetSpent, time.GetUtcNow(), ct);
+            return JobOutcome.Done;
         }
 
-        var model = stt.Model!;
-        await passes.SubmittedAsync(pass.Id, UsageLedger.Engine(model), null, null, time.GetUtcNow(), ct);
-        var result = await client.TranscribeAsync(audio.Wav, ct, model);
-        return await SwapAsync(pass, map, result, audio, UsageLedger.Engine(model), ct);
+        var submission = await soniox.SubmitAsync(
+            audio.Wav, fileId => passes.SubmittedAsync(pass.Id, engine, null, fileId, time.GetUtcNow(), ct), ct);
+        try
+        {
+            await passes.SubmittedAsync(pass.Id, engine, submission.TranscriptionId, submission.FileId, time.GetUtcNow(), ct);
+        }
+        catch
+        {
+            await soniox.CleanUpAsync(submission.FileId, submission.TranscriptionId);
+            throw;
+        }
+
+        return JobOutcome.RunAgain(PollEvery);
     }
 
     public async Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct)
@@ -128,7 +141,7 @@ public sealed class TranscribeConversationHandler(
             return null;
         }
 
-        var limit = options.Value.Stt.UsesSoniox ? MaxPassAudio : MaxSyncPassAudio;
+        var limit = MaxPassAudio;
         var chosen = new List<long>();
         var bodies = new List<byte[]>();
         var total = TimeSpan.Zero;
@@ -170,7 +183,7 @@ public sealed class TranscribeConversationHandler(
         return (pass, audio);
     }
 
-    private async Task<JobOutcome> PollAsync(PassRow pass, OffsetMap map, CancellationToken ct)
+    private async Task<JobOutcome> PollAsync(PassRow pass, OffsetMap map, string engine, CancellationToken ct)
     {
         if (time.GetUtcNow() - new DateTimeOffset(DateTime.SpecifyKind(pass.SubmittedAt!.Value, DateTimeKind.Utc)) > MaxWait)
         {
@@ -185,7 +198,7 @@ public sealed class TranscribeConversationHandler(
         }
 
         var result = await soniox.TranscriptAsync(pass.ExternalId!, ct);
-        return await SwapAsync(pass, map, result, null, pass.Engine ?? SonioxClient.Engine, ct);
+        return await SwapAsync(pass, map, result, null, engine, ct);
     }
 
     /// <summary>
@@ -207,7 +220,7 @@ public sealed class TranscribeConversationHandler(
         var now = time.GetUtcNow();
 
         var outcome = await passes.SwapAsync(
-            pass.Id, paid, engine, enrich, now, ct,
+            pass, paid, engine, enrich, now, ct,
             recorded: async (connection, transaction, conversationId, passId, _, _, _, token) =>
             {
                 await usage.RecordPassAsync(connection, transaction, passId, conversationId, engine, map.TotalMs, result.Text.Length, token);
