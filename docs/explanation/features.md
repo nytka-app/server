@@ -18,17 +18,20 @@ windows of 3 to 10 seconds, fingerprints each and keeps their mean as your voice
 heavy noise), and says which. `mode=add` blends a new reading into the voiceprint, for example for a
 new language; the default `mode=replace` starts over. The audio is never stored.
 
-**Matching.** Each new segment from 1 second (`Nytka__Voice__MinSegmentSeconds`) to 30 seconds gets a
+**Matching.** Each new segment of 1 second (`Nytka__Voice__MinSegmentSeconds`) or longer gets a
 similarity to your voiceprint, and is yours at `Nytka__Voice__UserThreshold` (0.38) or above. A shorter
-segment gets no label rather than a guess, and a longer one keeps the provider's. If fingerprinting
-fails, the transcript is stored anyway. Segments of 2 seconds or longer that match well
+segment gets no label rather than a guess. One over 30 seconds is fingerprinted in 10-second windows and
+takes its least-like-you window, so it is yours only when every window is; it never teaches the
+voiceprint. Long segments stored before this, while their audio is kept, are matched in the background
+(`rematch-voice`). If fingerprinting fails, the transcript is stored anyway. Segments of 2 seconds or longer that match well
 (`Nytka__Voice__LearnThreshold`) move the voiceprint towards your voice as the pendant hears it;
 `POST /api/v1/voice/reset` goes back to what you enrolled. A threshold change or a new voiceprint
 re-labels the stored segments.
 
 **Which label wins.** Your own mark on a segment ("This is me" or "This is not me",
 `PATCH /api/v1/segments/{id}`), then Nytka's verdict when Nytka checked the segment, then the
-provider's `is_user`. A conversation's segments say which one decided in `isUserSource`. Marking a
+provider's `is_user`. A conversation's segments say which one decided in `isUserSource`, and how sure it is in
+`wearerConfidence`: 1 or 0 for your mark, the similarity when Nytka's verdict decides, null otherwise. Marking a
 segment of 2 seconds or longer as yours also teaches the voiceprint.
 
 **Forget.** `DELETE /api/v1/voice` deletes the voiceprint, every segment fingerprint, every

@@ -25,6 +25,14 @@ public static class SpeakerLabel
         + "when s.is_user is not null then 'provider' end";
 
     /// <summary>
+    /// SQL for how sure the rule is that a segment aliased <c>s</c> is the wearer's, from 0 to 1: 1 or 0 for the wearer's own
+    /// mark, the voice similarity (cosine, compared with <c>voice.userThreshold</c>) when Nytka's verdict decides, else null.
+    /// </summary>
+    public const string WearerConfidence =
+        "case when s.is_user_manual is not null then case when s.is_user_manual then 1 else 0 end::real "
+        + "when s.voice_checked then case when s.voice_similarity < 0 then 0 else s.voice_similarity end end";
+
+    /// <summary>
     /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>, following docs/specs/people.md (Which
     /// label wins): the wearer, else the person set on the segment, else the person the voice was named after, else the
     /// provider's own label.

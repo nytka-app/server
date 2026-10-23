@@ -329,6 +329,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
     {
         await EnrollLowTone();
         _embedder.Similarities.Enqueue(0.9f);
+        _embedder.Similarities.Enqueue(0.2f);
         await Transcribe((0, 2.5, false), (3, 3.5, true), (4, 4.5, null), (5, 45, true));
 
         Assert.Equal(
@@ -337,7 +338,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
                 ["s0"] = (true, "voice"),
                 ["s1"] = (null, null),
                 ["s2"] = (null, null),
-                ["s3"] = (true, "provider"),
+                ["s3"] = (false, "voice"),
             },
             await ConversationSegments());
     }
