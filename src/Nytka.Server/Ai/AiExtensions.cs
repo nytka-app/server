@@ -21,6 +21,7 @@ public static class AiExtensions
             .ValidateOnStart();
 
         services.AddSingleton<ISettingsGroup, LlmSettings>();
+        services.AddSingleton<ISettingsGroup, SummarySettings>();
         services.AddSingleton<LlmOptionsSetup>();
         services.AddSingleton<IPostConfigureOptions<LlmOptions>>(p => p.GetRequiredService<LlmOptionsSetup>());
         services.AddSingleton<IOptionsChangeTokenSource<LlmOptions>>(p => p.GetRequiredService<LlmOptionsSetup>());

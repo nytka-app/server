@@ -38,7 +38,7 @@ public static class ConversationEndpoints
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, TranscriptView Transcript);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript);
 
     /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
     public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
@@ -98,7 +98,7 @@ public static class ConversationEndpoints
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Title,
             conversation.Summary, conversation.AiStatus, conversation.TitleEdited, conversation.AiMessage,
             conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments,
-            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct),
+            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct), conversation.SummaryTemplate,
             new TranscriptView(
                 conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
                 TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0)));

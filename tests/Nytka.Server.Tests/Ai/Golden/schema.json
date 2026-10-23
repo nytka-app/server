@@ -1,0 +1,10 @@
+{ "type": "object", "additionalProperties": false, "required": ["title", "summary", "items", "tags"],
+  "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
+                  "tags": { "type": "array", "items": { "type": "string" } },
+                  "items": { "type": "array", "items": {
+                    "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due"],
+                    "properties": { "text": { "type": "string" },
+                                    "kind": { "type": "string", "enum": ["commitment", "idea", "advice", "noise"] },
+                                    "owner": { "type": "string", "enum": ["wearer", "other"] },
+                                    "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] },
+                                    "due": { "type": ["string", "null"] } } } } } }

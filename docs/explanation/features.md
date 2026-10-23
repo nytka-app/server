@@ -487,6 +487,31 @@ Every batch gets a draft from the engine the server is set to. A **pass** sends 
 - **Cleanup.** The file and transcription at Soniox are deleted after every outcome, including a conversation deleted or merged while its pass is out (the pass row stays until its job has done that and written the ledger row). A file stored without its transcription id is deleted before the pass goes out again.
 - **State.** `GET /api/v1/conversations/{id}` has `transcript.tier` (`draft`, `final`, `mixed`) and the latest pass; a pass that fails keeps the draft and can be asked for again.
 
+## Summary templates
+
+A summary can follow a template by the kind of conversation: `meeting` (decisions, owners, open questions), `lecture`
+(topic, main points, terms), `doctor` (complaint, findings, advice, what was agreed) and `call` (who, what about, what was
+agreed), plus `default`, which is the wording the server has always used for a summary. A template is one line of up
+to 600 characters that says what the summary holds; it replaces only that part of the prompt. The title, the tasks, the
+notes, the proposed tags, the output language (`llm.outputLanguage`) and the rule that a deadline is never invented stay the
+same in every template, and the summary is cut to 1200 characters whatever the template says.
+
+Until you turn it on, nothing changes: every summary follows the `default` template. Editing the default template changes
+them all, and takes effect on the next summary. With `Nytka__Summary__Templates__Enabled` on, the template is chosen so:
+
+1. A [tag](#tags) of the conversation named `meeting`, `lecture`, `doctor` or `call` wins (the first of them in that order).
+2. Else the model names the kind of the conversation in the same request that writes the summary, and the template of that
+   kind applies. A kind that is none of the four (`other`, or anything else) uses `default`.
+3. A conversation too short for tasks (under 60 words) always gets a one-sentence summary and no template.
+
+`GET /api/v1/conversations/{id}` says which template wrote the summary in `summaryTemplate` (`null` for a summary made before
+this existed, or a brief one). `GET`, `PUT` and `DELETE` on `/api/v1/summary-templates` list, edit and reset the texts; they
+are the `Nytka__Summary__Templates__*` settings, so an edit applies to the next job without a restart, and a text set by
+the environment cannot be changed there. A text in the environment that breaks the rules (over 600 characters, a line break)
+is ignored for the built-in one. A template reaches the model like the rest of the summary prompt, so the same
+[privacy](../reference/configuration.md#the-language-model) applies. Re-run a summary with
+`POST /api/v1/conversations/{id}/enrich` after changing a template or tag.
+
 ## Memories
 
 A memory is a lasting fact about you: who you are, family, friends, home, work, health, habits,

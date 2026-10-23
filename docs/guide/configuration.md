@@ -109,6 +109,8 @@ text of each conversation goes to the endpoint you set and nowhere else
 | `Nytka__People__VoiceMatching` | `false` | edit | Group and match other voices |
 | `Nytka__People__VoiceThreshold` | `0.7` | edit | Similarity to join a group |
 | `Nytka__Tags__Suggest` | `true` | edit | Model proposes tags |
+| `Nytka__Summary__Templates__Enabled` | `false` | edit | Summary template by tag (meeting, lecture, doctor, call, in that order) or kind |
+| `Nytka__Summary__Templates__Default`, `__Meeting`, `__Lecture`, `__Doctor`, `__Call` | built-in | edit | Text of a summary template |
 | `Nytka__Digest__Enabled` | `false` | edit | Daily digest |
 | `Nytka__Digest__Hour` | `21` | edit | Local hour after which it is made |
 
