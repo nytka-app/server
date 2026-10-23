@@ -38,10 +38,11 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     /// <summary>A conversation counts when it has a title or a summary and is not mostly media (<see cref="SpeechKinds.MediaShareLimit"/>).</summary>
-    private const string CountsForDigest =
+    private static readonly string CountsForDigest =
         "started_at >= @from and started_at < @to and (coalesce(title, ai_title) is not null or ai_summary is not null) "
         + "and coalesce((select sum(extract(epoch from s.ended_at - s.started_at)::float8) filter (where " + SpeechKinds.IsMedia + ") "
-        + "/ nullif(sum(extract(epoch from s.ended_at - s.started_at)::float8), 0) from segments s where s.conversation_id = conversations.id), 0) < 0.8";
+        + "/ nullif(sum(extract(epoch from s.ended_at - s.started_at)::float8), 0) from segments s where s.conversation_id = conversations.id), 0) < "
+        + SpeechKinds.MediaShareLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private const string Select =
         "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview, body::text as Body, created_at as CreatedAt from digests";
