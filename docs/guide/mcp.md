@@ -76,7 +76,7 @@ structured content plus JSON text. The names below match the `McpServerTool` att
 | `get_conversation` | `id`, `transcript?`, `part?` |
 | `list_tasks` | `status?`, `conversationId?`, `before?`, `kind?` (`commitment` by default, `idea`, `all`), `limit?` (1 to 200, 50) |
 | `list_notes` | `topic?`, `conversationId?`, `before?`, `limit?` (1 to 200, 50) |
-| `list_memories` | `before?`, `limit?` (1 to 200, 50) |
+| `list_memories` | `before?`, `limit?` (1 to 200, 50), `expired?` (false: facts past their end date are left out) |
 | `list_bookmarks` | `before?`, `beforeId?`, `limit?` (1 to 100, 30) |
 | `list_digests` | `before?`, `limit?` (1 to 100, 30) |
 | `search` | `query`, `kinds?`, `tag?`, `limit?` (1 to 30, 10) |

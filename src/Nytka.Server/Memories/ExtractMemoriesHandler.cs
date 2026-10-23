@@ -40,13 +40,19 @@ public sealed class ExtractMemoriesHandler(
         """
         { "type": "object", "additionalProperties": false, "required": ["memories"],
           "properties": { "memories": { "type": "array", "items": { "type": "object",
-            "additionalProperties": false, "required": ["text", "replaces"],
-            "properties": { "text": { "type": "string" }, "replaces": { "type": ["string", "null"] } } } } } }
+            "additionalProperties": false, "required": ["text", "replaces", "salience", "expires"],
+            "properties": { "text": { "type": "string" }, "replaces": { "type": ["string", "null"] },
+                            "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
+                            "expires": { "type": ["string", "null"] } } } } } }
         """;
 
     public string Kind => JobKinds.ExtractMemories;
 
-    public sealed record Candidate(string Text, string? Replaces);
+    /// <summary>The latest expiry a fact may take, counted from the conversation's date; a later date is dropped as a guess.</summary>
+    public const int MaxExpiryDays = 730;
+
+    /// <summary>A proposed fact. <paramref name="Salience"/> and <paramref name="Expires"/> are missing in answers from before they existed.</summary>
+    public sealed record Candidate(string Text, string? Replaces, string? Salience = null, string? Expires = null);
 
     public sealed record Answer(IReadOnlyList<Candidate> Memories);
 
@@ -99,6 +105,7 @@ public sealed class ExtractMemoriesHandler(
         var system = SystemMessage(llmOptions.CurrentValue.OutputLanguage, UserTimeZone.Name(zone));
         var userName = MemorySettings.UserName(settings);
 
+        var from = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(input.StartedAt, TimeSpan.Zero), zone).DateTime);
         var pooled = new List<MemoryCandidate>();
         foreach (var window in windows)
         {
@@ -114,12 +121,22 @@ public sealed class ExtractMemoriesHandler(
                 }
 
                 Guid? replaces = Guid.TryParse(candidate.Replaces, out var id) && listed.Contains(id) ? id : null;
-                pooled.Add(new MemoryCandidate(text, fingerprint, replaces));
+                pooled.Add(new MemoryCandidate(text, fingerprint, replaces, Salience.Parse(candidate.Salience), ExpiresAt(candidate.Expires, from, zone)));
             }
         }
 
         return pooled.Take(MaxMemoriesPerRun).ToList();
     }
+
+    /// <summary>
+    /// The instant a fact stops being true: the start of the day after <paramref name="text"/> (<c>YYYY-MM-DD</c>) in the owner's time zone.
+    /// Null for a lasting fact, and for a date before the conversation's day or more than <see cref="MaxExpiryDays"/> after it.
+    /// </summary>
+    public static DateTimeOffset? ExpiresAt(string? text, DateOnly from, TimeZoneInfo zone) =>
+        DateOnly.TryParseExact(text?.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+        && date >= from && date <= from.AddDays(MaxExpiryDays)
+            ? new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(date.AddDays(1).ToDateTime(TimeOnly.MinValue), zone), TimeSpan.Zero)
+            : null;
 
     private async Task ApplyAsync(Guid conversationId, IReadOnlyList<MemoryCandidate> candidates, long? through, CancellationToken ct)
     {
@@ -153,6 +170,8 @@ public sealed class ExtractMemoriesHandler(
         Lines labelled "Wearer" are yours. Other speaker labels may differ between parts of the transcript; the user message says who "you" is.
         Times and dates are in the time zone {timeZone}. Write dates in a fact as absolute dates, never as "tomorrow" or "Friday".
         Write each fact as one short sentence, at most {MaxTextLength} characters, in {outputLanguage}.
+        Some facts are true only for a while: where you are staying, an illness, a job you are about to leave, a plan with a date. Set "expires" to the last date (YYYY-MM-DD) the fact is still true when the transcript says it or makes it plain, and to null for a lasting fact; never guess a date.
+        Set "salience" to "vital" for what shapes your life (family, health, home, work, money, a big decision), "noise" for trivia (a passing taste or opinion), and "ordinary" for the rest.
         Return at most {MaxMemoriesPerRun} facts, none that a known memory already states. When a fact updates a
         known memory, set "replaces" to that memory's id, otherwise to null. Return an empty list when there is
         nothing lasting.

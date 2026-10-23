@@ -28,10 +28,11 @@ public static class MemoryEndpoints
 
     internal sealed record ValidText(string? Text, string? Fingerprint, IResult? Problem);
 
-    private static async Task<IResult> ListAsync(Guid? before, int? limit, MemoryStore memories, CancellationToken ct)
+    private static async Task<IResult> ListAsync(
+        Guid? before, int? limit, bool? expired, MemoryStore memories, TimeProvider time, CancellationToken ct)
     {
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
-        return Results.Ok(await memories.ListAsync(before, take, ct));
+        return Results.Ok(await memories.ListAsync(before, take, time.GetUtcNow(), ct, expired == true));
     }
 
     private static async Task<IResult> CreateAsync(

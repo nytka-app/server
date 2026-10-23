@@ -308,6 +308,10 @@ and kinds again from the scores and your marks, with no audio and no model.
 conversation's speech time whose kind is `media`, 0 with none. `media=hide` leaves out the conversations at
 0.8 or more, `media=only` keeps just those.
 
+**Noise.** Each item also carries `noise`: true for a closed conversation with fewer than 20 words outside
+media lines (a fragment, a cough, a TV left on), the same count under which no summary is made. `noise=hide`
+leaves those out, `noise=only` keeps just those; nothing is deleted.
+
 **What media stops feeding.** With `Nytka__Speech__Mode` `on`, a line whose kind is `media` leaves the features
 that learn about people. The lines are dropped after they are read, so a conversation whose only new line is
 media is not read again and again. A `call` line is named and used for facts like a person's, and only
@@ -319,7 +323,8 @@ excluded from voice grouping.
 | [Voice grouping and cards](#voice-grouping) | it is not grouped or offered (a `call` line neither); a line waits for its guess before it joins a group |
 | [Facts about people](#facts-about-people) | it is never a fact's evidence, with no `mentioned` basis either, and not in the prompt |
 | [Memories](#memories) | it is not in the prompt |
-| Summary, tasks and tags | it stays, labelled `Media`, and the model is told to take no task from it |
+| Summary, tasks and tags | each run of media lines reaches the model as one `Media: (media playing)` line without its words, so the summary may say media played but lyrics and dialogue never become a summary line, a task or a tag; its words do not count towards the 20 a summary needs, and a conversation that is 0.8 or more media is offered no tags |
+| [Digest](#digest) | a conversation that is 0.8 or more media is left out |
 | [Ask](#ask) | a media snippet is labelled `Media` in the context |
 
 When the kinds of a conversation change while the mode is `on` (`apply-speech`, or your mark), its summary,
@@ -521,6 +526,12 @@ each stored summary the server asks the model for up to five new memories of up 
 `Nytka__Memories__UserName`, so facts about other speakers stay out. Without a name, "you" is the
 person wearing the pendant.
 
+- Some facts are true only for a while: where you are staying, an illness, a plan with a date. The model may give such a
+  fact the last date it holds (`expiresAt` is the start of the next day in `Nytka__User__TimeZone`); from then on
+  `GET /api/v1/memories` and the MCP `list_memories` leave it out unless asked with `expired=true`. Search still finds it.
+  A date before the conversation or more than two years after it is dropped as a guess.
+- Each memory, task and note made by the model carries `salience`: `vital` (shapes your life or your day), `ordinary`,
+  or `noise` (trivia, kept but never shown first); null for items made by hand or before this field.
 - A fact the server already holds is not added again with the same wording, even one you deleted. Extraction never rewrites
   a memory you edited or added yourself.
 - Add, edit and delete memories in the Memories tab, or with `POST`, `PATCH` and `DELETE` on
