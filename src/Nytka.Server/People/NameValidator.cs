@@ -10,7 +10,7 @@ namespace Nytka.Server.People;
 /// </summary>
 public static partial class NameValidator
 {
-    public const int Version = 3;
+    public const int Version = 4;
     public const int MaxTokens = 3;
     public const int MaxLength = 40;
 
@@ -50,6 +50,10 @@ public static partial class NameValidator
         // evaluations
         "добре", "класно", "круто", "прикольно", "нормально", "гарно", "чудово", "погано", "хорошо", "класс", "ладно", "плохо",
         "good", "great", "fine", "nice", "cool", "bad",
+        // places and institutions people name aloud ("Метро", "Аптека")
+        "метро", "магазин", "аптека", "лікарня", "поліклініка", "школа", "садок", "офіс", "вокзал", "аеропорт", "кафе", "ресторан",
+        "банк", "пошта", "ринок", "парк", "університет", "больница", "поликлиника", "садик", "офис", "аэропорт", "рынок", "почта",
+        "университет", "metro", "subway", "shop", "store", "pharmacy", "hospital", "school", "office", "station", "airport", "bank",
         // commands the voice may be saying
         "розкажи", "скажи", "дивись", "слухай", "расскажи", "скажи", "смотри", "слушай",
         // generic address terms and terms of endearment

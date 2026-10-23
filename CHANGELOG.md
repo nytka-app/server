@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.33.0](https://github.com/nytka-app/server/compare/v0.32.0...v0.33.0) (2026-10-23)
+
+
+### Features
+
+* **ai:** salience on extracted items, fact expiry, media out of summaries and digests, noise flag ([#180](https://github.com/nytka-app/server/issues/180)) ([c1eaca9](https://github.com/nytka-app/server/commit/c1eaca9ed2e28ba15ca8ee4e5ff043ea1f7425bf))
+* codec registry; codecs in /api/v1/info (NYTKA-120) ([#173](https://github.com/nytka-app/server/issues/173)) ([b74db9e](https://github.com/nytka-app/server/commit/b74db9e1acaaad02d4622c21c09c8f3b8cd1f371))
+* **people:** entity check on names, Voice n instead of raw labels, cards for repeated voices ([#182](https://github.com/nytka-app/server/issues/182)) ([5cf9f29](https://github.com/nytka-app/server/commit/5cf9f2909736f7f5577ac2af1ae2e8c94d2fa49a))
+* **summaries:** templates by kind of conversation (NYTKA-82) ([#176](https://github.com/nytka-app/server/issues/176)) ([0577a9e](https://github.com/nytka-app/server/commit/0577a9e7c5e9e8c709061e00bedd74597f9d9724))
+* **transcript:** paid pass and atomic swap with manual upgrade route (NYTKA-133) ([#175](https://github.com/nytka-app/server/issues/175)) ([dd77d53](https://github.com/nytka-app/server/commit/dd77d5355b370211ef3a0fc502d8ae21e3b20dad))
+* **voice:** verdicts for lines over 30 s, rematch from stored audio, wearer confidence ([#179](https://github.com/nytka-app/server/issues/179)) ([cc97c21](https://github.com/nytka-app/server/commit/cc97c21250a7afb8e38da491d59ab41a86798a38))
+
 ## [0.32.0](https://github.com/nytka-app/server/compare/v0.31.0...v0.32.0) (2026-10-22)
 
 

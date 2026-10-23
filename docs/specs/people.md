@@ -112,8 +112,12 @@ highest confidence. Rows are unique on (target, lower(name)), rejected ones incl
 name is never offered again for that voice.
 
 **Validation.** The model is not trusted; `NameValidator` checks every answer, and its `Version`
-(3) is stored in `people_runs.validator`. Version 1 added these rules, 2 the roles, 3 the two-word evidence line and the
-longer stoplist.
+(4) is stored in `people_runs.validator`. Version 1 added these rules, 2 the roles, 3 the two-word evidence line and the
+longer stoplist, 4 the entity check and place words.
+
+0. *Entity.* The model says what each name names: `person`, `place`, `organization`, `media` (a character or voice on a
+   screen or radio) or `other`. Only a `person` name names a voice; any other keeps at most its role. A Person row
+   called "Метро" (a station heard as a name) is the case this stops. An answer from before the field counts as `person`.
 
 1. *Shape.* One to three words, each of letters (hyphen and apostrophe allowed, at least two
    letters), each starting with a capital, at most 40 characters in all, no digit and no `?`, `!`
@@ -122,7 +126,8 @@ longer stoplist.
    English pronouns, particles, answers, interjections, greetings, evaluations, commands and generic
    address terms (`Ти`, `Нет`, `Прикольно`, `По ходу`, `Девочка`, `Малыш`, `girl`). A real name that is
    also such a word passes only when the evidence line writes it with a capital in the middle of a
-   sentence. Version 3 added the observed non-names `Should`, `Клас`, `Пока`, `Скепсис`, `Хулі`,
+   sentence. Version 4 added places and institutions people name aloud (`Метро`, `Аптека`, `Офіс`, `School`).
+   Version 3 added the observed non-names `Should`, `Клас`, `Пока`, `Скепсис`, `Хулі`,
    `Цин`, `Спокійно`, `Єсть`, `Леді` and `Давай`; `Нэ`, `Привет`, `Привіт`, `Ок`, `Ну`, `Ага`, `Угу`,
    `Слушай`, `Слухай`, `Дякую`, `Спасибо`, `Thanks` and `Hello` were already there. Common first names
    (`Аня`, `Оля`, `Діма`, `Денис`, `Катя`, `Єва`, `Петро`, `Алёна`) are tested to stay off it.
@@ -234,7 +239,8 @@ Your voice's rule stays for `isUser`. For the name of a non-wearer segment, firs
 
 1. `segments.person_id`: a confirmed suggestion, card, match or manual mark on the segment.
 2. The person who owns the segment's `speaker_id` (`person_voices`, v0.6).
-3. The provider's `speaker`.
+3. The provider's `speaker`, read as `Voice n+1` for a raw `SPEAKER_n` (`SpeakerLabel.Voice`), so no raw label reaches a
+   prompt, an MCP answer or the Markdown export. The REST `speaker` field and the JSON export keep the stored label.
 
 `SpeakerLabel.Joins` and `Column`, `ConversationStore`'s segment query and `ExportStore`'s segment
 query read it one way; segments keep `personId` and `personName` as the result. `PATCH
