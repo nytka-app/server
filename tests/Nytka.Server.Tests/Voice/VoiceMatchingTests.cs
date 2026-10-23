@@ -97,7 +97,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0, _embedder.Calls);
         Assert.Equal(0, await Fingerprints());
         Assert.All(await Rows(), r => Assert.False(r.VoiceChecked));
-        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "SPEAKER_1" }, await Labels());
+        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "Voice 2" }, await Labels());
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal([new Row("s0", true, null, null, true)], await Rows());
         Assert.Equal(0, await Fingerprints());
         Assert.Null((await ApiIsUser())["s0"]);
-        Assert.Equal("SPEAKER_0", (await Labels())["s0"]);
+        Assert.Equal("Voice 1", (await Labels())["s0"]);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0.40f, rows[0].VoiceSimilarity!.Value, 0.001f);
         Assert.Equal(0.37f, rows[1].VoiceSimilarity!.Value, 0.001f);
         Assert.Equal(2, await Fingerprints());
-        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "SPEAKER_1" }, await Labels());
+        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "Voice 2" }, await Labels());
     }
 
     [Fact]
@@ -244,7 +244,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         await db.ExecuteAsync("update segments set is_user_manual = true where text = 's0'");
 
         Assert.Equal(new Dictionary<string, bool?> { ["s0"] = true, ["s1"] = false }, await ApiIsUser());
-        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "SPEAKER_1" }, await Labels());
+        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "Voice 2" }, await Labels());
     }
 
     [Fact]

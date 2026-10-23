@@ -38,10 +38,12 @@ public sealed class VoiceCardTests(PostgresFixture db) : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private NytkaApiFactory Server(bool matching = true) => new(
+    /// <summary>Most tests build groups heard in one conversation, so cards ask after one unless <paramref name="minConversations"/> says otherwise.</summary>
+    private NytkaApiFactory Server(bool matching = true, int minConversations = 1) => new(
         db,
         settings =>
         {
+            settings["Nytka:People:CardMinConversations"] = minConversations.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (matching)
             {
                 settings["Nytka:People:VoiceMatching"] = "true";
@@ -161,6 +163,20 @@ public sealed class VoiceCardTests(PostgresFixture db) : IAsyncLifetime
         var ogg = await response.Content.ReadAsByteArrayAsync();
         Assert.True(ogg.AsSpan(0, 4).SequenceEqual("OggS"u8));
         Assert.Equal(6.0, ClipSeconds(ogg));
+    }
+
+    [Fact]
+    public async Task A_group_heard_in_fewer_conversations_than_the_setting_asks_for_has_no_card_but_its_clip_still_plays()
+    {
+        await Lone(6, Vec((5, 1)));
+        await Run();
+        var card = Assert.Single(await Cards());
+
+        _server.Dispose();
+        _server = Server(minConversations: 3);
+
+        Assert.Empty(await Cards());
+        Assert.Equal(HttpStatusCode.OK, (await Client.GetAsync(Clip(card))).StatusCode);
     }
 
     [Fact]

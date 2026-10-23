@@ -40,7 +40,8 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// The owners cards may be made from, after the filters <c>@kind</c>, <c>@id</c> (each may be null) and <c>@visibleAt</c>
-    /// (null counts skipped ones too): every group, and every pending match whose person still exists.
+    /// (null counts skipped ones too): every group heard in <c>@minConversations</c> conversations (any group when one is asked
+    /// for by id), and every pending match whose person still exists.
     /// </summary>
     private const string CardOwners =
         """
@@ -49,6 +50,9 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
                    cast(null as real) as similarity
             from voice_groups g
             where (cast(@kind as text) is null or @kind = 'group') and (cast(@id as uuid) is null or g.id = @id)
+              and (cast(@id as uuid) is not null or (
+                    select count(distinct s.conversation_id) from segment_fingerprints f join segments s on s.id = f.segment_id
+                    where f.group_id = g.id) >= @minConversations)
               and (cast(@visibleAt as timestamptz) is null or g.skipped_until is null or g.skipped_until <= @visibleAt)
             union all
             select 'match'::text, m.id, m.person_id, p.name, m.similarity
@@ -377,17 +381,18 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
     /// What cards are made from: the owners not skipped at <paramref name="now"/> and their segments (still unnamed, with speech
     /// audio stored), in segment order. Only the ones with at least one segment are of use.
     /// </summary>
-    public Task<(IReadOnlyList<CardOwner> Owners, IReadOnlyList<CardSegment> Segments)> CardInputAsync(DateTimeOffset now, CancellationToken ct) =>
-        ReadCardInputAsync(null, null, now, ct);
+    public Task<(IReadOnlyList<CardOwner> Owners, IReadOnlyList<CardSegment> Segments)> CardInputAsync(
+        DateTimeOffset now, CancellationToken ct, int minConversations = 1) =>
+        ReadCardInputAsync(null, null, now, ct, minConversations);
 
     /// <summary>As <see cref="CardInputAsync(DateTimeOffset, CancellationToken)"/> for one owner, skipped or not.</summary>
     public Task<(IReadOnlyList<CardOwner> Owners, IReadOnlyList<CardSegment> Segments)> CardInputAsync(string kind, Guid id, CancellationToken ct) =>
-        ReadCardInputAsync(kind, id, null, ct);
+        ReadCardInputAsync(kind, id, null, ct, 1);
 
     private async Task<(IReadOnlyList<CardOwner>, IReadOnlyList<CardSegment>)> ReadCardInputAsync(
-        string? kind, Guid? id, DateTimeOffset? visibleAt, CancellationToken ct)
+        string? kind, Guid? id, DateTimeOffset? visibleAt, CancellationToken ct, int minConversations)
     {
-        var args = new { kind, id, visibleAt };
+        var args = new { kind, id, visibleAt, minConversations };
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var owners = await connection.QueryAsync<CardOwner>(new CommandDefinition(
             $"""
