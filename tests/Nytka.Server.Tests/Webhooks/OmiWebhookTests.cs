@@ -87,6 +87,33 @@ public sealed class OmiWebhookTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task Is_user_and_the_name_follow_the_same_rule_as_the_api()
+    {
+        var id = await SeedGolden();
+        await Db.ExecuteAsync("delete from segments where conversation_id = @id", new { id });
+        await AddSegment(id, "provider says wearer", Start, "A", "spk-a", true);
+        await AddSegment(id, "voice says other", Start.AddSeconds(1), "B", "spk-b", true);
+        await AddSegment(id, "voice says wearer", Start.AddSeconds(2), "C", "spk-c", false);
+        await AddSegment(id, "marked by hand", Start.AddSeconds(3), "D", "spk-d", false);
+        await AddSegment(id, "named voice", Start.AddSeconds(4), "E", "spk-e", false);
+        await Db.ExecuteAsync("update segments set voice_checked = true, voice_is_user = false where text = 'voice says other'");
+        await Db.ExecuteAsync("update segments set voice_checked = true, voice_is_user = true where text = 'voice says wearer'");
+        await Db.ExecuteAsync("update segments set is_user_manual = true where text = 'marked by hand'");
+        var anna = Guid.CreateVersion7();
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@anna, 'Anna', now())", new { anna });
+        await Db.ExecuteAsync("insert into person_voices (speaker_id, person_id, created_at) values ('spk-e', @anna, now())", new { anna });
+        await using var connection = await Server.Get<NpgsqlDataSource>().OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        var body = JsonNode.Parse((await OmiPayload.BuildAsync(id, connection, transaction, default))!)!;
+
+        var segments = body["transcript_segments"]!.AsArray().Select(n => n!).ToList();
+        Assert.Equal([true, false, true, true, false], segments.Select(n => n["is_user"]!.GetValue<bool>()));
+        Assert.Equal(["Wearer", "B", "Wearer", "Wearer", "Anna"], segments.Select(n => n["speaker_name"]!.GetValue<string>()));
+        Assert.Equal(["SPEAKER_00", "SPEAKER_01", "SPEAKER_00", "SPEAKER_00", "SPEAKER_02"], segments.Select(n => n["speaker"]!.GetValue<string>()));
+    }
+
+    [Fact]
     public async Task A_conversation_that_is_gone_has_no_payload()
     {
         await using var connection = await Server.Get<NpgsqlDataSource>().OpenConnectionAsync();

@@ -163,6 +163,8 @@ re-run, as above), so `events` may hold nothing else except `*`; the API answers
 still arrives in the usual envelope. Signing (`Nytka-Signature`), the headers, retries, the log and the
 delivery limits are the same as for the default format; the body is the payload itself, with no envelope.
 
+The body's `id` is the conversation's id and stays the same when a summary is re-run, so a receiver that drops repeats by it would drop the re-run. Omi's payload has no revision field. Dedupe on the `Nytka-Delivery` header instead: it is new for each summary and the same across retries of one.
+
 ```json
 {
   "id": "0198a1c4-7d2e-7b1a-9c3f-5e6d7a8b9c0d",
@@ -189,7 +191,7 @@ delivery limits are the same as for the default format; the body is the payload 
 | `id` | the conversation's id |
 | `created_at`, `started_at`, `finished_at` | when the conversation was stored, began and ended (UTC, ISO 8601) |
 | `transcript_segments[].text` | the segment's text; segments marked `media` (a TV or a video) are left out |
-| `…speaker`, `speakerId` | `SPEAKER_00`, `SPEAKER_01`, … in order of first appearance; the wearer is one speaker, a voice or provider label another |
+| `…speaker`, `speakerId` | `SPEAKER_00`, `SPEAKER_01`, … in order of first appearance; the wearer is one speaker, a voice or provider label another; segments with neither a voice id nor a label share one speaker, since nothing tells them apart |
 | `…speaker_name` | the label Nytka shows: `Wearer`, the named person, else the provider's label; null if none |
 | `…is_user` | the wearer's verdict (your mark, else the voice match, else the provider's; unknown reads as false) |
 | `…start`, `…end` | seconds from the conversation's start, by capture time |

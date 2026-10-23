@@ -57,7 +57,7 @@ public static class OmiPayload
                 number = numbers[key] = numbers.Count;
             }
 
-            return new Segment(r.Text, $"SPEAKER_{number:00}", number, r.SpeakerName, r.IsUser, Math.Round(r.Start, 3), Math.Round(r.End, 3));
+            return new Segment(r.Text, $"SPEAKER_{number:00}", number, r.SpeakerName, r.IsUser, Math.Round(Math.Max(r.Start, 0), 3), Math.Round(Math.Max(r.End, 0), 3));
         }).ToList();
 
         return JsonSerializer.Serialize(
