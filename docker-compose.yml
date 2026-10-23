@@ -78,6 +78,7 @@ services:
       Nytka__People__AutoApplyConfidence: "${Nytka__People__AutoApplyConfidence:-}"
       Nytka__People__Facts: "${Nytka__People__Facts:-}"
       Nytka__Tags__Suggest: "${Nytka__Tags__Suggest:-}"
+      Nytka__Tags__Auto: "${Nytka__Tags__Auto:-}"
       Nytka__Calendar__IcsUrl: "${Nytka__Calendar__IcsUrl:-}"
       Nytka__Calendar__BriefMinutes: "${Nytka__Calendar__BriefMinutes:-}"
       Nytka__Digest__Enabled: "${Nytka__Digest__Enabled:-}"

@@ -56,6 +56,7 @@ you copy without thinking would lock its setting.
 | `Nytka__People__AutoApplyConfidence` | no | `0.85` | editable | Confidence, 0.5 to 1, at or above which a suggestion applies itself |
 | `Nytka__People__Facts` | no | `true` | editable | `false` stops [facts about people](../explanation/features.md#facts-about-people) from being taken from conversations; it needs the language model |
 | `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](../explanation/features.md#tags) for conversations and people and stops sending it tag names; it needs the language model |
+| `Nytka__Tags__Auto` | no | `true` | editable | `true` applies a conversation's proposed tags at once and tidies tags nightly (synonyms merged by the model, one-off tags removed after 60 days); `false` leaves proposals for you |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](../explanation/features.md#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](../explanation/features.md#ukrainian-search-optional) |
