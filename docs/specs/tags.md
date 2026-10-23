@@ -157,6 +157,24 @@ removed tag is never proposed again for that item. A tag the item already has is
 **Answers.** Accept adds the tag (`409` when the item has 20); reject keeps the row. Both are in
 `GET /api/v1/review` as kind `tag`, beside `name`, `voice` and `label`.
 
+## Automatic tags
+
+Second-brain redesign, step 4: the owner curates nothing, so a conversation's proposed tags apply themselves while
+`tags.auto` is on (default).
+
+- **Applied with the summary.** `EnrichConversationHandler` resolves each proposed name through `tag_aliases`, records it in
+  `tag_suggestions` as `accepted` (skipped when the conversation had a proposal of that name, in any status) and links the tag
+  with `conversation_tags.auto = true`, in the summary's transaction. People's tags still wait as proposals.
+- **Nightly tidy.** The scheduler queues `tidy-tags` (Ai lane, key `tidy-tags:<local date>`) once a local day from 04:00,
+  while a tag or a pending proposal exists. It first applies the conversation proposals still pending (made before
+  `tags.auto`) the same way, then removes `auto` links whose tag has no other link and that are older than 60 days (the unused-tag trigger then drops the
+  tag), then sends the 300 most used tag names with their counts to the model (`tag_synonyms` schema: `groups`, arrays of
+  names) and merges each group into its most used member (then the oldest): links move, the other names and their aliases
+  become aliases of it, and they are deleted. Names the model invents are ignored. `tag_tidy_runs` records each date, a
+  failed run too, so a broken model costs one call a day.
+- **Data** (`0043_tag_vocabulary.sql`): `conversation_tags.auto`, `tag_aliases (alias, tag_id, created_at)`,
+  `tag_tidy_runs (local_date, merged, retired, failed, created_at)`.
+
 ## Which label wins
 
 Unchanged. A role-only person's segments show their `name` ("Repairman") by the same three steps.
@@ -211,6 +229,7 @@ Migrations `0021` to `0023`, numbers fixed by the plan:
 | Key | Variable | Default | Meaning |
 |---|---|---|---|
 | `tags.suggest` | `Nytka__Tags__Suggest` | `true` | The model may propose tags for conversations and people |
+| `tags.auto` | `Nytka__Tags__Auto` | `true` | A conversation's proposed tags apply themselves, and `tidy-tags` merges synonyms and retires one-off tags nightly |
 
 Roles follow `people.suggestNames`: they are part of the name suggestion.
 

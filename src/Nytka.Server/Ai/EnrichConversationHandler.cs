@@ -256,8 +256,7 @@ public sealed class EnrichConversationHandler(
         var created = await tasks.ReconcileAsync(connection, transaction, conversationId, classified.Tasks, now, ct);
         await NoteStore.ReplaceAsync(connection, transaction, conversationId, classified.Notes, now, ct);
         await NoteStore.ReplaceDroppedAsync(connection, transaction, conversationId, classified.Dropped, now, ct);
-        await TagSuggestionStore.AddAsync(
-            connection, transaction, conversationId, null, await ProposedTagsAsync(connection, transaction, conversationId, answer.Tags, people, ct), now, ct);
+        await TagAsync(connection, transaction, conversationId, await ProposedTagsAsync(connection, transaction, conversationId, answer.Tags, people, ct), now, ct);
         await events.PublishAsync(new NytkaEvent(NytkaEvent.ConversationReady, conversationId), connection, transaction, ct);
         foreach (var taskId in created)
         {
@@ -293,6 +292,30 @@ public sealed class EnrichConversationHandler(
             .OfType<string>()
             .ToHashSet();
         return names.Where(n => !held.Contains(n) && !persons.Contains(n)).Take(ConversationPrompt.MaxTags).ToList();
+    }
+
+    /// <summary>
+    /// With <c>tags.auto</c> each proposed name is applied at once as the tag it is an alias of, or as itself, unless the
+    /// conversation had a proposal of that name before (one the owner rejected or removed included); otherwise it waits as a proposal.
+    /// </summary>
+    private async Task TagAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, IReadOnlyList<string> names, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        if (!TagSettings.Auto(settings))
+        {
+            await TagSuggestionStore.AddAsync(connection, transaction, conversationId, null, names, now, ct);
+            return;
+        }
+
+        var aliases = await TagStore.ResolveAsync(connection, transaction, names, ct);
+        foreach (var name in names)
+        {
+            if (await TagSuggestionStore.AddAppliedAsync(connection, transaction, conversationId, name, now, ct))
+            {
+                await TagStore.AddToConversationAsync(connection, transaction, conversationId, aliases.GetValueOrDefault(name, name), now, ct, auto: true);
+            }
+        }
     }
 
     /// <summary>The listed person a name equals, ignoring case; null for no name or an unlisted one.</summary>

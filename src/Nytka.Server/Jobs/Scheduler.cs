@@ -6,6 +6,7 @@ using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
+using Nytka.Server.Tags;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
@@ -21,7 +22,7 @@ public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
     CalendarQueue calendar, SpeechStore speech, BatchRetryQueue batchRetries,
-    SpeakerModel speaker, TimeProvider time)
+    SpeakerModel speaker, TagStore tags, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -48,6 +49,7 @@ public sealed class Scheduler(
         await batchRetries.QueueAsync(force: false, ct);
         await QueueEnrichmentsAsync(now, ct);
         await QueueDigestAsync(now, ct);
+        await QueueTidyTagsAsync(now, ct);
         await QueueRescoreAsync(now, ct);
         await QueueRematchAsync(now, ct);
         await QueueGroupVoicesAsync(now, ct);
@@ -144,6 +146,18 @@ public sealed class Scheduler(
         if (!await digests.ExistsAsync(text, ct) && await digests.HasConversationsAsync(from, to, ct))
         {
             await queue.EnqueueAsync(JobKinds.MakeDigest, new DigestPayload(text, false), JobKinds.MakeDigestKey(text), now, ct);
+        }
+    }
+
+    /// <summary>Queues the nightly tag tidy once the local hour has come, once per local date, while <c>tags.auto</c> is on and a tag exists.</summary>
+    private async Task QueueTidyTagsAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var zone = UserTimeZone.Resolve(settings);
+        var today = DigestDay.Text(DigestDay.Today(now, zone));
+        if (TagSettings.Auto(settings) && DigestDay.HourOf(now, zone) >= TidyTagsHandler.Hour && await tags.AnyAsync(ct)
+            && !await tags.TidiedAsync(today, ct))
+        {
+            await queue.EnqueueAsync(JobKinds.TidyTags, new TidyTagsPayload(today), JobKinds.TidyTagsKey(today), now, ct);
         }
     }
 
