@@ -49,6 +49,9 @@ public sealed class SegmentRow
 
     public string? IsUserSource { get; init; }
 
+    /// <summary>How sure the rule is that the line is the wearer's (<see cref="SpeakerLabel.WearerConfidence"/>).</summary>
+    public float? WearerConfidence { get; init; }
+
     public string? SpeechKind { get; init; }
 
     public string? SpeechGuess { get; init; }
@@ -274,8 +277,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
                s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser,
                {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
-               {SpeakerLabel.IsUserSource} as IsUserSource, s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess,
-               s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
+               {SpeakerLabel.IsUserSource} as IsUserSource, {SpeakerLabel.WearerConfidence} as WearerConfidence,
+               s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess, s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
                s.speech_manual is not null as SpeechMarked, s.category as Category, s.pass_id is not null as Final
         from segments s {SpeakerLabel.Joins}
         """;
