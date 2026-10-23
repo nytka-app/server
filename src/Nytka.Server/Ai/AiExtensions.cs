@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Nytka.Server.Ai.Backfill;
 using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
 
@@ -27,7 +28,11 @@ public static class AiExtensions
         services.AddSingleton<IOptionsChangeTokenSource<LlmOptions>>(p => p.GetRequiredService<LlmOptionsSetup>());
 
         // The per-request timeout lives in LlmClient, where it can follow the option.
-        services.AddHttpClient<ILlmClient, LlmClient>(client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddHttpClient<LlmClient>(client => client.Timeout = Timeout.InfiniteTimeSpan);
+
+        // Every job asks through the backfill client, which is the endpoint above except inside a backfill step.
+        services.AddTransient<ILlmClient>(p => new BackfillLlmClient(p.GetRequiredService<LlmClient>()));
+        services.AddScoped<BackfillService>();
         services.AddSingleton<EnrichmentQueue>();
         services.AddScoped<IJobHandler, EnrichConversationHandler>();
         return services;

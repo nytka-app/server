@@ -7,9 +7,11 @@ public sealed record BatchPayload(long BatchId);
 /// <summary><paramref name="Reason"/> is the <c>transcript_passes.reason</c> a new pass gets; a pass already in flight keeps its own.</summary>
 public sealed record TranscribeConversationPayload(Guid ConversationId, string Reason);
 
-public sealed record EnrichPayload(Guid ConversationId, bool Force);
+/// <summary><paramref name="Again"/> summarizes a conversation already summarized up to its last line (a backfill run).</summary>
+public sealed record EnrichPayload(Guid ConversationId, bool Force, bool Again = false);
 
-public sealed record ExtractPayload(Guid ConversationId);
+/// <summary><paramref name="Again"/> extracts from a conversation already read up to its last line (a backfill run).</summary>
+public sealed record ExtractPayload(Guid ConversationId, bool Again = false);
 
 public sealed record SuggestNamesPayload(Guid ConversationId);
 

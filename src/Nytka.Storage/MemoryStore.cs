@@ -265,6 +265,37 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
         return inserted;
     }
 
+    /// <summary>The live memories extraction took from a conversation and nobody edited: the ones a re-check may judge.</summary>
+    public async Task<IReadOnlyList<KnownMemory>> OfConversationAsync(Guid conversationId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<KnownMemory>(new CommandDefinition(
+            """
+            select id as Id, text as Text from memories
+            where conversation_id = @conversationId and source = 'ai' and not edited and deleted_at is null
+            order by id
+            """,
+            new { conversationId }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>Stores a re-check's verdicts and cited lines in one transaction; a memory edited or deleted meanwhile is left alone.</summary>
+    public async Task RecordCheckAsync(IReadOnlyList<(Guid Id, IReadOnlyList<long> Lines, bool Confirmed)> results, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        foreach (var (id, lines, confirmed) in results)
+        {
+            if (await connection.ExecuteAsync(new CommandDefinition(
+                    "update memories set confirmed = @confirmed where id = @id and not edited and deleted_at is null",
+                    new { id, confirmed }, transaction, cancellationToken: ct)) > 0)
+            {
+                await SourcesAsync(connection, transaction, id, lines, ct);
+            }
+        }
+
+        await transaction.CommitAsync(ct);
+    }
+
     /// <summary>Replaces the lines a memory cites, in the caller's transaction; a line deleted meanwhile is skipped.</summary>
     private static async Task SourcesAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid memoryId, IReadOnlyList<long>? segmentIds, CancellationToken ct)
