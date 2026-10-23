@@ -3,8 +3,12 @@ using System.Text.Json;
 
 namespace Nytka.Server.Ai;
 
-/// <summary>What the model returns for a conversation (or for one window of it), before the lengths are enforced.</summary>
-public sealed record ConversationAnswer(string Title, string Summary, IReadOnlyList<AnswerItem> Items, IReadOnlyList<string> Tags);
+/// <summary>
+/// What the model returns for a conversation (or for one window of it), before the lengths are enforced.
+/// <paramref name="ConversationKind"/> is in the answer only when the request asked for it (<see cref="ConversationPrompt.SchemaWithKind"/>).
+/// </summary>
+public sealed record ConversationAnswer(
+    string Title, string Summary, IReadOnlyList<AnswerItem> Items, IReadOnlyList<string> Tags, string? ConversationKind = null);
 
 /// <summary>
 /// A candidate task as the model words and labels it (docs/specs/task-kinds.md). <paramref name="Kind"/> and <paramref name="Owner"/> are
@@ -32,9 +36,20 @@ public static class ConversationPrompt
                                             "due": { "type": ["string", "null"] } } } } } }
         """;
 
+    /// <summary>The schema when the model also names the kind of conversation, to pick a summary template.</summary>
+    public static readonly string SchemaWithKind = Schema
+        .Replace("\"required\": [\"title\", \"summary\", \"items\", \"tags\"]", "\"required\": [\"title\", \"summary\", \"items\", \"tags\", \"conversationKind\"]", StringComparison.Ordinal)
+        .Replace(
+            "\"properties\": { \"title\": { \"type\": \"string\" },",
+            "\"properties\": { \"conversationKind\": { \"type\": \"string\", \"enum\": [\"meeting\", \"lecture\", \"doctor\", \"call\", \"other\"] }, \"title\": { \"type\": \"string\" },",
+            StringComparison.Ordinal);
+
     public const int MaxTitle = 80;
     public const int MaxSummary = 1_200;
     public const int MaxTask = 200;
+
+    /// <summary>What the summary holds, in the words the prompt has always used; the default summary template.</summary>
+    public static readonly string DefaultSummarySpec = $"a few sentences, at most {MaxSummary} characters";
     public const int MaxTasks = 10;
 
     /// <summary>The items the prompt allows in one answer, of every kind; <see cref="ItemClassifier"/> keeps fewer.</summary>
@@ -49,17 +64,23 @@ public static class ConversationPrompt
     /// messages are in <paramref name="timeZone"/>. <paramref name="brief"/> is for a conversation too short for tasks.
     /// <paramref name="suggestTags"/> is false when the owner turned tag proposals off: the schema still has <c>tags</c>, so the
     /// model is told to return none. <paramref name="mediaLines"/> is true when the transcript has lines labelled <c>Media</c>
-    /// (speech kind <c>on</c>): the model is told to take no task from them.
+    /// (speech kind <c>on</c>): the model is told to take no task from them. <paramref name="summarySpec"/> is what the summary holds
+    /// (a summary template; null for <see cref="DefaultSummarySpec"/>). <paramref name="kinds"/>, template text by kind, makes the model
+    /// name the conversation's kind and write the summary as that kind says; <see cref="SummaryTemplates.Default"/> is the text for any other kind.
+    /// A brief conversation takes neither.
     /// </summary>
     public static string System(
-        string outputLanguage, string timeZone = UserTimeZone.Default, bool brief = false, bool suggestTags = true, bool mediaLines = false)
+        string outputLanguage, string timeZone = UserTimeZone.Default, bool brief = false, bool suggestTags = true, bool mediaLines = false,
+        string? summarySpec = null, IReadOnlyDictionary<string, string>? kinds = null)
     {
         var language = string.Equals(outputLanguage, "auto", StringComparison.OrdinalIgnoreCase)
             ? "the language the conversation is in"
             : outputLanguage;
         var answer = brief
             ? $"This conversation is short. Answer with a short title (at most {MaxTitle} characters) and a summary of one sentence. Return no tasks and no other items."
-            : $"Answer with a short title (at most {MaxTitle} characters), a summary (a few sentences, at most {MaxSummary} characters) and the items.";
+            : kinds is null
+                ? $"Answer with a short title (at most {MaxTitle} characters), a summary ({summarySpec ?? DefaultSummarySpec}) and the items."
+                : $"Answer with a short title (at most {MaxTitle} characters), a summary (as the kind below says; never more than {MaxSummary} characters) and the items." + KindLines(kinds);
         var tasks = brief
             ? ""
             : $"""
@@ -91,11 +112,17 @@ public static class ConversationPrompt
             """;
     }
 
+    private static string KindLines(IReadOnlyDictionary<string, string> kinds) =>
+        "\nConversation kind: set conversationKind to the one of meeting, lecture, doctor, call or other that fits the conversation best, and write the summary as that kind says:\n"
+        + string.Join('\n', SummaryTemplates.Kinds.Append("other").Select(k => $"{k}: {kinds[k == "other" ? SummaryTemplates.Default : k]}"));
+
     public static string SystemForMerge(
-        string outputLanguage, string timeZone = UserTimeZone.Default, bool suggestTags = true, bool mediaLines = false) =>
-        System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines)
+        string outputLanguage, string timeZone = UserTimeZone.Default, bool suggestTags = true, bool mediaLines = false,
+        string? summarySpec = null, IReadOnlyDictionary<string, string>? kinds = null) =>
+        System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines, summarySpec: summarySpec, kinds: kinds)
         + "\n\nThe transcript was too long for one request, so it was described in consecutive parts. "
-        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic and due, and dropping duplicates and items a later part shows as done.";
+        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic and due, and dropping duplicates and items a later part shows as done."
+        + (kinds is null ? "" : " Set conversationKind to the kind that fits the whole conversation.");
 
     /// <summary>The date line: the conversation's local date and weekday, so the model can resolve "Friday".</summary>
     public static string DateLine(DateTimeOffset startedAt, TimeZoneInfo? zone = null) => "Date: " + LocalDate(startedAt, zone);

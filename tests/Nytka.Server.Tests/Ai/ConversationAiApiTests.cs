@@ -57,7 +57,7 @@ public sealed class ConversationAiApiTests(PostgresFixture db) : AiTestBase(db)
             ["id", "startedAt", "endedAt", "status", "preview", "title", "summary", "aiStatus", "bookmarks", "source", "mediaShare", "transcriptTier", "tags"],
             listed.EnumerateObject().Select(p => p.Name));
         Assert.Equal(
-            ["id", "startedAt", "endedAt", "status", "title", "summary", "aiStatus", "titleEdited", "aiMessage", "aiUpdatedAt", "tasks", "segments", "bookmarks", "source", "tags", "transcript"],
+            ["id", "startedAt", "endedAt", "status", "title", "summary", "aiStatus", "titleEdited", "aiMessage", "aiUpdatedAt", "tasks", "segments", "bookmarks", "source", "tags", "summaryTemplate", "transcript"],
             renamed.EnumerateObject().Select(p => p.Name));
     }
 

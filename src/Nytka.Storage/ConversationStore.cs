@@ -17,7 +17,7 @@ public sealed record ConversationSummary(
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute, string? SummaryTemplate);
 
 /// <summary>
 /// A segment as a conversation shows it. <see cref="Speaker"/> is the provider's label, <see cref="SpeakerId"/> its stable id for the
@@ -264,7 +264,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
                    ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
                    ai_through_segment_id as AiThroughSegmentId, source as Source, transcript_tier as TranscriptTier,
-                   auto_route as AutoRoute
+                   auto_route as AutoRoute, ai_template as SummaryTemplate
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -371,7 +371,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// </summary>
     public async Task<EnrichmentStore> StoreEnrichmentAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? title, string? summary,
-        long? throughSegmentId, int segmentCount, DateTimeOffset now, CancellationToken ct)
+        long? throughSegmentId, int segmentCount, string? template, DateTimeOffset now, CancellationToken ct)
     {
         var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
         if (current is null)
@@ -393,10 +393,10 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             update conversations
             set ai_title = @title, ai_summary = @summary, ai_status = 'done', ai_message = null,
-                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0
+                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0, ai_template = @template
             where id = @id
             """,
-            new { id, title, summary, throughSegmentId, now }, transaction, cancellationToken: ct));
+            new { id, title, summary, throughSegmentId, template, now }, transaction, cancellationToken: ct));
         return EnrichmentStore.Stored;
     }
 
