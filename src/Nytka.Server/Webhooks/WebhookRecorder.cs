@@ -12,7 +12,7 @@ namespace Nytka.Server.Webhooks;
 /// <summary>
 /// Turns each event into one pending delivery per active, matching webhook and queues its
 /// <c>deliver-webhook</c> job, all in the event's transaction: a delivery exists exactly when the
-/// change committed. Payloads never carry a transcript.
+/// change committed. Payloads never carry a transcript, except those of a webhook whose format is <c>omi</c>.
 /// </summary>
 public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore webhooks, JobQueue jobs, TimeProvider time) : IEventSubscriber
 {
@@ -43,6 +43,16 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             return;
         }
 
+        // An omi webhook gets Omi's memory payload for a conversation and nothing else.
+        var omiTargets = nytkaEvent.Type == NytkaEvent.ConversationReady
+            ? targets.Where(t => t.Format == WebhookFormats.Omi).ToList()
+            : [];
+        targets = targets.Where(t => t.Format == WebhookFormats.Nytka).ToList();
+        if (targets.Count == 0 && omiTargets.Count == 0)
+        {
+            return;
+        }
+
         var now = time.GetUtcNow();
         var data = await BuildDataAsync(nytkaEvent, connection, transaction, ct);
         if (data is null)
@@ -53,9 +63,17 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
 
         var eventId = EventId(nytkaEvent, data);
         var payload = Envelope(eventId, nytkaEvent.Type, now, data);
-        foreach (var webhookId in targets)
+        foreach (var target in targets)
         {
-            await QueueAsync(webhookId, eventId, nytkaEvent.Type, payload, now, connection, transaction, ct);
+            await QueueAsync(target.Id, eventId, nytkaEvent.Type, payload, now, connection, transaction, ct);
+        }
+
+        if (omiTargets.Count > 0 && await OmiPayload.BuildAsync(nytkaEvent.SubjectId, connection, transaction, ct) is { } omi)
+        {
+            foreach (var target in omiTargets)
+            {
+                await QueueAsync(target.Id, eventId, nytkaEvent.Type, omi, now, connection, transaction, ct);
+            }
         }
     }
 

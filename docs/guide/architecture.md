@@ -63,7 +63,7 @@ transcription requests go out one at a time, which is why `Audio` is its own lan
 
 Three paths, each to an address you choose ([vision](../../docs/vision.md#configuration-and-security)):
 speech audio goes to the transcription endpoint, transcript text to the language model endpoint,
-and titles, summaries, tasks and memories, never transcripts, to the webhooks you register. The
+and titles, summaries, tasks and memories, never transcripts (unless a webhook has the `omi` format, which you choose on purpose), to the webhooks you register. The
 server keeps a webhook secret as plain text because it needs it to sign deliveries.
 
 ## What it stores

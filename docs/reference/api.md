@@ -58,9 +58,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](../explanation/features.md#export) |
 | GET | `/api/v1/export/obsidian` | admin | A ZIP (`application/zip`) of Markdown notes for an Obsidian vault, one per conversation and one per person; see [Export](../explanation/features.md#export) |
 | GET | `/api/v1/search?q=&kinds=&tag=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name) |
-| POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
-| GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
-| PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `description`, `active`; DELETE answers `204` and drops its deliveries |
+| POST | `/api/v1/webhooks` | admin | Body `{ url, events, format?, description? }`, `format` is `nytka` (default) or `omi`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
+| GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, format, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
+| PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `format`, `description`, `active`; DELETE answers `204` and drops its deliveries |
 | POST | `/api/v1/webhooks/{id}/test` | admin | Queues a `ping`: `202 { deliveryId }` |
 | GET | `/api/v1/webhooks/{id}/deliveries?limit=` | admin | `{ items }`, newest first: `{ id, eventType, status, attempts, lastStatusCode, lastError, createdAt, deliveredAt }`; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/voice` | admin | `{ enrolled, enrolledAt, updatedAt, enrolledSamples, learnedSegments, modelAvailable }`; never the voiceprint |
@@ -131,7 +131,7 @@ curl -X POST https://nytka.example.com/api/v1/webhooks \
 and 43 characters, once: nothing shows it again, and there is no rotation, so delete the webhook and
 make a new one. The URL is `http` or `https`, at most 2,048 characters. Private addresses are allowed,
 because your receivers usually sit on your own network. At most 20 webhooks. `PATCH` changes `url`,
-`events`, `description` or `active`. `POST /api/v1/webhooks/{id}/test` sends a `ping`, even to an
+`events`, `format`, `description` or `active`. `POST /api/v1/webhooks/{id}/test` sends a `ping`, even to an
 inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 
 | Event | Sent when | `data` |
@@ -151,7 +151,60 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 
 A webhook gets nothing for events from before it existed, or while it is inactive. The change and its
 deliveries commit together, so a delivery exists exactly when the change did. A payload never carries
-a transcript: fetch what you need with a `read` token, for example `GET /api/v1/conversations/{id}`.
+a transcript, unless the webhook's format is `omi` (below): fetch what you need with a `read` token, for example `GET /api/v1/conversations/{id}`.
+
+### The `omi` format
+
+`"format": "omi"` makes a webhook receive Omi's memory-creation payload, the body of Omi's
+["conversation created" trigger](https://docs.omi.me/doc/developer/apps/Integrations), so an app written
+for Omi can read it as it is. It is the one format that **carries the transcript text**: the owner chooses
+that by choosing the format. Such a webhook gets `conversation.ready` only (the first summary and every
+re-run, as above), so `events` may hold nothing else except `*`; the API answers `400` otherwise. A `ping`
+still arrives in the usual envelope. Signing (`Nytka-Signature`), the headers, retries, the log and the
+delivery limits are the same as for the default format; the body is the payload itself, with no envelope.
+
+```json
+{
+  "id": "0198a1c4-7d2e-7b1a-9c3f-5e6d7a8b9c0d",
+  "created_at": "2026-10-23T09:00:00Z",
+  "started_at": "2026-10-23T08:58:00Z",
+  "finished_at": "2026-10-23T09:00:00Z",
+  "transcript_segments": [
+    { "text": "Call Ben tomorrow.", "speaker": "SPEAKER_00", "speakerId": 0, "speaker_name": "Wearer", "is_user": true, "start": 0.0, "end": 2.4 }
+  ],
+  "structured": {
+    "title": "Lunch with Anna", "overview": "…", "emoji": null, "category": null,
+    "action_items": [{ "description": "Call Ben", "completed": false }],
+    "events": []
+  },
+  "apps_response": [],
+  "discarded": false,
+  "folder_id": null,
+  "folder_name": null
+}
+```
+
+| Omi field | From Nytka |
+|---|---|
+| `id` | the conversation's id |
+| `created_at`, `started_at`, `finished_at` | when the conversation was stored, began and ended (UTC, ISO 8601) |
+| `transcript_segments[].text` | the segment's text; segments marked `media` (a TV or a video) are left out |
+| `…speaker`, `speakerId` | `SPEAKER_00`, `SPEAKER_01`, … in order of first appearance; the wearer is one speaker, a voice or provider label another |
+| `…speaker_name` | the label Nytka shows: `Wearer`, the named person, else the provider's label; null if none |
+| `…is_user` | the wearer's verdict (your mark, else the voice match, else the provider's; unknown reads as false) |
+| `…start`, `…end` | seconds from the conversation's start, by capture time |
+| `structured.title`, `overview` | the title and the summary |
+| `structured.action_items` | the conversation's commitments: `description` and `completed` |
+| `structured.emoji`, `category` | not in Nytka: null |
+| `structured.events` | Nytka does not extract calendar events from speech: always `[]` |
+| `apps_response` | no apps run in Nytka: always `[]` |
+| `discarded` | always `false`: Nytka delivers kept conversations only |
+| `folder_id`, `folder_name` | not in Nytka: null |
+
+Not supported: Omi's real-time transcript trigger (`POST …?session_id=&uid=`, a bare array of segments with
+text as someone speaks). Nytka's `segment.created` carries ids and times only and arrives per batch, so it
+does not map onto it. The `uid` query parameter Omi appends is not sent either. `transcript.upgraded` is not
+sent in this format yet.
 
 ```json
 {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Nytka.Server.Events;
 using Nytka.Server.Webhooks;
 using Nytka.Storage;
 
@@ -34,11 +35,11 @@ public static class WebhookEndpoints
     public sealed record LastDelivery(string Status, DateTime At);
 
     public sealed record Webhook(
-        Guid Id, string Url, string[] Events, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery);
+        Guid Id, string Url, string[] Events, string Format, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery);
 
     /// <summary>The webhook as created: the same fields, and the <paramref name="Secret"/>, which nothing shows again.</summary>
     public sealed record CreatedWebhook(
-        Guid Id, string Url, string[] Events, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery,
+        Guid Id, string Url, string[] Events, string Format, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery,
         string Secret);
 
     public sealed record WebhookList(IReadOnlyList<Webhook> Items);
@@ -85,6 +86,18 @@ public static class WebhookEndpoints
 
         return events.Contains(WebhookRecorder.All) ? [WebhookRecorder.All] : events;
     }
+
+    /// <summary>An error message, or null when <paramref name="value"/> names a format.</summary>
+    public static string? CheckFormat(JsonElement value) =>
+        value.ValueKind == JsonValueKind.String && WebhookFormats.All.Contains(value.GetString()!)
+            ? null
+            : $"Must be one of {string.Join(", ", WebhookFormats.All)}.";
+
+    /// <summary>An omi webhook only ever gets <c>conversation.ready</c>, so it may not ask for anything else.</summary>
+    public static string? CheckFormatEvents(string format, string[] events) =>
+        format == WebhookFormats.Omi && events.Any(e => e != WebhookRecorder.All && e != NytkaEvent.ConversationReady)
+            ? $"The omi format only carries {NytkaEvent.ConversationReady}. Use that or {WebhookRecorder.All}."
+            : null;
 
     private static string? CheckDescription(JsonElement value) => value.ValueKind switch
     {
@@ -140,6 +153,24 @@ public static class WebhookEndpoints
             errors["events"] = [eventsError!];
         }
 
+        var format = WebhookFormats.Nytka;
+        if (json.TryGetProperty("format", out var formatValue))
+        {
+            if (CheckFormat(formatValue) is { } formatError)
+            {
+                errors["format"] = [formatError];
+            }
+            else
+            {
+                format = formatValue.GetString()!;
+            }
+        }
+
+        if (events is not null && !errors.ContainsKey("format") && CheckFormatEvents(format, events) is { } mixError)
+        {
+            errors["events"] = [mixError];
+        }
+
         string? description = null;
         if (json.TryGetProperty("description", out var descriptionValue))
         {
@@ -161,7 +192,7 @@ public static class WebhookEndpoints
         var now = time.GetUtcNow();
         var id = Guid.CreateVersion7(now);
         var secret = WebhookSigner.GenerateSecret();
-        if (!await webhooks.CreateAsync(id, url!, secret, events!, description, now, ct))
+        if (!await webhooks.CreateAsync(id, url!, secret, events!, format, description, now, ct))
         {
             return Results.Problem(
                 statusCode: StatusCodes.Status409Conflict, title: $"At most {WebhookStore.MaxWebhooks} webhooks are allowed.");
@@ -169,12 +200,12 @@ public static class WebhookEndpoints
 
         http.HttpContext!.Response.Headers.CacheControl = "no-store";
         return Results.Json(
-            new CreatedWebhook(id, url!, events!, description, true, now.UtcDateTime, null, secret),
+            new CreatedWebhook(id, url!, events!, format, description, true, now.UtcDateTime, null, secret),
             statusCode: StatusCodes.Status201Created);
     }
 
     private static Webhook ToWebhook(WebhookRow r) => new(
-        r.Id, r.Url, r.Events, r.Description, r.Active, r.CreatedAt,
+        r.Id, r.Url, r.Events, r.Format, r.Description, r.Active, r.CreatedAt,
         r.LastDeliveryStatus is { } status ? new LastDelivery(status, r.LastDeliveryAt!.Value) : null);
 
     private static async Task<IResult> ListAsync(WebhookStore webhooks, CancellationToken ct) =>
@@ -205,6 +236,19 @@ public static class WebhookEndpoints
             errors["events"] = [eventsError!];
         }
 
+        string? format = null;
+        if (json.TryGetProperty("format", out var formatValue))
+        {
+            if (CheckFormat(formatValue) is { } formatError)
+            {
+                errors["format"] = [formatError];
+            }
+            else
+            {
+                format = formatValue.GetString();
+            }
+        }
+
         var hasDescription = json.TryGetProperty("description", out var descriptionValue);
         string? description = null;
         if (hasDescription)
@@ -232,9 +276,15 @@ public static class WebhookEndpoints
             }
         }
 
-        if (url is null && events is null && !hasDescription && active is null && errors.Count == 0)
+        if (url is null && events is null && format is null && !hasDescription && active is null && errors.Count == 0)
         {
-            errors["body"] = ["Give at least one of url, events, description and active."];
+            errors["body"] = ["Give at least one of url, events, format, description and active."];
+        }
+
+        if (errors.Count == 0 && (events is not null || format is not null) && await webhooks.GetAsync(id, ct) is { } current
+            && CheckFormatEvents(format ?? current.Format, events ?? current.Events) is { } mixError)
+        {
+            errors[events is not null ? "events" : "format"] = [mixError];
         }
 
         if (errors.Count > 0)
@@ -242,7 +292,7 @@ public static class WebhookEndpoints
             return Invalid(errors);
         }
 
-        if (!await webhooks.UpdateAsync(id, url, events, hasDescription, description, active, time.GetUtcNow(), ct))
+        if (!await webhooks.UpdateAsync(id, url, events, format, hasDescription, description, active, time.GetUtcNow(), ct))
         {
             return NotFound();
         }
