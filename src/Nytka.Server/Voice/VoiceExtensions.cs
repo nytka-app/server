@@ -5,7 +5,7 @@ using Nytka.Server.Settings;
 
 namespace Nytka.Server.Voice;
 
-/// <summary>The voice hook (docs/specs/your-voice.md): its settings, the model, enrollment, matching and rescoring.</summary>
+/// <summary>The voice hook (docs/specs/your-voice.md): its settings, the model, enrollment, matching, rescoring and matching stored audio again.</summary>
 public static class VoiceExtensions
 {
     public static IServiceCollection AddNytkaVoice(this IServiceCollection services)
@@ -19,6 +19,7 @@ public static class VoiceExtensions
         services.AddSingleton(new EnrollmentVad(() => new SileroVad()));
         services.AddScoped<VoiceEnrollment>();
         services.AddScoped<IJobHandler, RescoreVoiceHandler>();
+        services.AddScoped<IJobHandler, RematchVoiceHandler>();
         return services;
     }
 }

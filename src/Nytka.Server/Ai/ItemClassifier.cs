@@ -34,6 +34,7 @@ public static class ItemClassifier
     {
         var tasks = new List<AiTask>();
         var notes = new Dictionary<string, List<string>>();
+        var noteSalience = new Dictionary<string, string?>();
         var dropped = new List<DroppedCandidate>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var commitments = 0;
@@ -58,7 +59,7 @@ public static class ItemClassifier
             if (kind == TaskKinds.Commitment && ownerKnown && owner == TaskKinds.Other && waitingOn < MaxWaitingOn)
             {
                 waitingOn++;
-                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn, Due(item.Due, from)));
+                tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.WaitingOn, Due(item.Due, from), Salience.Parse(item.Salience)));
                 continue;
             }
 
@@ -76,11 +77,11 @@ public static class ItemClassifier
             {
                 case TaskKinds.Commitment when commitments < ConversationPrompt.MaxTasks:
                     commitments++;
-                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Commitment, Due(item.Due, from)));
+                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Commitment, Due(item.Due, from), Salience.Parse(item.Salience)));
                     break;
                 case TaskKinds.Idea when ideas < MaxIdeas:
                     ideas++;
-                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Idea, Due(item.Due, from)));
+                    tasks.Add(new AiTask(text, fingerprint, personNamed(item.Person), TaskKinds.Idea, Due(item.Due, from), Salience.Parse(item.Salience)));
                     break;
                 case TaskKinds.Advice:
                     var topic = TagName.Normalize(item.Topic) ?? GeneralTopic;
@@ -97,13 +98,14 @@ public static class ItemClassifier
                     if (points.Count < MaxNotePoints)
                     {
                         points.Add(text);
+                        noteSalience[topic] = Salience.Max(noteSalience.GetValueOrDefault(topic), Salience.Parse(item.Salience));
                     }
 
                     break;
             }
         }
 
-        return new ClassifiedItems(tasks, [.. notes.Select(n => new AiNote(n.Key, n.Value))], dropped);
+        return new ClassifiedItems(tasks, [.. notes.Select(n => new AiNote(n.Key, n.Value, noteSalience.GetValueOrDefault(n.Key)))], dropped);
     }
 
     private static DateTime? Due(string? text, DateOnly? from) =>

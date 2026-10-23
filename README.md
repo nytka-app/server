@@ -56,7 +56,8 @@ docs do not say.
 - **Transcripts without the silence.** The server drops silence with Silero VAD (a small voice-activity model), sends
   only speech to any OpenAI-compatible transcription endpoint, and groups the result into conversations.
 - **Titles, summaries, tasks and memories.** With a language model you choose, each closed conversation gets a title,
-  a summary and tasks, and lasting facts about you become memories. A task you already have open joins it instead of
+  a summary and tasks, and lasting facts about you become memories. The summary can follow a template for a meeting, lecture,
+  doctor's visit or call, which you can edit. A task you already have open joins it instead of
   repeating, and a near repeat waits in the review inbox ([duplicate tasks](docs/explanation/features.md#duplicate-tasks)).
 - **People and your own voice.** It learns your voice, groups other voices, keeps facts about the people you talk to,
   and keeps the TV and phone calls out of them.

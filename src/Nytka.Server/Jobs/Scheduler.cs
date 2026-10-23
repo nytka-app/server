@@ -51,6 +51,7 @@ public sealed class Scheduler(
         await QueueDigestAsync(now, ct);
         await QueueTidyTagsAsync(now, ct);
         await QueueRescoreAsync(now, ct);
+        await QueueRematchAsync(now, ct);
         await QueueGroupVoicesAsync(now, ct);
         await calendar.QueueAsync(now, ct);
         await QueueApplySpeechAsync(now, ct);
@@ -104,6 +105,16 @@ public sealed class Scheduler(
         if (await voices.NeedsRescoreAsync(VoiceSettings.UserThreshold(settings), ct))
         {
             await queue.EnqueueAsync(JobKinds.RescoreVoice, new { }, JobKinds.RescoreVoice, now, ct);
+        }
+    }
+
+    /// <summary>Matches segments again from their stored audio while matching is on, the voiceprint is the loaded model's and one was never checked.</summary>
+    private async Task QueueRematchAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (VoiceSettings.IsEnabled(settings) && speaker.Id is { } model && await voices.GetProfileAsync(ct) is { } profile
+            && profile.Model == model && await voices.HasUncheckedWithAudioAsync(ct))
+        {
+            await queue.EnqueueAsync(JobKinds.RematchVoice, new { }, JobKinds.RematchVoice, now, ct);
         }
     }
 

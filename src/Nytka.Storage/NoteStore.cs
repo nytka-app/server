@@ -25,7 +25,7 @@ public sealed class NoteRow
 }
 
 /// <summary>A note the model's advice made: <paramref name="Topic"/> is a normalized name, <paramref name="Points"/> the tips.</summary>
-public sealed record AiNote(string Topic, IReadOnlyList<string> Points);
+public sealed record AiNote(string Topic, IReadOnlyList<string> Points, string? Salience = null);
 
 /// <summary>An item of the model's answer the server did not keep (<c>dropped_candidates</c>).</summary>
 public sealed record DroppedCandidate(string Kind, string Owner, string Text);
@@ -74,11 +74,12 @@ public sealed class NoteStore(NpgsqlDataSource dataSource)
             // A millisecond apart, so ids keep the order the model gave the topics in.
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into notes (id, conversation_id, topic, points, created_at, updated_at)
-                values (@id, @conversationId, @Topic, @points, @now, @now)
-                on conflict (conversation_id, topic) do update set points = excluded.points, updated_at = excluded.updated_at
+                insert into notes (id, conversation_id, topic, points, salience, created_at, updated_at)
+                values (@id, @conversationId, @Topic, @points, @Salience, @now, @now)
+                on conflict (conversation_id, topic) do update
+                set points = excluded.points, salience = excluded.salience, updated_at = excluded.updated_at
                 """,
-                new { id = Guid.CreateVersion7(now.AddMilliseconds(i)), conversationId, notes[i].Topic, points = notes[i].Points.ToArray(), now },
+                new { id = Guid.CreateVersion7(now.AddMilliseconds(i)), conversationId, notes[i].Topic, points = notes[i].Points.ToArray(), notes[i].Salience, now },
                 transaction, cancellationToken: ct));
         }
     }

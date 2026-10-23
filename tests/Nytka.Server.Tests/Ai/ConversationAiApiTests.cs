@@ -54,10 +54,10 @@ public sealed class ConversationAiApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.True(renamed.GetProperty("titleEdited").GetBoolean());
         Assert.Equal("My title", listed.GetProperty("title").GetString());
         Assert.Equal(
-            ["id", "startedAt", "endedAt", "status", "preview", "title", "summary", "aiStatus", "bookmarks", "source", "mediaShare", "transcriptTier", "tags"],
+            ["id", "startedAt", "endedAt", "status", "preview", "title", "summary", "aiStatus", "bookmarks", "source", "mediaShare", "transcriptTier", "noise", "tags"],
             listed.EnumerateObject().Select(p => p.Name));
         Assert.Equal(
-            ["id", "startedAt", "endedAt", "status", "title", "summary", "aiStatus", "titleEdited", "aiMessage", "aiUpdatedAt", "tasks", "segments", "bookmarks", "source", "tags", "transcript"],
+            ["id", "startedAt", "endedAt", "status", "title", "summary", "aiStatus", "titleEdited", "aiMessage", "aiUpdatedAt", "tasks", "segments", "bookmarks", "source", "tags", "summaryTemplate", "transcript"],
             renamed.EnumerateObject().Select(p => p.Name));
     }
 
@@ -79,7 +79,7 @@ public sealed class ConversationAiApiTests(PostgresFixture db) : AiTestBase(db)
         var segments = detail.GetProperty("segments").EnumerateArray().ToList();
         Assert.Equal("Anna", segments[0].GetProperty("speaker").GetString());
         Assert.Equal(JsonValueKind.Null, segments[1].GetProperty("speaker").ValueKind);
-        Assert.Equal(["id", "startedAt", "endedAt", "text", "speaker", "speakerId", "isUser", "personId", "personName", "isUserSource", "speechKind", "speechGuess", "speechScore", "speechSignals", "speechMarked", "category", "final"], segments[0].EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "startedAt", "endedAt", "text", "speaker", "speakerId", "isUser", "personId", "personName", "isUserSource", "wearerConfidence", "speechKind", "speechGuess", "speechScore", "speechSignals", "speechMarked", "category", "final"], segments[0].EnumerateObject().Select(p => p.Name));
     }
 
     [Fact]

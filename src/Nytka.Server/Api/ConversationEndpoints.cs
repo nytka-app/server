@@ -38,7 +38,7 @@ public static class ConversationEndpoints
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, TranscriptView Transcript);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript);
 
     /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
     public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
@@ -58,7 +58,8 @@ public static class ConversationEndpoints
 
     /// <summary><c>media</c> is <c>hide</c> (leave out conversations that are mostly media) or <c>only</c> (keep just those), else <c>400</c>.</summary>
     private static async Task<IResult> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, string? media, ConversationStore conversations, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, string? media, string? noise, ConversationStore conversations,
+        CancellationToken ct)
     {
         var normalized = TagName.Normalize(tag);
         if (tag is not null && normalized is null)
@@ -71,9 +72,14 @@ public static class ConversationEndpoints
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["media"] = ["Must be hide or only, or left out."] });
         }
 
+        if (noise is not (null or "hide" or "only"))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["noise"] = ["Must be hide or only, or left out."] });
+        }
+
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         // Npgsql takes only UTC offsets for timestamptz.
-        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, media, ct))
+        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, media, ct, noise))
             .Select(c => c.Preview.Length > PreviewLength ? c with { Preview = c.Preview[..(char.IsHighSurrogate(c.Preview[PreviewLength - 1]) ? PreviewLength - 1 : PreviewLength)] } : c)
             .ToList();
         return Results.Ok(new ConversationPage(items, items.Count == take ? items[^1].StartedAt : null));
@@ -98,7 +104,7 @@ public static class ConversationEndpoints
             conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Status, conversation.Title,
             conversation.Summary, conversation.AiStatus, conversation.TitleEdited, conversation.AiMessage,
             conversation.AiUpdatedAt, await tasks.ForConversationAsync(id, ct), segments,
-            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct),
+            await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct), conversation.SummaryTemplate,
             new TranscriptView(
                 conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
                 TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0)));

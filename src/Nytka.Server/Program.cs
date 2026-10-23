@@ -146,6 +146,7 @@ api.MapReview();
 api.MapBriefs();
 api.MapCalendarFeed();
 api.MapUsage();
+api.MapSummaryTemplates();
 app.MapNytkaMcp();
 
 app.Run();

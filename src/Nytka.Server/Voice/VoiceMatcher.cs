@@ -18,8 +18,11 @@ public sealed record VoiceMatch(IReadOnlyList<SegmentVoice?> Segments, BatchVoic
 /// <summary>The thresholds of one run, read from the settings once.</summary>
 public sealed record VoiceRules(double MinSegmentSeconds, float UserThreshold, float LearnThreshold, bool Learn)
 {
-    /// <summary>Longer segments are usually a whole batch from a provider without segments, often several voices.</summary>
+    /// <summary>Longer segments are usually a whole batch from a provider without segments, often several voices: they are fingerprinted in windows.</summary>
     public const double MaxSegmentSeconds = 30;
+
+    /// <summary>The window a longer segment is cut into; a last window shorter than the minimum is left out.</summary>
+    public const double WindowSeconds = 10;
 
     /// <summary>Shorter segments never teach the voiceprint.</summary>
     public const double LearnMinSeconds = 2;
@@ -58,7 +61,10 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
         }
     }
 
-    /// <summary>The spec's table: too short is checked without a label, too long is not checked, the rest is fingerprinted.</summary>
+    /// <summary>
+    /// The spec's table: too short is checked without a label, longer than <see cref="VoiceRules.MaxSegmentSeconds"/> is
+    /// fingerprinted in windows and takes its weakest window, the rest is fingerprinted whole.
+    /// </summary>
     public static VoiceMatch Match(ISpeakerEmbedder embedder, VoiceProfile profile, WavAudio wav, IReadOnlyList<WavSpan> spans, VoiceRules rules)
     {
         if (wav.Channels != 1 || wav.SampleRate != Timeline.SampleRate)
@@ -71,12 +77,6 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
         var learn = new List<float[]>();
         foreach (var span in spans)
         {
-            if (span.Seconds > VoiceRules.MaxSegmentSeconds)
-            {
-                verdicts.Add(null);
-                continue;
-            }
-
             var from = Math.Clamp((int)Math.Round(span.Start * wav.SampleRate), 0, wav.Samples.Length);
             var to = Math.Clamp((int)Math.Round(span.End * wav.SampleRate), from, wav.Samples.Length);
             if (span.Seconds < rules.MinSegmentSeconds || to - from < minSamples)
@@ -85,22 +85,53 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
                 continue;
             }
 
-            var samples = new float[to - from];
-            for (var i = 0; i < samples.Length; i++)
-            {
-                samples[i] = wav.Samples[from + i] / 32768f;
-            }
-
-            var fingerprint = embedder.Embed(samples);
-            var similarity = SpeakerEmbedder.Cosine(fingerprint, profile.Centroid);
+            var windowed = span.Seconds > VoiceRules.MaxSegmentSeconds;
+            var (fingerprint, similarity) = windowed
+                ? Weakest(embedder, profile, wav, from, to, minSamples)
+                : Score(embedder, profile, wav, from, to);
             verdicts.Add(new SegmentVoice(similarity, similarity >= rules.UserThreshold, fingerprint));
-            if (rules.Learn && span.Seconds >= VoiceRules.LearnMinSeconds && similarity >= rules.LearnThreshold)
+
+            // A long segment may hold several voices, so it never teaches the voiceprint.
+            if (!windowed && rules.Learn && span.Seconds >= VoiceRules.LearnMinSeconds && similarity >= rules.LearnThreshold)
             {
                 learn.Add(fingerprint);
             }
         }
 
         return new VoiceMatch(verdicts, new BatchVoice(profile.Model, learn));
+    }
+
+    /// <summary>
+    /// The window least like the wearer: a long segment is the wearer's only when every window is, because a wrong "Wearer"
+    /// line costs more than a missed one (docs/specs/your-voice.md, Matching).
+    /// </summary>
+    private static (float[] Fingerprint, float Similarity) Weakest(
+        ISpeakerEmbedder embedder, VoiceProfile profile, WavAudio wav, int from, int to, int minSamples)
+    {
+        var window = (int)(VoiceRules.WindowSeconds * wav.SampleRate);
+        (float[] Fingerprint, float Similarity)? weakest = null;
+        for (var start = from; to - start >= minSamples; start += window)
+        {
+            var scored = Score(embedder, profile, wav, start, Math.Min(start + window, to));
+            if (weakest is null || scored.Similarity < weakest.Value.Similarity)
+            {
+                weakest = scored;
+            }
+        }
+
+        return weakest!.Value;
+    }
+
+    private static (float[] Fingerprint, float Similarity) Score(ISpeakerEmbedder embedder, VoiceProfile profile, WavAudio wav, int from, int to)
+    {
+        var samples = new float[to - from];
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = wav.Samples[from + i] / 32768f;
+        }
+
+        var fingerprint = embedder.Embed(samples);
+        return (fingerprint, SpeakerEmbedder.Cosine(fingerprint, profile.Centroid));
     }
 
     [LoggerMessage(LogLevel.Warning, "Voice: matching failed ({ExceptionType}); the batch's segments stay unchecked.")]

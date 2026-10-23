@@ -45,6 +45,9 @@ public sealed class EnrichConversationHandler(
 
     public const string TooShort = "Too short to summarize.";
 
+    /// <summary>The text that stands for a run of media lines in the prompt.</summary>
+    public const string MediaPlaying = "(media playing)";
+
     public static readonly TimeSpan RetryAfter = TimeSpan.FromHours(1);
 
     private static readonly TimeSpan Wait = TimeSpan.FromMinutes(1);
@@ -72,7 +75,7 @@ public sealed class EnrichConversationHandler(
             return JobOutcome.Done; // a repeated job: these segments are summarized already
         }
 
-        if (segments.Sum(s => Words(s.Text)) < MinWords)
+        if (SpokenWords(segments) < MinWords)
         {
             // False: the conversation changed since the read (or is gone, which the next run finds out).
             return await conversations.SkipEnrichmentAsync(conversationId, through, segments.Count, TooShort, time.GetUtcNow(), ct)
@@ -81,23 +84,24 @@ public sealed class EnrichConversationHandler(
         }
 
         var zone = UserTimeZone.Resolve(settings);
-        var lines = TranscriptText.Render(segments.Select(s => new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text)), zone);
+        var lines = TranscriptText.Render(WithoutMediaText(segments), zone);
         var people = segments
             .Where(s => s.IsUser != true && s.PersonId is not null)
             .Select(s => new TaskPerson(s.PersonId!.Value, s.PersonName!))
             .DistinctBy(p => p.Id)
             .ToList();
-        var brief = IsBrief(segments.Sum(s => Words(s.Text)));
+        var brief = IsBrief(SpokenWords(segments));
         var mediaLines = segments.Any(s => s.SpeechKind == SpeechKinds.Media && Words(s.Text) > 0);
-        var suggestTags = TagSettings.Suggest(settings);
+        var suggestTags = TagSettings.Suggest(settings) && MediaShare(segments) < SpeechKinds.MediaShareLimit;
         ConversationAnswer answer;
+        var template = await ChooseTemplateAsync(conversationId, brief, ct);
         try
         {
             // Up to 100 tag names go to the model, so none are read when proposals are off or the conversation is brief.
             var tagNames = suggestTags && !brief ? await tags.NamesInUseAsync(ConversationPrompt.MaxTagNames, ct) : [];
             answer = await AskAsync(
                 new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, brief,
-                people.Select(p => p.Name).ToList(), tagNames, suggestTags, mediaLines, ct);
+                people.Select(p => p.Name).ToList(), tagNames, suggestTags, mediaLines, template, ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -119,7 +123,7 @@ public sealed class EnrichConversationHandler(
         }
 
         switch (await StoreAsync(
-                conversationId, answer, people, through, segments.Count,
+                conversationId, answer, people, through, segments.Count, template.Recorded(answer.ConversationKind),
                 DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(conversation.StartedAt), zone).DateTime), ct))
         {
             case EnrichmentStore.Stale:
@@ -144,7 +148,8 @@ public sealed class EnrichConversationHandler(
     /// <summary>One call for a transcript that fits a window; one per window and a merge call for a longer one.</summary>
     private async Task<ConversationAnswer> AskAsync(
         DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
-        IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, bool mediaLines, CancellationToken ct)
+        IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, bool mediaLines, TemplateChoice template,
+        CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -158,30 +163,79 @@ public sealed class EnrichConversationHandler(
         }
 
         var zoneName = UserTimeZone.Name(zone);
-        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief, suggestTags, mediaLines);
+        var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief, suggestTags, mediaLines, template.Spec, template.Kinds);
+        var schema = template.Kinds is null ? ConversationPrompt.Schema : ConversationPrompt.SchemaWithKind;
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
-            parts.Add(await CompleteAsync(system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people, tagNames), ct));
+            parts.Add(await CompleteAsync(schema, system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people, tagNames), ct));
         }
 
         var answer = parts.Count == 1
             ? parts[0]
             : await CompleteAsync(
-                ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags, mediaLines),
+                schema, ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags, mediaLines, template.Spec, template.Kinds),
                 ConversationPrompt.UserForMerge(startedAt, parts, zone, people, tagNames), ct);
         var result = brief ? answer with { Items = [] } : answer;
         return brief || !suggestTags ? result with { Tags = [] } : result;
     }
 
-    private async Task<ConversationAnswer> CompleteAsync(string system, string user, CancellationToken ct) =>
+    private async Task<ConversationAnswer> CompleteAsync(string schema, string system, string user, CancellationToken ct) =>
         LlmJson.Parse<ConversationAnswer>(
-            await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, ConversationPrompt.Schema, system, user), ct));
+            await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, schema, system, user), ct));
+
+    /// <summary>
+    /// The summary template for this run, read from the settings as they are now. A brief conversation takes none. With templates
+    /// off, the default template applies (the prompt's own wording until it is edited). With them on, a tag of the conversation named
+    /// after a template wins; otherwise the model names the kind in the same call and the template of that kind applies.
+    /// </summary>
+    private async Task<TemplateChoice> ChooseTemplateAsync(Guid conversationId, bool brief, CancellationToken ct)
+    {
+        if (brief)
+        {
+            return TemplateChoice.None;
+        }
+
+        try
+        {
+            if (!SummaryTemplates.Enabled(settings))
+            {
+                return new TemplateChoice(SummaryTemplates.Default, SummaryTemplates.Text(settings, SummaryTemplates.Default), null);
+            }
+
+            if (SummaryTemplates.FromTags(await tags.OfConversationAsync(conversationId, ct)) is { } tagged)
+            {
+                return new TemplateChoice(tagged, SummaryTemplates.Text(settings, tagged), null);
+            }
+
+            return new TemplateChoice(
+                null, null, SummaryTemplates.Ids.ToDictionary(id => id, id => SummaryTemplates.Text(settings, id)));
+        }
+        catch (InvalidOperationException)
+        {
+            // An environment value that breaks a template's rules: the summary still gets made, from the built-in default.
+            logger.LogWarning("A summary template setting from the environment is not valid; using the built-in default template.");
+            return new TemplateChoice(SummaryTemplates.Default, SummaryTemplates.BuiltIn(SummaryTemplates.Default), null);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="Id"/> is the template when it is known before the call (null when the model picks); <paramref name="Spec"/> its text;
+    /// <paramref name="Kinds"/> every template's text when the model picks. All three are null for a brief conversation.
+    /// </summary>
+    private sealed record TemplateChoice(string? Id, string? Spec, IReadOnlyDictionary<string, string>? Kinds)
+    {
+        public static readonly TemplateChoice None = new(null, null, null);
+
+        /// <summary>The template that wrote the summary: the chosen one, else the model's kind when it is a template's, else the default; null for none.</summary>
+        public string? Recorded(string? modelKind) =>
+            Id ?? (Kinds is null ? null : SummaryTemplates.Kinds.Contains(modelKind) ? modelKind : SummaryTemplates.Default);
+    }
 
     /// <summary>Stores the result, reconciles the tasks and notes, records what was dropped and publishes the events, in one transaction.</summary>
     private async Task<EnrichmentStore> StoreAsync(
         Guid conversationId, ConversationAnswer answer, IReadOnlyList<TaskPerson> people, long? through, int segmentCount,
-        DateOnly conversationDate, CancellationToken ct)
+        string? summaryTemplate, DateOnly conversationDate, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var title = ConversationPrompt.Cut(answer.Title, ConversationPrompt.MaxTitle);
@@ -193,7 +247,7 @@ public sealed class EnrichConversationHandler(
 
         var stored = await conversations.StoreEnrichmentAsync(
             connection, transaction, conversationId, title.Length == 0 ? null : title, summary.Length == 0 ? null : summary,
-            through, segmentCount, now, ct);
+            through, segmentCount, summaryTemplate, now, ct);
         if (stored != EnrichmentStore.Stored)
         {
             return stored; // no event: the conversation is gone, changed since the read, or was summarized already
@@ -274,6 +328,41 @@ public sealed class EnrichConversationHandler(
     private static bool IsPermanent(LlmException error) => error.StatusCode is >= 400 and < 500 and not 429;
 
     public static bool IsBrief(int words) => words < BriefWords;
+
+    /// <summary>The words of the lines that are not media: a conversation that is only a TV playing is too short to summarize.</summary>
+    public static int SpokenWords(IEnumerable<SegmentRow> segments) =>
+        segments.Where(s => s.SpeechKind != SpeechKinds.Media).Sum(s => Words(s.Text));
+
+    /// <summary>The share of speech time whose kind is media, as <see cref="SpeechKinds.MediaShareJoin"/> computes it; 0 with no speech.</summary>
+    public static double MediaShare(IReadOnlyList<SegmentRow> segments)
+    {
+        var total = segments.Sum(s => (s.EndedAt - s.StartedAt).TotalSeconds);
+        return total <= 0 ? 0 : segments.Where(s => s.SpeechKind == SpeechKinds.Media).Sum(s => (s.EndedAt - s.StartedAt).TotalSeconds) / total;
+    }
+
+    /// <summary>
+    /// The transcript as the model reads it: each run of media lines becomes one <c>Media</c> line without their words, so song lyrics
+    /// or a film's dialogue never reach a summary, a task or a tag, while the summary may still say that media was playing.
+    /// </summary>
+    public static IEnumerable<TranscriptSegment> WithoutMediaText(IReadOnlyList<SegmentRow> segments)
+    {
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var s = segments[i];
+            if (s.SpeechKind != SpeechKinds.Media)
+            {
+                yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text);
+                continue;
+            }
+
+            while (i + 1 < segments.Count && segments[i + 1].SpeechKind == SpeechKinds.Media)
+            {
+                i++;
+            }
+
+            yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), MediaPlaying);
+        }
+    }
 
     public static int Words(string text) => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
 
