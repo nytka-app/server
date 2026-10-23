@@ -1,6 +1,6 @@
 ---
 title: "MCP reference"
-description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs, the thirteen read-only tools and the three write tools an admin token unlocks."
+description: "Connect an AI agent to Nytka over MCP: the endpoint, the token it needs, the fourteen read-only tools and the three write tools an admin token unlocks."
 order: 4
 section: "Reference"
 ---
@@ -84,6 +84,7 @@ structured content plus JSON text. The names below match the `McpServerTool` att
 | `get_person` | `id` or `name` |
 | `get_ledger` | `id` or `name` |
 | `list_tags` | `query?` |
+| `get_quality` | `from?`, `to?` (the last 30 days) |
 | `ask` | `question` (1 to 500 characters) |
 
 Defaults are in parentheses. Times are ISO 8601 with an offset, or a date.

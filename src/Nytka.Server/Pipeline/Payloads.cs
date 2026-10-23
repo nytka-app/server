@@ -20,3 +20,6 @@ public sealed record DeliveryPayload(Guid DeliveryId);
 
 /// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>; <paramref name="Replace"/> is an on-demand run, which replaces the date's digest.</summary>
 public sealed record DigestPayload(string LocalDate, bool Replace);
+
+/// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>measure-quality</c> measures.</summary>
+public sealed record QualityPayload(string LocalDate);
