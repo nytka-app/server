@@ -16,7 +16,8 @@ public sealed record ConversationAnswer(
 /// <paramref name="Topic"/> names the subject of an advice item and is null for any other kind; <paramref name="Salience"/> is a
 /// <see cref="Nytka.Storage.Salience"/> value (missing in answers from before it). <see cref="ItemClassifier"/> decides what is kept.
 /// </summary>
-public sealed record AnswerItem(string Text, string Kind, string Owner, string? Person, string? Topic, string? Due, string? Salience = null);
+public sealed record AnswerItem(
+    string Text, string Kind, string Owner, string? Person, string? Topic, string? Due, string? Salience = null, IReadOnlyList<long>? SegmentIds = null);
 
 /// <summary>The messages and the schema of the <c>enrich-conversation</c> call. Server code, not a setting.</summary>
 public static class ConversationPrompt
@@ -29,13 +30,14 @@ public static class ConversationPrompt
           "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
                           "tags": { "type": "array", "items": { "type": "string" } },
                           "items": { "type": "array", "items": {
-                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due", "salience"],
+                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"],
                             "properties": { "text": { "type": "string" },
                                             "kind": { "type": "string", "enum": ["commitment", "idea", "advice", "noise"] },
                                             "owner": { "type": "string", "enum": ["wearer", "other"] },
                                             "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] },
                                             "due": { "type": ["string", "null"] },
-                                            "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] } } } } } }
+                                            "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
+                                            "segmentIds": { "type": "array", "items": { "type": "integer" } } } } } } }
         """;
 
     /// <summary>The schema when the model also names the kind of conversation, to pick a summary template.</summary>
@@ -108,7 +110,7 @@ public static class ConversationPrompt
             You read the transcript of one conversation, recorded by a pendant its wearer carries, and describe it.
             {answer}{tasks}{tags}
             Audio from a TV, video, podcast, radio, song or game playing nearby, and text the wearer reads aloud from a script or screen, is not the wearer's life: take no tasks from it (the summary may say that media was playing). Keep the summary describing what happened.{media}
-            The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. Any other speaker label may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on those.
+            The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. A line labelled "Unknown" has no known speaker: it is never the wearer's, and a commitment needs more than such a line. Each line starts with its time and its segment id ("#48121"); give each item the ids (without "#") of the lines it comes from in segmentIds. Any other speaker label may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on those.
             All times and dates you are given are in the time zone {timeZone}. Resolve relative words such as "tomorrow" or "Friday" against the conversation's date in that time zone. Put a deadline into a task only when someone said it in the conversation; never invent one, and never turn the time a line was spoken at into a deadline.
             Write the title, the summary and the tasks in {language}.
             """;
@@ -123,7 +125,7 @@ public static class ConversationPrompt
         string? summarySpec = null, IReadOnlyDictionary<string, string>? kinds = null) =>
         System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines, summarySpec: summarySpec, kinds: kinds)
         + "\n\nThe transcript was too long for one request, so it was described in consecutive parts. "
-        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic, due and salience, and dropping duplicates and items a later part shows as done."
+        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic, due, salience and segmentIds, and dropping duplicates and items a later part shows as done."
         + (kinds is null ? "" : " Set conversationKind to the kind that fits the whole conversation.");
 
     /// <summary>The date line: the conversation's local date and weekday, so the model can resolve "Friday".</summary>

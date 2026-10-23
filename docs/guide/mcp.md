@@ -114,7 +114,7 @@ List tools return `nextBefore`. Pass it as `before` to read the next page. `sear
 
 ### Transcripts
 
-`get_conversation` writes one line per segment, in UTC: `[HH:mm:ss] Speaker: text`. It cuts the
+`get_conversation` writes one line per segment, in UTC: `[HH:mm:ss] Speaker: text`. A line with no speaker reads `Unknown: text`. It cuts the
 transcript at a line boundary after 60,000 characters into parts. `part` picks one (from 1),
 `parts` counts them and `truncated` is true while a later part exists. Only the first 20 parts
 are read. Pass `transcript: false` for the summary and tasks alone; `transcript` is then null.

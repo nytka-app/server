@@ -112,7 +112,7 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
             $"select text from tasks where deleted_at is null and kind = 'commitment' and created_at >= @from and created_at < @to order by created_at, id limit {MaxTasks}",
             args, cancellationToken: ct))).ToList();
         var memories = (await connection.QueryAsync<string>(new CommandDefinition(
-            $"select text from memories where deleted_at is null and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",
+            $"select text from memories where deleted_at is null and confirmed and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",
             args, cancellationToken: ct))).ToList();
         return new DigestInput(conversations, total, tasks, memories);
     }

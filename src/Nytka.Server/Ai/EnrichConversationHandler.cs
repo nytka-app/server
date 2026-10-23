@@ -328,7 +328,7 @@ public sealed class EnrichConversationHandler(
             var s = segments[i];
             if (s.SpeechKind != SpeechKinds.Media)
             {
-                yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text);
+                yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), s.Text, s.Id);
                 continue;
             }
 
@@ -337,7 +337,7 @@ public sealed class EnrichConversationHandler(
                 i++;
             }
 
-            yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), MediaPlaying);
+            yield return new TranscriptSegment(new DateTimeOffset(s.StartedAt), s.Label(), MediaPlaying, s.Id);
         }
     }
 
