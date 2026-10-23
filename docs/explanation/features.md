@@ -18,17 +18,20 @@ windows of 3 to 10 seconds, fingerprints each and keeps their mean as your voice
 heavy noise), and says which. `mode=add` blends a new reading into the voiceprint, for example for a
 new language; the default `mode=replace` starts over. The audio is never stored.
 
-**Matching.** Each new segment from 1 second (`Nytka__Voice__MinSegmentSeconds`) to 30 seconds gets a
+**Matching.** Each new segment of 1 second (`Nytka__Voice__MinSegmentSeconds`) or longer gets a
 similarity to your voiceprint, and is yours at `Nytka__Voice__UserThreshold` (0.38) or above. A shorter
-segment gets no label rather than a guess, and a longer one keeps the provider's. If fingerprinting
-fails, the transcript is stored anyway. Segments of 2 seconds or longer that match well
+segment gets no label rather than a guess. One over 30 seconds is fingerprinted in 10-second windows and
+takes its least-like-you window, so it is yours only when every window is; it never teaches the
+voiceprint. Long segments stored before this, while their audio is kept, are matched in the background
+(`rematch-voice`). If fingerprinting fails, the transcript is stored anyway. Segments of 2 seconds or longer that match well
 (`Nytka__Voice__LearnThreshold`) move the voiceprint towards your voice as the pendant hears it;
 `POST /api/v1/voice/reset` goes back to what you enrolled. A threshold change or a new voiceprint
 re-labels the stored segments.
 
 **Which label wins.** Your own mark on a segment ("This is me" or "This is not me",
 `PATCH /api/v1/segments/{id}`), then Nytka's verdict when Nytka checked the segment, then the
-provider's `is_user`. A conversation's segments say which one decided in `isUserSource`. Marking a
+provider's `is_user`. A conversation's segments say which one decided in `isUserSource`, and how sure it is in
+`wearerConfidence`: 1 or 0 for your mark, the similarity when Nytka's verdict decides, null otherwise. Marking a
 segment of 2 seconds or longer as yours also teaches the voiceprint.
 
 **Forget.** `DELETE /api/v1/voice` deletes the voiceprint, every segment fingerprint, every
@@ -188,6 +191,14 @@ The MCP tools carry them too: `list_tags`, a `tag` filter on `list_conversations
   under 60 words gets none. Accepting is the same add as `PUT`, so it is refused with `409` when the conversation or person
   has 20 tags, and the proposal stays pending. Merging two conversations or two people gives the survivor the proposals of both.
   A person's proposal also names the conversation it came from.
+- **Automatic tags.** With `Nytka__Tags__Auto` on (the default) a conversation's proposed tags are applied at once instead
+  of waiting, each as the tag it is an alias of (`tag_aliases`), so "ремонт", "ремонти" and "repair" end up as one tag. They
+  are recorded as accepted proposals, so a tag you remove is never applied again. Each night after 04:00 local time the
+  `tidy-tags` job asks the model, in one call over the tag names and their use counts, which tags mean the same; each group
+  is merged into its most used tag and the other names become its aliases. A tag applied automatically that stays on a single
+  conversation for 60 days is removed. Tags you added yourself are never removed. Proposals waiting from before are
+  applied by the first nightly run. People's proposed tags still wait for you.
+  Off, every proposal waits, as before.
 - **What the model sees.** With proposals on, the 100 tags in use most (names only) go to the model with each summary and
   each facts request so it reuses them, and the prompts ask for nothing about health, religion, ethnicity, politics or how
   someone sounds (nor age or gender, for a person). The model reads text, never audio. With proposals off no tag name is sent
@@ -213,7 +224,7 @@ called and no label changes: only you naming a group, or accepting a match, link
 (the cards below). A group's fingerprints are the ones still held.
 
 **Cards.** `GET /api/v1/people/cards` offers what is waiting for your answer: a group with no person ("Who
-is this?") and a pending match ("Is this Olena?"). A card has one clean stretch of that voice: consecutive
+is this?") heard in at least `Nytka__People__CardMinConversations` (3) conversations, and a pending match ("Is this Olena?"). A card has one clean stretch of that voice: consecutive
 segments in one conversation with no other segment between them, together at least 5 s, with their speech
 audio still stored. Its clip is the stretch's first 10 s at most, cut from the stored frames by capture
 time (`GET /api/v1/people/cards/{kind}/{id}/clip`, `audio/ogg`), and its `lines` are the segments that
@@ -305,6 +316,10 @@ and kinds again from the scores and your marks, with no audio and no model.
 conversation's speech time whose kind is `media`, 0 with none. `media=hide` leaves out the conversations at
 0.8 or more, `media=only` keeps just those.
 
+**Noise.** Each item also carries `noise`: true for a closed conversation with fewer than 20 words outside
+media lines (a fragment, a cough, a TV left on), the same count under which no summary is made. `noise=hide`
+leaves those out, `noise=only` keeps just those; nothing is deleted.
+
 **What media stops feeding.** With `Nytka__Speech__Mode` `on`, a line whose kind is `media` leaves the features
 that learn about people. The lines are dropped after they are read, so a conversation whose only new line is
 media is not read again and again. A `call` line is named and used for facts like a person's, and only
@@ -316,7 +331,8 @@ excluded from voice grouping.
 | [Voice grouping and cards](#voice-grouping) | it is not grouped or offered (a `call` line neither); a line waits for its guess before it joins a group |
 | [Facts about people](#facts-about-people) | it is never a fact's evidence, with no `mentioned` basis either, and not in the prompt |
 | [Memories](#memories) | it is not in the prompt |
-| Summary, tasks and tags | it stays, labelled `Media`, and the model is told to take no task from it |
+| Summary, tasks and tags | each run of media lines reaches the model as one `Media: (media playing)` line without its words, so the summary may say media played but lyrics and dialogue never become a summary line, a task or a tag; its words do not count towards the 20 a summary needs, and a conversation that is 0.8 or more media is offered no tags |
+| [Digest](#digest) | a conversation that is 0.8 or more media is left out |
 | [Ask](#ask) | a media snippet is labelled `Media` in the context |
 
 When the kinds of a conversation change while the mode is `on` (`apply-speech`, or your mark), its summary,
@@ -484,6 +500,31 @@ Every batch gets a draft from the engine the server is set to. A **pass** sends 
 - **Cleanup.** The file and transcription at Soniox are deleted after every outcome, including a conversation deleted or merged while its pass is out (the pass row stays until its job has done that and written the ledger row). A file stored without its transcription id is deleted before the pass goes out again.
 - **State.** `GET /api/v1/conversations/{id}` has `transcript.tier` (`draft`, `final`, `mixed`) and the latest pass; a pass that fails keeps the draft and can be asked for again.
 
+## Summary templates
+
+A summary can follow a template by the kind of conversation: `meeting` (decisions, owners, open questions), `lecture`
+(topic, main points, terms), `doctor` (complaint, findings, advice, what was agreed) and `call` (who, what about, what was
+agreed), plus `default`, which is the wording the server has always used for a summary. A template is one line of up
+to 600 characters that says what the summary holds; it replaces only that part of the prompt. The title, the tasks, the
+notes, the proposed tags, the output language (`llm.outputLanguage`) and the rule that a deadline is never invented stay the
+same in every template, and the summary is cut to 1200 characters whatever the template says.
+
+Until you turn it on, nothing changes: every summary follows the `default` template. Editing the default template changes
+them all, and takes effect on the next summary. With `Nytka__Summary__Templates__Enabled` on, the template is chosen so:
+
+1. A [tag](#tags) of the conversation named `meeting`, `lecture`, `doctor` or `call` wins (the first of them in that order).
+2. Else the model names the kind of the conversation in the same request that writes the summary, and the template of that
+   kind applies. A kind that is none of the four (`other`, or anything else) uses `default`.
+3. A conversation too short for tasks (under 60 words) always gets a one-sentence summary and no template.
+
+`GET /api/v1/conversations/{id}` says which template wrote the summary in `summaryTemplate` (`null` for a summary made before
+this existed, or a brief one). `GET`, `PUT` and `DELETE` on `/api/v1/summary-templates` list, edit and reset the texts; they
+are the `Nytka__Summary__Templates__*` settings, so an edit applies to the next job without a restart, and a text set by
+the environment cannot be changed there. A text in the environment that breaks the rules (over 600 characters, a line break)
+is ignored for the built-in one. A template reaches the model like the rest of the summary prompt, so the same
+[privacy](../reference/configuration.md#the-language-model) applies. Re-run a summary with
+`POST /api/v1/conversations/{id}/enrich` after changing a template or tag.
+
 ## Memories
 
 A memory is a lasting fact about you: who you are, family, friends, home, work, health, habits,
@@ -493,6 +534,17 @@ each stored summary the server asks the model for up to five new memories of up 
 `Nytka__Memories__UserName`, so facts about other speakers stay out. Without a name, "you" is the
 person wearing the pendant.
 
+- **Grounded.** Every line in the prompt carries its segment id, and a line nobody is known to have said reads
+  `Unknown`, never as yours. The model cites the lines each fact comes from (`memory_sources`). A fact none of whose cited lines
+  is yours by the [label rule](#your-voice) (so at or above `Nytka__Voice__UserThreshold` when the voice decided) is stored
+  unconfirmed: it is not listed, searched, sent to MCP, a digest or a webhook, and it never rewrites a memory you have.
+  Tasks cite their lines the same way (`task_sources`), only lines of their own conversation.
+- Some facts are true only for a while: where you are staying, an illness, a plan with a date. The model may give such a
+  fact the last date it holds (`expiresAt` is the start of the next day in `Nytka__User__TimeZone`); from then on
+  `GET /api/v1/memories` and the MCP `list_memories` leave it out unless asked with `expired=true`. Search still finds it.
+  A date before the conversation or more than two years after it is dropped as a guess.
+- Each memory, task and note made by the model carries `salience`: `vital` (shapes your life or your day), `ordinary`,
+  or `noise` (trivia, kept but never shown first); null for items made by hand or before this field.
 - A fact the server already holds is not added again with the same wording, even one you deleted. Extraction never rewrites
   a memory you edited or added yourself.
 - Add, edit and delete memories in the Memories tab, or with `POST`, `PATCH` and `DELETE` on

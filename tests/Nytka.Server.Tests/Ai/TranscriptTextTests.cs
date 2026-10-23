@@ -16,25 +16,25 @@ public class TranscriptTextTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("  ")]
-    public void A_segment_without_a_speaker_has_no_label(string? speaker) =>
-        Assert.Equal(["[08:05:09] Hello"], TranscriptText.Render([new(T0, speaker, "Hello")]));
+    public void A_segment_without_a_speaker_is_labelled_unknown(string? speaker) =>
+        Assert.Equal(["[08:05:09] Unknown: Hello"], TranscriptText.Render([new(T0, speaker, "Hello")]));
 
     [Fact]
     public void Times_are_in_utc() =>
         Assert.Equal(
-            ["[08:05:09] Hello"],
+            ["[08:05:09] Unknown: Hello"],
             TranscriptText.Render([new(new DateTimeOffset(2026, 9, 29, 11, 5, 9, TimeSpan.FromHours(3)), null, "Hello")]));
 
     [Fact]
     public void Times_are_in_the_given_zone_across_midnight() =>
         Assert.Equal(
-            ["[01:05:09] Hello"],
+            ["[01:05:09] Unknown: Hello"],
             TranscriptText.Render([new(new DateTimeOffset(2026, 9, 29, 22, 5, 9, TimeSpan.Zero), null, "Hello")], TimeZoneInfo.FindSystemTimeZoneById("Europe/Kyiv")));
 
     [Fact]
     public void Hours_use_the_24_hour_clock() =>
         Assert.Equal(
-            ["[23:59:59] late", "[00:00:00] early"],
+            ["[23:59:59] Unknown: late", "[00:00:00] Unknown: early"],
             TranscriptText.Render(
             [
                 new(new DateTimeOffset(2026, 9, 29, 23, 59, 59, TimeSpan.Zero), null, "late"),
@@ -54,15 +54,21 @@ public class TranscriptTextTests
     [Fact]
     public void A_segment_without_text_has_no_line() =>
         Assert.Equal(
-            ["[08:05:10] Hi"],
+            ["[08:05:10] Unknown: Hi"],
             TranscriptText.Render([new(T0, "Anna", " \n "), new(T0.AddSeconds(1), null, "Hi")]));
 
     [Fact]
     public void Keeps_the_order_it_is_given() =>
         Assert.Equal(
-            ["[08:05:10] second", "[08:05:09] first"],
+            ["[08:05:10] Unknown: second", "[08:05:09] Unknown: first"],
             TranscriptText.Render([new(T0.AddSeconds(1), null, "second"), new(T0, null, "first")]));
 
     [Fact]
     public void No_segments_no_lines() => Assert.Empty(TranscriptText.Render([]));
+
+    [Fact]
+    public void An_id_is_written_before_the_label_so_a_line_can_be_cited() =>
+        Assert.Equal(
+            ["[08:05:09] #42 Anna: Hello", "[08:05:10] #43 Unknown: Hi"],
+            TranscriptText.Render([new(T0, "Anna", "Hello", 42), new(T0.AddSeconds(1), null, "Hi", 43)]));
 }

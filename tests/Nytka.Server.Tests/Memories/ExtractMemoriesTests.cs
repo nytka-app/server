@@ -176,12 +176,12 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
 
         var request = Assert.Single(Llm.Requests);
         Assert.Equal("memories", request.SchemaName);
-        Assert.Contains("\"required\": [\"text\", \"replaces\"]", request.SchemaJson);
+        Assert.Contains("\"required\": [\"text\", \"replaces\", \"salience\", \"expires\", \"segmentIds\"]", request.SchemaJson);
         Assert.Contains("Conversation: Lunch with Anna", request.User);
         Assert.Contains("Date: 2026-09-29 Tuesday", request.User);
         Assert.Contains("\"You\" is Yehor.", request.User);
         Assert.Contains($"{Id(1)}: I live in Kyiv.", request.User);
-        Assert.Contains("[09:00:00] Anna: My sister Olena lives in Lviv.\n[09:00:05] I run every morning.", request.User);
+        Assert.Matches(@"\[09:00:00\] #\d+ Anna: My sister Olena lives in Lviv\.\n\[09:00:05\] #\d+ Unknown: I run every morning\.", request.User);
         Assert.Contains("the language of the conversation", request.System);
     }
 
@@ -194,7 +194,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
         await kyiv.RunJobsAsync();
 
         var request = Assert.Single(Llm.Requests);
-        Assert.Contains("[12:00:00] Anna: My sister Olena lives in Lviv.", request.User); // 09:00 UTC, UTC+3 in September
+        Assert.Matches(@"\[12:00:00\] #\d+ Anna: My sister Olena lives in Lviv\.", request.User); // 09:00 UTC, UTC+3 in September
         Assert.Contains("time zone Europe/Kyiv", request.System);
     }
 

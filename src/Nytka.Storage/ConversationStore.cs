@@ -6,10 +6,14 @@ namespace Nytka.Storage;
 /// <summary>
 /// <paramref name="Title"/> is the title the user set, else the generated one; both it and <paramref name="Summary"/> are null until the first run.
 /// <paramref name="MediaShare"/> is the share of the conversation's speech time whose speech kind is media, 0 with no speech.
+/// <paramref name="Noise"/> is true for a closed fragment with fewer than <see cref="ConversationStore.NoiseWords"/> words outside media.
 /// </summary>
+/// <summary>A conversation a backfill may run on, with the count of memories a re-check would judge.</summary>
+public sealed record AiBackfillCandidate(Guid Id, DateTime StartedAt, int Memories);
+
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
-    int Bookmarks, string Source, double MediaShare, string TranscriptTier)
+    int Bookmarks, string Source, double MediaShare, string TranscriptTier, bool Noise = false)
 {
     /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -17,7 +21,7 @@ public sealed record ConversationSummary(
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute, string? SummaryTemplate);
 
 /// <summary>
 /// A segment as a conversation shows it. <see cref="Speaker"/> is the provider's label, <see cref="SpeakerId"/> its stable id for the
@@ -49,6 +53,9 @@ public sealed class SegmentRow
 
     public string? IsUserSource { get; init; }
 
+    /// <summary>How sure the rule is that the line is the wearer's (<see cref="SpeakerLabel.WearerConfidence"/>).</summary>
+    public float? WearerConfidence { get; init; }
+
     public string? SpeechKind { get; init; }
 
     public string? SpeechGuess { get; init; }
@@ -66,7 +73,8 @@ public sealed class SegmentRow
     public bool Final { get; init; }
 
     /// <summary>What a model reads as the speaker: <c>Media</c> for a media line, else the wearer, else the person's name, else the provider's label.</summary>
-    public string? Label() => SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
+    public string? Label() =>
+        SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? SpeakerLabel.Display(Speaker);
 }
 
 /// <summary>What <c>/status</c> reports about the AI runs: how many wait, and the newest failed and finished ones.</summary>
@@ -215,12 +223,48 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>
+    /// Closed conversations that are not noise, by id, after <paramref name="after"/>: what a backfill walks. <c>Memories</c> counts the
+    /// live memories extraction took from each, which a re-check would judge.
+    /// </summary>
+    public async Task<IReadOnlyList<AiBackfillCandidate>> BackfillCandidatesAsync(Guid? after, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<AiBackfillCandidate>(new CommandDefinition(
+            $"""
+            select c.id as Id, c.started_at as StartedAt,
+                   (select count(*)::int from memories m
+                    where m.conversation_id = c.id and m.source = 'ai' and not m.edited and m.deleted_at is null) as Memories
+            from conversations c
+            {NoiseJoin}
+            where c.status = 'closed' and not nz.noise and (cast(@after as uuid) is null or c.id > cast(@after as uuid))
+            order by c.id
+            limit @limit
+            """,
+            new { after, limit }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>A closed conversation with fewer words than this outside media is noise: too short to summarize, as enrichment counts.</summary>
+    public const int NoiseWords = 20;
+
+    /// <summary>
+    /// SQL for a lateral join, aliased <c>nz</c>, that puts in <c>nz.noise</c> whether the conversation aliased <c>c</c> is noise:
+    /// closed, with fewer than <see cref="NoiseWords"/> words in lines that are not media (none at all for one that never had speech).
+    /// </summary>
+    public static readonly string NoiseJoin =
+        $"""
+        left join lateral (
+            select c.status = 'closed' and coalesce(sum(cardinality(regexp_split_to_array(btrim(s.text), '\s+'))), 0) < {NoiseWords} as noise
+            from segments s where s.conversation_id = c.id and btrim(s.text) <> '' and s.speech_kind is distinct from 'media') nz on true
+        """;
+
+    /// <summary>
     /// Newest first by start. The preview joins the first segments' text; the caller trims it. <paramref name="tag"/>
     /// (normalized) keeps only conversations that have it. <paramref name="media"/> is <c>hide</c> to leave out the conversations
-    /// that are mostly media (<see cref="SpeechKinds.MediaShareLimit"/> or more of their speech time), <c>only</c> to keep just those.
+    /// that are mostly media (<see cref="SpeechKinds.MediaShareLimit"/> or more of their speech time), <c>only</c> to keep just those;
+    /// <paramref name="noise"/> does the same for noise (<see cref="NoiseJoin"/>).
     /// </summary>
     public async Task<IReadOnlyList<ConversationSummary>> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct)
+        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct, string? noise = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
@@ -230,7 +274,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    c.ai_status as AiStatus,
                    (select count(*)::int from bookmarks b
                     where b.at >= c.started_at - interval '30 seconds' and b.at <= c.ended_at + interval '30 seconds') as Bookmarks,
-                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier
+                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier, nz.noise as Noise
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -239,6 +283,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                       order by s.started_at limit 20) f
             ) p on true
             {SpeechKinds.MediaShareJoin}
+            {NoiseJoin}
             where (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
               and (cast(@since as timestamptz) is null or c.started_at >= cast(@since as timestamptz))
               and (cast(@tag as text) is null or exists (
@@ -246,10 +291,11 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                     where ct.conversation_id = c.id and t.name = @tag))
               and (cast(@media as text) is null or (@media = 'hide' and m.share < @mediaShareLimit)
                     or (@media = 'only' and m.share >= @mediaShareLimit))
+              and (cast(@noise as text) is null or (@noise = 'hide' and not nz.noise) or (@noise = 'only' and nz.noise))
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { before, since, limit, tag, media, mediaShareLimit = SpeechKinds.MediaShareLimit }, cancellationToken: ct));
+            new { before, since, limit, tag, media, noise, mediaShareLimit = SpeechKinds.MediaShareLimit }, cancellationToken: ct));
         var items = rows.ToList();
         var tags = await TagStore.OfConversationsAsync(connection, null, items.Select(c => c.Id).ToList(), ct);
         return items.Select(c => tags.TryGetValue(c.Id, out var names) ? c with { Tags = names } : c).ToList();
@@ -264,7 +310,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
                    ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
                    ai_through_segment_id as AiThroughSegmentId, source as Source, transcript_tier as TranscriptTier,
-                   auto_route as AutoRoute
+                   auto_route as AutoRoute, ai_template as SummaryTemplate
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -274,8 +320,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         select s.id as Id, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text, s.speaker as Speaker,
                s.speaker_id as SpeakerId, {SpeakerLabel.IsUser} as IsUser,
                {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
-               {SpeakerLabel.IsUserSource} as IsUserSource, s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess,
-               s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
+               {SpeakerLabel.IsUserSource} as IsUserSource, {SpeakerLabel.WearerConfidence} as WearerConfidence,
+               s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess, s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
                s.speech_manual is not null as SpeechMarked, s.category as Category, s.pass_id is not null as Final
         from segments s {SpeakerLabel.Joins}
         """;
@@ -371,7 +417,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// </summary>
     public async Task<EnrichmentStore> StoreEnrichmentAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? title, string? summary,
-        long? throughSegmentId, int segmentCount, DateTimeOffset now, CancellationToken ct)
+        long? throughSegmentId, int segmentCount, string? template, DateTimeOffset now, CancellationToken ct, bool again = false)
     {
         var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
         if (current is null)
@@ -384,7 +430,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             return EnrichmentStore.Stale;
         }
 
-        if (current.AiStatus == "done" && current.AiThroughSegmentId == throughSegmentId)
+        // A run asked to summarize the same lines again (a backfill) replaces the summary; any other is a repeat.
+        if (!again && current.AiStatus == "done" && current.AiThroughSegmentId == throughSegmentId)
         {
             return EnrichmentStore.Duplicate;
         }
@@ -393,10 +440,10 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             update conversations
             set ai_title = @title, ai_summary = @summary, ai_status = 'done', ai_message = null,
-                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0
+                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0, ai_template = @template
             where id = @id
             """,
-            new { id, title, summary, throughSegmentId, now }, transaction, cancellationToken: ct));
+            new { id, title, summary, throughSegmentId, template, now }, transaction, cancellationToken: ct));
         return EnrichmentStore.Stored;
     }
 

@@ -16,8 +16,8 @@ public class ConversationPromptTests
         Assert.Equal("string", schema.GetProperty("properties").GetProperty("tags").GetProperty("items").GetProperty("type").GetString());
         var item = schema.GetProperty("properties").GetProperty("items").GetProperty("items");
         Assert.False(item.GetProperty("additionalProperties").GetBoolean());
-        Assert.Equal(["text", "kind", "owner", "person", "topic", "due"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
-        Assert.Equal(["text", "kind", "owner", "person", "topic", "due"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
         Assert.Equal(["commitment", "idea", "advice", "noise"], item.GetProperty("properties").GetProperty("kind").GetProperty("enum").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(["wearer", "other"], item.GetProperty("properties").GetProperty("owner").GetProperty("enum").EnumerateArray().Select(p => p.GetString()));
     }

@@ -23,9 +23,11 @@ public sealed class TagStore(NpgsqlDataSource dataSource)
     public const int MaxPerItem = 20;
 
     /// <summary>The link table, its item column and the item's table.</summary>
-    private sealed record Link(string Table, string Column, string Items);
+    private sealed record Link(string Table, string Column, string Items, bool Auto = false);
 
     private static readonly Link Conversations = new("conversation_tags", "conversation_id", "conversations");
+
+    private static readonly Link AutoConversations = Conversations with { Auto = true };
 
     private static readonly Link People = new("person_tags", "person_id", "people");
 
@@ -130,9 +132,11 @@ public sealed class TagStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>Adds <paramref name="name"/> (already normalized) to a conversation in the caller's transaction.</summary>
+    /// <remarks><paramref name="auto"/>: enrichment applied it, so the nightly tidy may retire it (<see cref="RetireAsync"/>).</remarks>
     public static Task<TagAdd> AddToConversationAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string name, DateTimeOffset now, CancellationToken ct) =>
-        AddAsync(connection, transaction, Conversations, id, name, now, ct);
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string name, DateTimeOffset now, CancellationToken ct,
+        bool auto = false) =>
+        AddAsync(connection, transaction, auto ? AutoConversations : Conversations, id, name, now, ct);
 
     /// <summary>Adds <paramref name="name"/> (already normalized) to a person in the caller's transaction.</summary>
     public static Task<TagAdd> AddToPersonAsync(
@@ -173,8 +177,8 @@ public sealed class TagStore(NpgsqlDataSource dataSource)
                 insert into tags (id, name, created_at) values (@tagId, @name, @now)
                 on conflict (name) do update set name = excluded.name
                 returning id)
-            insert into {link.Table} ({link.Column}, tag_id, created_at)
-            select @id, id, @now from tag
+            insert into {link.Table} ({link.Column}, tag_id, created_at{(link.Auto ? ", auto" : "")})
+            select @id, id, @now{(link.Auto ? ", true" : "")} from tag
             on conflict do nothing
             """,
             new { tagId = Guid.NewGuid(), id, name, now }, transaction, cancellationToken: ct));
@@ -292,4 +296,150 @@ public sealed class TagStore(NpgsqlDataSource dataSource)
             on conflict do nothing
             """,
             new { from, to }, transaction, cancellationToken: ct));
+
+    /// <summary>The tag each of <paramref name="names"/> is an alias of, by alias; a name that is no alias is left out.</summary>
+    public static async Task<IReadOnlyDictionary<string, string>> ResolveAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyList<string> names, CancellationToken ct) =>
+        (await connection.QueryAsync<(string Alias, string Name)>(new CommandDefinition(
+            "select a.alias, t.name from tag_aliases a join tags t on t.id = a.tag_id where a.alias = any(@names)",
+            new { names = names.ToArray() }, transaction, cancellationToken: ct)))
+        .ToDictionary(r => r.Alias, r => r.Name, StringComparer.Ordinal);
+
+    /// <summary>The tags in use with their conversation and person links, most used first, at most <paramref name="limit"/>.</summary>
+    public async Task<IReadOnlyList<TagUse>> VocabularyAsync(int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<TagUse>(new CommandDefinition(
+            """
+            select t.name as Name,
+                   ((select count(*) from conversation_tags c where c.tag_id = t.id) + (select count(*) from person_tags p where p.tag_id = t.id))::int as Uses,
+                   t.created_at as CreatedAt
+            from tags t
+            order by Uses desc, t.created_at, t.name
+            limit @limit
+            """,
+            new { limit }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>
+    /// Merges <paramref name="others"/> into <paramref name="canonical"/> in one transaction: their conversations and people take the
+    /// canonical tag (an item at the limit keeps what it has), their names and aliases become aliases of it, and they are deleted.
+    /// Names that are no tag are skipped; false when the canonical tag is gone.
+    /// </summary>
+    public async Task<bool> MergeAsync(string canonical, IReadOnlyList<string> others, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var target = await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+            "select id from tags where name = @canonical for update", new { canonical }, transaction, cancellationToken: ct));
+        if (target is null)
+        {
+            return false;
+        }
+
+        var names = others.Where(o => o != canonical).ToArray();
+        await connection.ExecuteAsync(new CommandDefinition(
+            $"""
+            insert into conversation_tags (conversation_id, tag_id, created_at, auto)
+            select c.conversation_id, @target, min(c.created_at), bool_and(c.auto)
+            from conversation_tags c join tags t on t.id = c.tag_id
+            where t.name = any(@names)
+              and (select count(*) from conversation_tags h where h.conversation_id = c.conversation_id and h.tag_id <> c.tag_id) < {MaxPerItem}
+            group by c.conversation_id
+            on conflict do nothing;
+            insert into person_tags (person_id, tag_id, created_at)
+            select p.person_id, @target, min(p.created_at)
+            from person_tags p join tags t on t.id = p.tag_id
+            where t.name = any(@names)
+              and (select count(*) from person_tags h where h.person_id = p.person_id and h.tag_id <> p.tag_id) < {MaxPerItem}
+            group by p.person_id
+            on conflict do nothing;
+            update tag_aliases set tag_id = @target where tag_id in (select id from tags where name = any(@names));
+            insert into tag_aliases (alias, tag_id, created_at)
+            select name, @target, @now from tags where name = any(@names)
+            on conflict (alias) do update set tag_id = excluded.tag_id;
+            delete from tags where name = any(@names);
+            """,
+            new { target, names, now }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    /// <summary>
+    /// Removes the links enrichment applied (<c>auto</c>) whose tag has no other link and was linked before <paramref name="before"/>:
+    /// a tag used once in that long is noise. The trigger then drops the tag. Returns the links removed.
+    /// </summary>
+    public async Task<int> RetireAsync(DateTimeOffset before, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            """
+            delete from conversation_tags c
+            where c.auto and c.created_at < @before
+              and not exists (select 1 from conversation_tags o where o.tag_id = c.tag_id and o.conversation_id <> c.conversation_id)
+              and not exists (select 1 from person_tags p where p.tag_id = c.tag_id)
+            """,
+            new { before }, cancellationToken: ct));
+    }
+
+    /// <summary>
+    /// Applies the pending proposals for conversations, made before tags applied themselves, as automatic links through their
+    /// aliases, and marks them accepted, in one transaction. A conversation at <see cref="MaxPerItem"/> keeps its proposals pending.
+    /// Returns the proposals applied.
+    /// </summary>
+    public async Task<int> ApplyPendingAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var pending = (await connection.QueryAsync<(Guid Id, Guid ConversationId, string Name)>(new CommandDefinition(
+            "select id, conversation_id, name from tag_suggestions where status = 'pending' and person_id is null order by created_at, id",
+            transaction: transaction, cancellationToken: ct))).ToList();
+        var aliases = await ResolveAsync(connection, transaction, [.. pending.Select(p => p.Name).Distinct()], ct);
+        var applied = 0;
+        foreach (var (id, conversationId, name) in pending)
+        {
+            if (await AddToConversationAsync(connection, transaction, conversationId, aliases.GetValueOrDefault(name, name), now, ct, auto: true)
+                is TagAdd.Added or TagAdd.Present)
+            {
+                applied += await connection.ExecuteAsync(new CommandDefinition(
+                    "update tag_suggestions set status = 'accepted', decided_at = @now where id = @id",
+                    new { id, now }, transaction, cancellationToken: ct));
+            }
+        }
+
+        await transaction.CommitAsync(ct);
+        return applied;
+    }
+
+    /// <summary>Whether a tag or a pending conversation proposal exists: without either the nightly tidy has nothing to do.</summary>
+    public async Task<bool> AnyAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "select exists (select 1 from tags) or exists (select 1 from tag_suggestions where status = 'pending' and person_id is null)",
+            cancellationToken: ct));
+    }
+
+    /// <summary>Whether the nightly tidy ran for <paramref name="localDate"/> (<c>yyyy-MM-dd</c>), failed or not.</summary>
+    public async Task<bool> TidiedAsync(string localDate, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "select exists (select 1 from tag_tidy_runs where local_date = cast(@localDate as date))", new { localDate }, cancellationToken: ct));
+    }
+
+    public async Task RecordTidyAsync(string localDate, int merged, int retired, bool failed, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into tag_tidy_runs (local_date, merged, retired, failed, created_at)
+            values (cast(@localDate as date), @merged, @retired, @failed, @now)
+            on conflict (local_date) do nothing
+            """,
+            new { localDate, merged, retired, failed, now }, cancellationToken: ct));
+    }
 }
+
+/// <summary>A tag in use: its links to conversations and people, and when it was made.</summary>
+public sealed record TagUse(string Name, int Uses, DateTime CreatedAt);

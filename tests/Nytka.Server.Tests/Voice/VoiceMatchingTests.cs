@@ -44,7 +44,10 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         _server.Get<VoiceStore>().ReplaceProfileAsync(Model, FakeEmbedder.Voiceprint, 3, _server.Time.GetUtcNow(), default);
 
     /// <summary>One batch of 9 s of speech, transcribed as <paramref name="segments"/> (WAV seconds and the provider's is_user).</summary>
-    private async Task Transcribe(params (double Start, double End, bool? IsUser)[] segments)
+    private Task Transcribe(params (double Start, double End, bool? IsUser)[] segments) => Transcribe(9, segments);
+
+    /// <summary>One batch of <paramref name="seconds"/> of speech, transcribed as <paramref name="segments"/>.</summary>
+    private async Task Transcribe(double seconds, params (double Start, double End, bool? IsUser)[] segments)
     {
         var json = JsonSerializer.Serialize(new
         {
@@ -52,7 +55,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
             segments = segments.Select((s, i) => new { start = s.Start, end = s.End, text = $"s{i}", speaker = $"SPEAKER_{i}", speaker_id = $"{i}", is_user = s.IsUser }),
         });
         _server.Stt.Respond = _ => FakeStt.Json(json);
-        await _server.UploadAsync(Chunks(_session, Tone(9), Silence(3)));
+        await _server.UploadAsync(Chunks(_session, Tone(seconds), Silence(3)));
         await _server.RunJobsAsync();
     }
 
@@ -94,7 +97,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0, _embedder.Calls);
         Assert.Equal(0, await Fingerprints());
         Assert.All(await Rows(), r => Assert.False(r.VoiceChecked));
-        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "SPEAKER_1" }, await Labels());
+        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "Voice 2" }, await Labels());
     }
 
     [Fact]
@@ -108,7 +111,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal([new Row("s0", true, null, null, true)], await Rows());
         Assert.Equal(0, await Fingerprints());
         Assert.Null((await ApiIsUser())["s0"]);
-        Assert.Equal("SPEAKER_0", (await Labels())["s0"]);
+        Assert.Equal("Voice 1", (await Labels())["s0"]);
     }
 
     [Fact]
@@ -125,7 +128,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(0.40f, rows[0].VoiceSimilarity!.Value, 0.001f);
         Assert.Equal(0.37f, rows[1].VoiceSimilarity!.Value, 0.001f);
         Assert.Equal(2, await Fingerprints());
-        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "SPEAKER_1" }, await Labels());
+        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "Voice 2" }, await Labels());
     }
 
     [Fact]
@@ -140,16 +143,90 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_segment_over_thirty_seconds_is_not_checked_and_keeps_the_providers_label()
+    public async Task A_segment_over_thirty_seconds_takes_its_weakest_ten_second_window_and_teaches_nothing()
     {
         await Enroll();
+        _embedder.Similarities.Enqueue(0.70f);
+        _embedder.Similarities.Enqueue(0.30f);
+        _embedder.Similarities.Enqueue(0.60f);
 
-        await Transcribe((0, 45, true));
+        await Transcribe(25, (0, 31, true));
+
+        Assert.Equal(3, _embedder.Calls);
+        Assert.Equal([160_000, 160_000], _embedder.SampleCounts.Take(2));
+        var row = Assert.Single(await Rows());
+        Assert.Equal((true, false), (row.VoiceChecked, row.VoiceIsUser));
+        Assert.Equal(0.30f, row.VoiceSimilarity!.Value, 0.001f);
+        Assert.Equal(1, await Fingerprints());
+        Assert.Equal(3, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.False((await ApiIsUser())["s0"]);
+    }
+
+    [Fact]
+    public async Task A_long_segment_left_unchecked_is_matched_from_its_stored_audio_once_a_voiceprint_exists()
+    {
+        await Transcribe(25, (0, 0.6, true), (1, 24, true));
+        Assert.All(await Rows(), r => Assert.False(r.VoiceChecked));
+
+        // The capture times of a line over 30 s, which earlier versions never checked; the audio still ends at 25 s.
+        await db.ExecuteAsync("update segments set ended_at = started_at + interval '31 seconds' where text = 's1'");
+
+        // 24 s of audio is fingerprinted whole: windows go by the audio's length, not the capture times'.
+        await Enroll();
+        _embedder.Similarities.Enqueue(0.60f);
+        await _server.Get<Scheduler>().TickAsync(default);
+        await _server.RunJobsAsync();
+
+        var rows = await Rows();
+        Assert.Single(_embedder.SampleCounts);
+        Assert.Equal(new Row("s0", false, null, null, true), rows[0]);
+        Assert.Equal((true, true), (rows[1].VoiceChecked, rows[1].VoiceIsUser));
+        Assert.Equal(0.60f, rows[1].VoiceSimilarity!.Value, 0.001f);
+        Assert.Equal(1, await Fingerprints());
+        Assert.Equal(3, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+
+        await _server.Get<Scheduler>().TickAsync(default);
+        Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from jobs where kind = 'rematch-voice'"));
+    }
+
+    [Fact]
+    public async Task Stored_audio_that_does_not_decode_leaves_the_long_segment_checked_without_a_verdict()
+    {
+        await Transcribe(25, (0, 24, true));
+        await db.ExecuteAsync("update segments set ended_at = started_at + interval '31 seconds'");
+        await db.ExecuteAsync("update speech_audio set body = '\\x00'::bytea");
+        await Enroll();
+
+        await _server.Get<Scheduler>().TickAsync(default);
+        await _server.RunJobsAsync();
 
         Assert.Equal(0, _embedder.Calls);
-        Assert.False(Assert.Single(await Rows()).VoiceChecked);
-        Assert.True((await ApiIsUser())["s0"]);
-        Assert.Equal(SpeakerLabel.Wearer, (await Labels())["s0"]);
+        Assert.Equal([new Row("s0", true, null, null, true)], await Rows());
+        await _server.Get<Scheduler>().TickAsync(default);
+        Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from jobs where kind = 'rematch-voice'"));
+    }
+
+    [Fact]
+    public async Task The_api_shows_how_sure_the_rule_is_that_a_line_is_the_wearers()
+    {
+        await Enroll();
+        _embedder.Similarities.Enqueue(0.62f);
+        _embedder.Similarities.Enqueue(0.12f);
+        _embedder.Similarities.Enqueue(0.90f);
+        await Transcribe((0, 1.5, null), (2, 3.5, true), (4, 4.5, true), (5, 6.5, true));
+        var marked = await db.ScalarAsync<long>("select id from segments where text = 's3'");
+        await db.ExecuteAsync($"update segments set is_user_manual = false where id = {marked}");
+
+        var id = await db.ScalarAsync<Guid>("select id from conversations");
+        var detail = await _server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>($"/api/v1/conversations/{id}");
+        var confidence = detail.GetProperty("segments").EnumerateArray().ToDictionary(
+            s => s.GetProperty("text").GetString()!,
+            s => s.GetProperty("wearerConfidence").ValueKind == JsonValueKind.Null ? (float?)null : s.GetProperty("wearerConfidence").GetSingle());
+
+        Assert.Equal(0.62f, confidence["s0"]!.Value, 0.001f);
+        Assert.Equal(0.12f, confidence["s1"]!.Value, 0.001f);
+        Assert.Null(confidence["s2"]);
+        Assert.Equal(0f, confidence["s3"]);
     }
 
     [Fact]
@@ -167,7 +244,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         await db.ExecuteAsync("update segments set is_user_manual = true where text = 's0'");
 
         Assert.Equal(new Dictionary<string, bool?> { ["s0"] = true, ["s1"] = false }, await ApiIsUser());
-        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "SPEAKER_1" }, await Labels());
+        Assert.Equal(new Dictionary<string, string?> { ["s0"] = SpeakerLabel.Wearer, ["s1"] = "Voice 2" }, await Labels());
     }
 
     [Fact]

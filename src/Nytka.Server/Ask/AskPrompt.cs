@@ -47,7 +47,7 @@ public static class AskPrompt
             $"""
             You answer a question about a person's life from numbered sources: recorded conversations (a title, a summary and a transcript) and memories, which are lasting facts about them.
             Use only the sources. Cite each claim with the number of the source it comes from, written [n], for example [2]; use several markers for several sources, and never a number that is not in the list. If the sources do not answer the question, say so plainly and cite nothing. Do not guess and do not add outside knowledge.
-            The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. Any other speaker label may differ between parts of a transcript, so do not rely on it.
+            The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. A line labelled "Unknown" has no known speaker and is never the wearer's. Any other speaker label may differ between parts of a transcript, so do not rely on it.
             All times and dates you are given are in the time zone {timeZone}.
             Answer briefly, in {language}. In "cited" list the numbers you used.
             """;

@@ -12,6 +12,7 @@ public sealed class PeopleSettings : ISettingsGroup
     public const string FactsKey = "people.facts";
     public const string AutoApplyNamesKey = "people.autoApplyNames";
     public const string AutoApplyConfidenceKey = "people.autoApplyConfidence";
+    public const string CardMinConversationsKey = "people.cardMinConversations";
 
     public IReadOnlyList<SettingDefinition> Definitions { get; } =
     [
@@ -21,6 +22,7 @@ public sealed class PeopleSettings : ISettingsGroup
         new(FactsKey, SettingType.Bool, "true", SettingValidators.Bool),
         new(AutoApplyNamesKey, SettingType.Bool, "true", SettingValidators.Bool),
         new(AutoApplyConfidenceKey, SettingType.Number, "0.85", SettingValidators.Number(0.5, 1)),
+        new(CardMinConversationsKey, SettingType.Int, "3", SettingValidators.Int(1, 50)),
     ];
 
     public static bool SuggestNames(SettingsService settings) => settings.Get(SuggestNamesKey) != "false";
@@ -30,6 +32,13 @@ public sealed class PeopleSettings : ISettingsGroup
 
     public static float VoiceThreshold(SettingsService settings) =>
         (float)double.Parse(settings.Get(VoiceThresholdKey)!, NumberStyles.Float, CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The conversations a voice group must be heard in before a card asks who it is: 97% of groups hold one line, and a stranger
+    /// heard once is not worth a question.
+    /// </summary>
+    public static int CardMinConversations(SettingsService settings) =>
+        int.Parse(settings.Get(CardMinConversationsKey)!, CultureInfo.InvariantCulture);
 
     public static bool FactsEnabled(SettingsService settings) => settings.Get(FactsKey) != "false";
 

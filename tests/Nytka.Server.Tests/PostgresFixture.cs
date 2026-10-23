@@ -53,6 +53,7 @@ public class PostgresFixture : IAsyncLifetime
             truncate voice_groups cascade;
             truncate calendar_events cascade;
             truncate tags cascade;
+            truncate tag_tidy_runs;
             truncate context_ranges;
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
                      segments, speech_audio, jobs, diagnostics, api_tokens, settings,

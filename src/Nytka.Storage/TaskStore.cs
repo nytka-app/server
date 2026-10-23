@@ -6,14 +6,16 @@ namespace Nytka.Storage;
 /// <summary>A task with the conversation it came from, as the API shows it.</summary>
 public sealed record TaskRow(
     Guid Id, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt, string Text,
-    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due);
+    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due, string? Salience = null);
 
 /// <summary>
 /// A task the model returned: its text as stored, the fingerprint the text had when it was created, the person it is
 /// owed to (for a <c>waiting_on</c> task, who owes it), if the model named a known one, and its <see cref="TaskKinds">kind</see>
 /// (a commitment, an idea or something awaited), and its due instant when the speaker named one.
 /// </summary>
-public sealed record AiTask(string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null);
+public sealed record AiTask(
+    string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null, string? Salience = null,
+    IReadOnlyList<long>? SegmentIds = null);
 
 /// <summary>A user's change of a task's person: <see langword="null"/> clears it.</summary>
 public sealed record PersonChange(Guid? PersonId);
@@ -35,14 +37,14 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
 {
     private sealed record Current(string Text, bool Done, Guid? PersonId, DateTime? Due);
 
-    private sealed record Existing(Guid Id, string Fingerprint, bool Done, bool Edited, DateTime? DeletedAt, string Kind, DateTime? Due);
+    private sealed record Existing(Guid Id, string Fingerprint, bool Done, bool Edited, DateTime? DeletedAt, string Kind, DateTime? Due, string? Salience);
 
     private const string Select =
         """
         select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
                t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind,
-               t.due_at as Due
+               t.due_at as Due, t.salience as Salience
         from tasks t
         left join conversations c on c.id = t.conversation_id
         left join people p on p.id = t.person_id
@@ -219,6 +221,19 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         return new TaskCreated(task, TaskCreateProblem.None);
     }
 
+    /// <summary>Replaces the lines a task cites, in the caller's transaction: only lines of its conversation, so an id the model made up is skipped.</summary>
+    private static Task SourcesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid taskId, IReadOnlyList<long>? segmentIds, CancellationToken ct) =>
+        connection.ExecuteAsync(new CommandDefinition(
+            """
+            delete from task_sources where task_id = @taskId;
+            insert into task_sources (task_id, segment_id)
+            select @taskId, s.id from segments s join tasks t on t.id = @taskId and t.conversation_id = s.conversation_id
+            where s.id = any(@ids)
+            on conflict do nothing;
+            """,
+            new { taskId, ids = (segmentIds ?? []).ToArray() }, transaction, cancellationToken: ct));
+
     private sealed record Pair(string Status, Guid TaskId, Guid DuplicateOf, Guid? ConversationId);
 
     /// <summary>
@@ -314,7 +329,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         var existing = (await connection.QueryAsync<Existing>(
             new CommandDefinition(
                 """
-                select id as Id, fingerprint as Fingerprint, done as Done, edited as Edited, deleted_at as DeletedAt, kind as Kind, due_at as Due
+                select id as Id, fingerprint as Fingerprint, done as Done, edited as Edited, deleted_at as DeletedAt, kind as Kind, due_at as Due, salience as Salience
                 from tasks where conversation_id = @conversationId for update
                 """,
                 new { conversationId }, transaction, cancellationToken: ct))).ToList();
@@ -349,15 +364,20 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             if (!known.Add(task.Fingerprint))
             {
                 var row = existing.FirstOrDefault(t => t.Fingerprint == task.Fingerprint);
-                if (row is { Done: false, Edited: false, DeletedAt: null } && (row.Kind != task.Kind || row.Due != task.Due))
+                if (row is { Done: false, Edited: false, DeletedAt: null } && (row.Kind != task.Kind || row.Due != task.Due || row.Salience != task.Salience))
                 {
                     await connection.ExecuteAsync(new CommandDefinition(
-                        "update tasks set kind = @Kind, due_at = @Due, updated_at = @now where id = @Id",
-                        new { row.Id, task.Kind, task.Due, now }, transaction, cancellationToken: ct));
+                        "update tasks set kind = @Kind, due_at = @Due, salience = @Salience, updated_at = @now where id = @Id",
+                        new { row.Id, task.Kind, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
                     if (row.Kind != task.Kind && task.Kind == TaskKinds.Commitment)
                     {
                         created.Add(row.Id);
                     }
+                }
+
+                if (row is { Done: false, Edited: false, DeletedAt: null } && task.SegmentIds is not null)
+                {
+                    await SourcesAsync(connection, transaction, row.Id, task.SegmentIds, ct);
                 }
 
                 continue;
@@ -374,12 +394,14 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             if (match.Sure is { } existingTaskId)
             {
                 await connection.ExecuteAsync(new CommandDefinition(
-                    """
+                    $"""
                     insert into task_duplicates (conversation_id, task_id, created_at) values (@conversationId, @existingTaskId, @now)
                     on conflict (conversation_id, task_id) do nothing;
                     update tasks set due_at = @Due, updated_at = @now where id = @existingTaskId and due_at is null and cast(@Due as timestamptz) is not null;
+                    update tasks set salience = @Salience
+                    where id = @existingTaskId and {Salience.RankOf("cast(@Salience as text)")} > {Salience.RankOf("salience")};
                     """,
-                    new { conversationId, existingTaskId, task.Due, now }, transaction, cancellationToken: ct));
+                    new { conversationId, existingTaskId, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
                 continue;
             }
 
@@ -387,10 +409,11 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             var id = Guid.CreateVersion7(now.AddMilliseconds(inserted++));
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, due_at, created_at, updated_at)
-                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @Due, @now, @now)
+                insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, due_at, salience, created_at, updated_at)
+                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @Due, @Salience, @now, @now)
                 """,
-                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, task.Due, now }, transaction, cancellationToken: ct));
+                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
+            await SourcesAsync(connection, transaction, id, task.SegmentIds, ct);
             if (match.Unsure is { } duplicateOf)
             {
                 await connection.ExecuteAsync(new CommandDefinition(

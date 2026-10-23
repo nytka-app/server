@@ -175,7 +175,7 @@ public sealed class AskTests(PostgresFixture db) : IAsyncLifetime
         Assert.Contains("Late night", user);
         Assert.DoesNotContain("Noon", user);
         Assert.DoesNotContain("Next day", user);
-        Assert.Contains("[01:30:00] one more thing", user); // transcript times are local
+        Assert.Contains("[01:30:00] Unknown: one more thing", user); // transcript times are local
         Assert.Contains("Europe/Kyiv", AnswerRequest().System);
     }
 

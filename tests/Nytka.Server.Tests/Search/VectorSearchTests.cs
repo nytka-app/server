@@ -199,6 +199,8 @@ public sealed class VectorSearchTests(VectorPostgresFixture db) : IAsyncLifetime
         var later = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0.AddDays(3), segments: ["money is tight this month"]);
         var memory = await SearchSeed.MemoryAsync(db.DataSource, "Wants a higher salary");
         await SearchSeed.MemoryAsync(db.DataSource, "Lent money to a friend", deleted: true);
+        var unconfirmed = await SearchSeed.MemoryAsync(db.DataSource, "Owes the bank money");
+        await db.ExecuteAsync("update memories set confirmed = false where id = @unconfirmed", new { unconfirmed });
         await db.ExecuteAsync(
             """
             insert into tags (id, name, created_at) values (gen_random_uuid(), 'work', now());

@@ -54,8 +54,12 @@ you copy without thinking would lock its setting.
 | `Nytka__People__SuggestNames` | no | `true` | editable | `false` stops [name suggestions](../explanation/features.md#people) and [roles](../explanation/features.md#roles) for unnamed voices; it needs the language model |
 | `Nytka__People__AutoApplyNames` | no | `true` | editable | `true` lets a sure [name suggestion](../explanation/features.md#auto-applied-names) name its voice at once, undoable; `false` leaves every suggestion for you |
 | `Nytka__People__AutoApplyConfidence` | no | `0.85` | editable | Confidence, 0.5 to 1, at or above which a suggestion applies itself |
+| `Nytka__People__CardMinConversations` | no | `3` | editable | Conversations, 1 to 50, a voice group must be heard in before a card asks who it is |
 | `Nytka__People__Facts` | no | `true` | editable | `false` stops [facts about people](../explanation/features.md#facts-about-people) from being taken from conversations; it needs the language model |
 | `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](../explanation/features.md#tags) for conversations and people and stops sending it tag names; it needs the language model |
+| `Nytka__Tags__Auto` | no | `true` | editable | `true` applies a conversation's proposed tags at once and tidies tags nightly (synonyms merged by the model, one-off tags removed after 60 days); `false` leaves proposals for you |
+| `Nytka__Summary__Templates__Enabled` | no | `false` | editable | `true` lets a tag named `meeting`, `lecture`, `doctor` or `call`, else the kind the model names, pick the [summary template](../explanation/features.md#summary-templates); `false` uses the default template for every summary; it needs the language model |
+| `Nytka__Summary__Templates__Default`, `__Meeting`, `__Lecture`, `__Doctor`, `__Call` | no | built-in | editable | What the summary of that kind holds, at most 600 characters; empty is the built-in text. Also read and edited through `/api/v1/summary-templates` |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](../explanation/features.md#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](../explanation/features.md#ukrainian-search-optional) |

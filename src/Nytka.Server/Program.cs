@@ -128,6 +128,7 @@ api.MapSettings();
 api.MapTasks();
 api.MapNotes();
 api.MapMemories();
+api.MapBackfill();
 api.MapSearch();
 api.MapAsk();
 api.MapWebhooks();
@@ -146,6 +147,7 @@ api.MapReview();
 api.MapBriefs();
 api.MapCalendarFeed();
 api.MapUsage();
+api.MapSummaryTemplates();
 app.MapNytkaMcp();
 
 app.Run();

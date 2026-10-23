@@ -37,7 +37,12 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    private const string CountsForDigest = "started_at >= @from and started_at < @to and (coalesce(title, ai_title) is not null or ai_summary is not null)";
+    /// <summary>A conversation counts when it has a title or a summary and is not mostly media (<see cref="SpeechKinds.MediaShareLimit"/>).</summary>
+    private static readonly string CountsForDigest =
+        "started_at >= @from and started_at < @to and (coalesce(title, ai_title) is not null or ai_summary is not null) "
+        + "and coalesce((select sum(extract(epoch from s.ended_at - s.started_at)::float8) filter (where " + SpeechKinds.IsMedia + ") "
+        + "/ nullif(sum(extract(epoch from s.ended_at - s.started_at)::float8), 0) from segments s where s.conversation_id = conversations.id), 0) < "
+        + SpeechKinds.MediaShareLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private const string Select =
         "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview, body::text as Body, created_at as CreatedAt from digests";
@@ -107,7 +112,7 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
             $"select text from tasks where deleted_at is null and kind = 'commitment' and created_at >= @from and created_at < @to order by created_at, id limit {MaxTasks}",
             args, cancellationToken: ct))).ToList();
         var memories = (await connection.QueryAsync<string>(new CommandDefinition(
-            $"select text from memories where deleted_at is null and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",
+            $"select text from memories where deleted_at is null and confirmed and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",
             args, cancellationToken: ct))).ToList();
         return new DigestInput(conversations, total, tasks, memories);
     }

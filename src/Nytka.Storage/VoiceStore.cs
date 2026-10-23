@@ -22,6 +22,9 @@ public sealed record VoiceSegment(
     long SegmentId, Guid ConversationId, DateTime StartedAt, DateTime EndedAt, float? Similarity, bool? VoiceIsUser,
     bool? ProviderIsUser, bool? ManualIsUser);
 
+/// <summary>A stored segment over 30 s that Nytka never checked, with its batch, for matching it from the batch's speech audio.</summary>
+public sealed record UncheckedSegment(long SegmentId, long BatchId, DateTime StartedAt, DateTime EndedAt);
+
 /// <summary>What became of a <c>mode=add</c> enrollment.</summary>
 public enum VoiceAdd
 {
@@ -212,6 +215,68 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
             "select exists (select 1 from voice_profile where id = 1 and applied_threshold is distinct from @threshold)",
             new { threshold }, cancellationToken: ct));
     }
+
+    /// <summary>Whether a segment over 30 s with text was never checked although its batch's speech audio is still held.</summary>
+    public async Task<bool> HasUncheckedWithAudioAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            $"select exists (select 1 from segments s where {UncheckedWithAudio})", cancellationToken: ct));
+    }
+
+    /// <summary>The unchecked segments over 30 s of up to <paramref name="batches"/> batches that still hold their speech audio, by batch and time.</summary>
+    public async Task<IReadOnlyList<UncheckedSegment>> UncheckedWithAudioAsync(int batches, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<UncheckedSegment>(new CommandDefinition(
+            $"""
+            select s.id as SegmentId, s.batch_id as BatchId, s.started_at as StartedAt, s.ended_at as EndedAt
+            from segments s
+            where {UncheckedWithAudio}
+              and s.batch_id in (select distinct s.batch_id from segments s where {UncheckedWithAudio} order by s.batch_id limit @batches)
+            order by s.batch_id, s.started_at, s.id
+            """,
+            new { batches }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    /// <summary>
+    /// Stores the verdicts of segments matched again, with their fingerprints by <paramref name="model"/>, in one transaction. A
+    /// segment checked or deleted meanwhile is left alone.
+    /// </summary>
+    public async Task StoreVerdictsAsync(string model, IReadOnlyList<(UncheckedSegment Segment, SegmentVoice Voice)> verdicts, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        foreach (var (segment, voice) in verdicts)
+        {
+            var updated = await connection.ExecuteAsync(new CommandDefinition(
+                """
+                update segments set voice_checked = true, voice_similarity = @Similarity, voice_is_user = @IsUser
+                where id = @SegmentId and not voice_checked
+                """,
+                new { segment.SegmentId, voice.Similarity, voice.IsUser }, transaction, cancellationToken: ct));
+            if (updated > 0 && voice.Fingerprint is { } fingerprint)
+            {
+                await InsertFingerprintAsync(connection, transaction, segment.SegmentId, segment.BatchId, model, fingerprint, ct);
+            }
+        }
+
+        await transaction.CommitAsync(ct);
+    }
+
+    /// <summary>The batch's speech audio pieces in order, for matching its segments again.</summary>
+    public async Task<IReadOnlyList<byte[]>> SpeechBodiesAsync(long batchId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<byte[]>(new CommandDefinition(
+            "select body from speech_audio where batch_id = @batchId order by started_at, id",
+            new { batchId }, cancellationToken: ct))).AsList();
+    }
+
+    private const string UncheckedWithAudio =
+        "not s.voice_checked and s.text <> '' and s.batch_id is not null and s.ended_at - s.started_at > interval '30 seconds' "
+        + "and exists (select 1 from speech_audio a where a.batch_id = s.batch_id)";
 
     /// <summary>Stores a segment's fingerprint inside the caller's transaction.</summary>
     public static Task InsertFingerprintAsync(

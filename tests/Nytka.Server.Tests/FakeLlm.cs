@@ -20,6 +20,9 @@ public sealed class FakeLlm : ILlmClient
 
     public Func<LlmRequest, string> Respond { get; set; } = _ => DefaultAnswer;
 
+    /// <summary>What a test answers the nightly tag tidy with, when its <see cref="Respond"/> passes it on.</summary>
+    public string TidyAnswer { get; set; } = """{ "groups": [] }""";
+
     /// <summary>When set, answers instead of <see cref="Respond"/>.</summary>
     public Func<LlmRequest, CancellationToken, Task<string>>? RespondAsync { get; set; }
 
@@ -47,7 +50,7 @@ public sealed class FakeLlm : ILlmClient
         JsonSerializer.Serialize(new
         {
             title, summary,
-            items = items.Select(i => new { text = i.Text, kind = i.Kind, owner = i.Owner, person = i.Person, topic = i.Topic, due = i.Due }),
+            items = items.Select(i => new { text = i.Text, kind = i.Kind, owner = i.Owner, person = i.Person, topic = i.Topic, due = i.Due, salience = i.Salience, segmentIds = i.SegmentIds }),
             tags = Array.Empty<string>(),
         });
 
@@ -56,7 +59,7 @@ public sealed class FakeLlm : ILlmClient
         JsonSerializer.Serialize(new { title, summary, items = Array.Empty<string>(), tags });
 
     /// <summary>One labelled item of an answer.</summary>
-    public sealed record Item(string Text, string Kind, string Owner = TaskKinds.Wearer, string? Person = null, string? Topic = null, string? Due = null);
+    public sealed record Item(string Text, string Kind, string Owner = TaskKinds.Wearer, string? Person = null, string? Topic = null, string? Due = null, string? Salience = null, long[]? SegmentIds = null);
 
     public Task<string> CompleteJsonAsync(LlmRequest request, CancellationToken ct)
     {

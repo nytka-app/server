@@ -13,16 +13,20 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | Method | Path | Scope | Result |
 |---|---|---|---|
 | GET | `/healthz` | none | 200 when the database answers |
-| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features, codecs }`; `scope` is the caller's; `codecs` lists the chunk codec values the server accepts (`[21]`, Opus 20 ms; every other id is refused with `400` naming the codec, 40 (LC3) and 50 (AAC) being the reserved ones; an older server omits the field and means `[21]`); `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `ledger` (`GET /api/v1/people/{id}/ledger` exists), `task-create` (`POST /api/v1/tasks`, and tasks have a `due` and may have no conversation), `speech-kind` ([speech kinds](../explanation/features.md#speech-kind) on lines), `context-ranges` (the server takes [context ranges](../explanation/features.md#context-from-the-phone)), `auto-names` ([auto-applied names](../explanation/features.md#auto-applied-names) and their undo exist) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `review-clips` (review items carry `clip` and `context`, and their clip route exists), `transcript-upgrade` (`POST /api/v1/conversations/{id}/upgrade` exists, and a conversation has `transcript: { tier, route, pass, upgradable }`; each segment has `final` and `category`), `usage` (`GET /api/v1/usage` and the [usage and budget](../specs/usage.md) settings exist), `semantic-search` when an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning ([vector search](configuration.md#vector-search)), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](../explanation/features.md#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
+| GET | `/api/v1/info` | read | `{ serverVersion, apiVersion, scope, features, codecs }`; `scope` is the caller's; `codecs` lists the chunk codec values the server accepts (`[21]`, Opus 20 ms; every other id is refused with `400` naming the codec, 40 (LC3) and 50 (AAC) being the reserved ones; an older server omits the field and means `[21]`); `features` holds `offline-sync`, `people`, `review`, `briefs`, `tags`, `tag-suggestions`, `roles` (name suggestions carry roles and people have `named`), `task-kinds` (tasks have a `kind` and `GET /api/v1/notes` exists), `waiting-on` (tasks of kind `waiting_on`, and `waitingOn` on the person page), `ledger` (`GET /api/v1/people/{id}/ledger` exists), `task-create` (`POST /api/v1/tasks`, and tasks have a `due` and may have no conversation), `speech-kind` ([speech kinds](../explanation/features.md#speech-kind) on lines), `context-ranges` (the server takes [context ranges](../explanation/features.md#context-from-the-phone)), `auto-names` ([auto-applied names](../explanation/features.md#auto-applied-names) and their undo exist) and `calendar-feed` (`GET /api/v1/calendar.ics` exists, with or without a calendar feed set), `review-clips` (review items carry `clip` and `context`, and their clip route exists), `transcript-upgrade` (`POST /api/v1/conversations/{id}/upgrade` exists, and a conversation has `transcript: { tier, route, pass, upgradable }`; each segment has `final` and `category`), `usage` (`GET /api/v1/usage` and the [usage and budget](../specs/usage.md) settings exist), `semantic-search` when an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning ([vector search](configuration.md#vector-search)), `summary-templates` (the [summary template](../explanation/features.md#summary-templates) routes exist, and a conversation has `summaryTemplate`), `voice` when the speaker model is there, and `voice-groups` when [voice grouping](../explanation/features.md#voice-grouping) is on and works; `briefs` is listed whether or not a calendar feed is set, because the app reads `calendar.icsUrl` from `GET /api/v1/settings` |
 | GET | `/api/v1/status` | admin | `{ pendingChunks, oldestPendingAt, lastError, lastErrorAt, lastSuccessAt, ai: { configured, pending, lastError, lastErrorAt } }`; a `lastError` is set only while it is current |
+| GET | `/api/v1/summary-templates` | admin | `{ enabled, maxLength, items: [{ id, text, builtIn, edited, locked }] }` for `default`, `meeting`, `lecture`, `doctor` and `call`; `enabled` is the `summary.templates.enabled` setting, `edited` whether `text` differs from `builtIn`, `locked` that the environment sets it; see [Summary templates](../explanation/features.md#summary-templates) |
+| GET | `/api/v1/summary-templates/{id}` | admin | One item as above; `404` for another id |
+| PUT | `/api/v1/summary-templates/{id}` | admin | Body `{ text }`, 1 to 600 characters on one line, no line breaks or control characters (`400` otherwise): sets the template and returns the item; the next summary uses it. `404` for another id; `409` when the environment sets it |
+| DELETE | `/api/v1/summary-templates/{id}` | admin | Restores the built-in text and returns the item; `404` and `409` as PUT |
 | GET | `/api/v1/usage?from=&to=` | admin | What transcription cost, by the price table `stt.prices` ([Usage and budget](../specs/usage.md)): `{ timeZone, from, to, days, month, budget }`. `from` and `to` are local dates (`yyyy-MM-dd`, both inclusive, at most 366 days, `to` at most today), by default the month so far. A day is `{ date, requests, audioMs, textChars, costUsd, estimated, overBudget, engines: [{ engine, requests, audioMs, costUsd }] }`, every date listed; `month` is `{ month, requests, audioMs, costUsd, forecast: { costUsd, meanDayUsd, basisDays, daysLeft } }`; `budget` is `{ monthlyUsd, warningPercent, model, state, remainingUsd, overBudgetBatches }` with `state` `none`, `ok`, `warning` or `over` |
 | POST | `/api/v1/transcriptions/retry` | admin | Transcribes every failed batch that still has its audio again, as late audio; `200 { queued }`; see [Failed batches](configuration.md#transcription-endpoints) |
 | POST | `/api/v1/chunks` | admin | Stores one chunk of Opus frames (`application/vnd.nytka.frames.v1`) |
 | POST | `/api/v1/diagnostics` | admin | Stores 1 to 500 diagnostics samples (JSON array, at most 256 KiB); answers `{ accepted }` |
 | GET | `/api/v1/diagnostics?since=&limit=` | admin | Samples oldest first: `{ items, nextSince }`; `limit` defaults to 500, caps at 5000 |
 | GET | `/api/v1/coverage?from=&to=&bucket=&limit=` | admin | The "Nothing is lost" report: `{ from, to, timeZone, bucket, totals, buckets, gaps, gapsTotal, now, warnings }`; see [Running the no-loss wear test](../how-to/operations.md#running-the-no-loss-wear-test); `bucket` is `day` (default) or `hour`, `to` defaults to now, `from` to six days before today; `limit` defaults to 500, caps at 5000; `400` for a range over 62 days (14 for hours) |
-| GET | `/api/v1/conversations?before=&since=&tag=&media=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, mediaShare, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `mediaShare` the share (0 to 1) of the conversation's speech time whose [speech kind](../explanation/features.md#speech-kind) is `media`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](../explanation/features.md#tags) (`400` for a name that is none); `media` is `hide` (leaves out those with a `mediaShare` of 0.8 or more) or `only` (keeps just those), else `400`; `limit` defaults to 30, caps at 100 |
-| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource, speechKind, speechGuess, speechScore, speechSignals, speechMarked }`, `isUserSource` being `manual`, `voice`, `provider` or null, see [Your voice](../explanation/features.md#your-voice); `speechKind` the [speech kind](../explanation/features.md#speech-kind) that applies (`person`, `media`, `call` or null), `speechGuess` Nytka's guess (also `unsure`) with its `speechScore` and `speechSignals` (a list, empty when none), `speechMarked` true when your mark decides) and `bookmarks` (`{ id, at, note }`) |
+| GET | `/api/v1/conversations?before=&since=&tag=&media=&noise=&limit=` | read | `{ items, nextBefore }`, newest first; an item is `{ id, startedAt, endedAt, status, preview, title, summary, aiStatus, bookmarks, source, mediaShare, transcriptTier, noise, tags }`, `bookmarks` being a count, `source` `nytka` or `omi`, `mediaShare` the share (0 to 1) of the conversation's speech time whose [speech kind](../explanation/features.md#speech-kind) is `media`, `tags` sorted names; `since` keeps conversations that started at or after it; `tag` keeps those with that [tag](../explanation/features.md#tags) (`400` for a name that is none); `media` is `hide` (leaves out those with a `mediaShare` of 0.8 or more) or `only` (keeps just those), else `400`; `noise` (true for a closed conversation with fewer than 20 words outside media) filters the same way with `hide` or `only`; `limit` defaults to 30, caps at 100 |
+| GET | `/api/v1/conversations/{id}` | read | The item without `preview`, plus `titleEdited`, `aiMessage`, `aiUpdatedAt`, `summaryTemplate` (the [summary template](../explanation/features.md#summary-templates) that wrote the summary, or null), `tags`, `tasks`, `segments` (`{ id, startedAt, endedAt, text, speaker, speakerId, isUser, personId, personName, isUserSource, wearerConfidence, speechKind, speechGuess, speechScore, speechSignals, speechMarked }`, `isUserSource` being `manual`, `voice`, `provider` or null and `wearerConfidence` 1 or 0 for your mark, the voice similarity for Nytka's verdict, else null, see [Your voice](../explanation/features.md#your-voice); `speechKind` the [speech kind](../explanation/features.md#speech-kind) that applies (`person`, `media`, `call` or null), `speechGuess` Nytka's guess (also `unsure`) with its `speechScore` and `speechSignals` (a list, empty when none), `speechMarked` true when your mark decides) and `bookmarks` (`{ id, at, note }`) |
 | POST | `/api/v1/import/omi?overlapping=` | admin | Body: an Omi export file; `200` with the counts of [Import from Omi](../how-to/install.md#import-from-omi); `400` for a body that is no export; `413` above 100 MB |
 | POST | `/api/v1/import/nytka` | admin | Body: a file of `GET /api/v1/export`; restores it, keeping ids, skipping what is already here; `200` with the counts of [Restore a Nytka export](../how-to/install.md#restore-a-nytka-export); `400` for a body that is no export, a newer format version, a cut file or a record the schema refuses (nothing written); `413` above 100 MB |
 | POST | `/api/v1/import/transcript?format=&startedAt=` | admin | Body: an SRT, VTT or TXT transcript; see [Importing other sources](../how-to/install.md#importing-other-sources); `200 { conversationId, segments }`; `400` for a body that does not parse, or a `startedAt` with no UTC offset or outside the range a chunk's base time can hold; `413` above 100 MB |
@@ -36,7 +40,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/conversations/{id}/transcriptions` | admin | Raw transcription responses |
 | GET | `/api/v1/conversations/{id}/audio` | read | The conversation's speech as `audio/ogg` (Opus, packed without re-encoding); pauses are not stored, so they are not played; range requests work; `404` when no speech audio is stored |
 | GET | `/api/v1/conversations/{id}/audio/index` | read | `{ durationMs, runs: [{ offsetMs, startedAt, endedAt }] }`: each stretch of continuous capture and where it starts in the stream; `404` as above |
-| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind, due }` (the conversation fields are `null` for a task made by hand); `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea`, `waiting_on` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/tasks?status=&conversationId=&before=&kind=&limit=` | read | `{ items, nextBefore }`, newest first; a task is `{ id, conversationId, conversationTitle, conversationStartedAt, text, done, doneAt, createdAt, personId, personName, kind, due, salience }` (`salience` `vital`, `ordinary`, `noise` or null; the conversation fields are `null` for a task made by hand); `status` is `open` (default) or `done`; `kind` is `commitment` (default), `idea`, `waiting_on` or `all`, else `400`; `limit` defaults to 50, caps at 200 |
 | GET | `/api/v1/notes?topic=&conversationId=&before=&limit=` | read | `{ items, nextBefore }`, newest first; a note is `{ id, conversationId, conversationTitle, conversationStartedAt, topic, points, createdAt }`; `topic` is a name (`400` for one that is none); `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/tasks` | admin | body `{ text, due?, conversationId?, personId? }`, `text` 1 to 200 characters, `due` ISO 8601 or `null` (`400` otherwise); answers `201` with the task, kind `commitment`, marked edited; `404` for an unknown conversation or person, `409` when the conversation already has a task with this text, or, without a conversation, an open task made by hand has it |
 | PATCH, DELETE | `/api/v1/tasks/{id}` | admin | PATCH body `{ text?, done?, personId?, due? }`, `text` 1 to 200 characters, `personId` a person id or `null` (`404` for an unknown person), `due` ISO 8601 or `null` to clear it; `409` when reopening a task made by hand that an open one repeats; DELETE answers `204` |
@@ -45,8 +49,10 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/tokens` | admin | `{ items }`, newest first, revoked ones included: `{ id, name, scope, hint, createdAt, lastUsedAt, revokedAt }` |
 | DELETE | `/api/v1/tokens/{id}` | admin | Revokes it: `204` |
 | POST | `/api/v1/pair` | admin | Body `{ name, url }`, `url` an absolute http or https URL of at most 500 characters; `201` with `{ id, name, createdAt, token, payload, qrCodePng }`: a fresh `admin` token, shown once, and the same [pairing QR code](../reference/configuration.md#pairing-by-qr-code) as text (`payload`) and as a PNG (`qrCodePng`, base64); `409` for a name in use |
-| GET | `/api/v1/memories?before=&limit=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt }`, `source` is `ai`, `user` or `omi`; `limit` defaults to 50, caps at 200 |
+| GET | `/api/v1/memories?before=&limit=&expired=` | read | `{ items, nextBefore }`, newest first; a memory is `{ id, text, source, conversationId, conversationTitle, conversationStartedAt, createdAt, updatedAt, salience, expiresAt }`, `source` is `ai`, `user` or `omi`, `salience` `vital`, `ordinary`, `noise` or null, `expiresAt` when the fact stops being true or null; memories past their `expiresAt` are left out unless `expired=true`; `limit` defaults to 50, caps at 200 |
 | POST | `/api/v1/memories` | admin | Body `{ text }`, 1 to 300 characters; `201` with the memory; `409` when a live memory holds the fact |
+| GET | `/api/v1/ai/backfill/conversations?after=&limit=` | admin | Closed conversations that are not noise, by id: `{ items: [{ id, startedAt, memories }], nextAfter }`, `memories` the memories a re-check would judge; `limit` defaults to 50, caps at 500 ([backfill with Claude Code](../how-to/backfill-with-claude.md)) |
+| POST | `/api/v1/ai/backfill/{kind}/{id}` | admin | `kind` `recheck`, `enrich` or `memories`; body `{ answers: { key: json } }`. Runs the job with the answers given and calls no model: `200 { status, key, schemaName, schema, system, user }`, `status` `pending` (answer this request under `key`), `done`, `busy` or `invalid`; `400` for another kind, `404` for no conversation |
 | PATCH, DELETE | `/api/v1/memories/{id}` | admin | PATCH body `{ text }`; DELETE answers `204` |
 | GET | `/api/v1/bookmarks?before=&limit=` | read | `{ items, nextBefore }`, newest first; a bookmark is `{ id, at, note, source, conversationId }`, `source` is `pendant` or `app`; `before` is a time and `beforeId` the id of the last item of the previous page (`nextBefore`, `nextBeforeId`), so equal times are not skipped; `limit` defaults to 30, caps at 100 |
 | POST | `/api/v1/bookmarks` | admin | Body `{ id, at, note?, source }`, `id` a UUID the client makes, `at` with an explicit offset, `note` up to 200 characters; `201` with the bookmark, or `200` with the stored one when the id exists |
@@ -59,9 +65,9 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/export` | admin | Streams everything you own as NDJSON (`application/x-ndjson`); see [Export](../explanation/features.md#export) |
 | GET | `/api/v1/export/obsidian` | admin | A ZIP (`application/zip`) of Markdown notes for an Obsidian vault, one per conversation and one per person; see [Export](../explanation/features.md#export) |
 | GET | `/api/v1/search?q=&kinds=&tag=&limit=&offset=` | read | `{ items, nextOffset }`; a hit is `{ kind, id, score, title, snippet, at, conversationId }`; `kinds` is `conversation`, `memory` and `person` (a person's `id` is the person's, `title` the name); with [vector search](configuration.md#vector-search) on, hits close in meaning join the word hits and `score` is the fused rank |
-| POST | `/api/v1/webhooks` | admin | Body `{ url, events, description? }`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
-| GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
-| PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `description`, `active`; DELETE answers `204` and drops its deliveries |
+| POST | `/api/v1/webhooks` | admin | Body `{ url, events, format?, description? }`, `format` is `nytka` (default) or `omi`, `description` up to 200 characters; `201` with the webhook and `secret`, shown once; `409` at 20 webhooks |
+| GET | `/api/v1/webhooks` | admin | `{ items }`: `{ id, url, events, format, description, active, createdAt, lastDelivery }`, `lastDelivery` is `{ status, at }` or null |
+| PATCH, DELETE | `/api/v1/webhooks/{id}` | admin | PATCH body with any of `url`, `events`, `format`, `description`, `active`; DELETE answers `204` and drops its deliveries |
 | POST | `/api/v1/webhooks/{id}/test` | admin | Queues a `ping`: `202 { deliveryId }` |
 | GET | `/api/v1/webhooks/{id}/deliveries?limit=` | admin | `{ items }`, newest first: `{ id, eventType, status, attempts, lastStatusCode, lastError, createdAt, deliveredAt }`; `limit` defaults to 30, caps at 100 |
 | GET | `/api/v1/voice` | admin | `{ enrolled, enrolledAt, updatedAt, enrolledSamples, learnedSegments, modelAvailable }`; never the voiceprint |
@@ -132,7 +138,7 @@ curl -X POST https://nytka.example.com/api/v1/webhooks \
 and 43 characters, once: nothing shows it again, and there is no rotation, so delete the webhook and
 make a new one. The URL is `http` or `https`, at most 2,048 characters. Private addresses are allowed,
 because your receivers usually sit on your own network. At most 20 webhooks. `PATCH` changes `url`,
-`events`, `description` or `active`. `POST /api/v1/webhooks/{id}/test` sends a `ping`, even to an
+`events`, `format`, `description` or `active`. `POST /api/v1/webhooks/{id}/test` sends a `ping`, even to an
 inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 
 | Event | Sent when | `data` |
@@ -153,7 +159,62 @@ inactive webhook, and `GET /api/v1/webhooks/{id}/deliveries` lists the log.
 
 A webhook gets nothing for events from before it existed, or while it is inactive. The change and its
 deliveries commit together, so a delivery exists exactly when the change did. A payload never carries
-a transcript: fetch what you need with a `read` token, for example `GET /api/v1/conversations/{id}`.
+a transcript, unless the webhook's format is `omi` (below): fetch what you need with a `read` token, for example `GET /api/v1/conversations/{id}`.
+
+### The `omi` format
+
+`"format": "omi"` makes a webhook receive Omi's memory-creation payload, the body of Omi's
+["conversation created" trigger](https://docs.omi.me/doc/developer/apps/Integrations), so an app written
+for Omi can read it as it is. It is the one format that **carries the transcript text**: the owner chooses
+that by choosing the format. Such a webhook gets `conversation.ready` only (the first summary and every
+re-run, as above), so `events` may hold nothing else except `*`; the API answers `400` otherwise. A `ping`
+still arrives in the usual envelope. Signing (`Nytka-Signature`), the headers, retries, the log and the
+delivery limits are the same as for the default format; the body is the payload itself, with no envelope.
+
+The body's `id` is the conversation's id and stays the same when a summary is re-run, so a receiver that drops repeats by it would drop the re-run. Omi's payload has no revision field. Dedupe on the `Nytka-Delivery` header instead: it is new for each summary and the same across retries of one.
+
+```json
+{
+  "id": "0198a1c4-7d2e-7b1a-9c3f-5e6d7a8b9c0d",
+  "created_at": "2026-10-23T09:00:00Z",
+  "started_at": "2026-10-23T08:58:00Z",
+  "finished_at": "2026-10-23T09:00:00Z",
+  "transcript_segments": [
+    { "text": "Call Ben tomorrow.", "speaker": "SPEAKER_00", "speakerId": 0, "speaker_name": "Wearer", "is_user": true, "start": 0.0, "end": 2.4 }
+  ],
+  "structured": {
+    "title": "Lunch with Anna", "overview": "…", "emoji": null, "category": null,
+    "action_items": [{ "description": "Call Ben", "completed": false }],
+    "events": []
+  },
+  "apps_response": [],
+  "discarded": false,
+  "folder_id": null,
+  "folder_name": null
+}
+```
+
+| Omi field | From Nytka |
+|---|---|
+| `id` | the conversation's id |
+| `created_at`, `started_at`, `finished_at` | when the conversation was stored, began and ended (UTC, ISO 8601) |
+| `transcript_segments[].text` | the segment's text; segments marked `media` (a TV or a video) are left out |
+| `…speaker`, `speakerId` | `SPEAKER_00`, `SPEAKER_01`, … in order of first appearance; the wearer is one speaker, a voice or provider label another; segments with neither a voice id nor a label share one speaker, since nothing tells them apart |
+| `…speaker_name` | the label Nytka shows: `Wearer`, the named person, else the provider's label; null if none |
+| `…is_user` | the wearer's verdict (your mark, else the voice match, else the provider's; unknown reads as false) |
+| `…start`, `…end` | seconds from the conversation's start, by capture time |
+| `structured.title`, `overview` | the title and the summary |
+| `structured.action_items` | the conversation's commitments: `description` and `completed` |
+| `structured.emoji`, `category` | not in Nytka: null |
+| `structured.events` | Nytka does not extract calendar events from speech: always `[]` |
+| `apps_response` | no apps run in Nytka: always `[]` |
+| `discarded` | always `false`: Nytka delivers kept conversations only |
+| `folder_id`, `folder_name` | not in Nytka: null |
+
+Not supported: Omi's real-time transcript trigger (`POST …?session_id=&uid=`, a bare array of segments with
+text as someone speaks). Nytka's `segment.created` carries ids and times only and arrives per batch, so it
+does not map onto it. The `uid` query parameter Omi appends is not sent either. `transcript.upgraded` is not
+sent in this format yet.
 
 ```json
 {
@@ -228,7 +289,7 @@ through OAuth cannot connect.
 | `get_conversation` | `id` (UUID), `transcript?` (default true), `part?` (from 1, default 1) | `{ id, startedAt, endedAt, title, summary, tasks: [{ id, text, done, personId, personName, due }], transcript, truncated, part, parts, tags }` |
 | `list_tasks` | `status?` (`open` or `done`), `conversationId?`, `before?` (a task id), `kind?` (`commitment`, the default, `idea`, `waiting_on` or `all`), `limit?` (1 to 200, default 50) | `{ items: [Task], nextBefore }` |
 | `list_notes` | `topic?`, `conversationId?`, `before?` (a note id), `limit?` (1 to 200, default 50) | `{ items: [Note], nextBefore }`, newest first (see [Notes](../explanation/features.md#notes)) |
-| `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50) | `{ items: [Memory], nextBefore }` |
+| `list_memories` | `before?` (a memory id), `limit?` (1 to 200, default 50), `expired?` (default false) | `{ items: [Memory], nextBefore }`; a memory past its `expiresAt` only with `expired` |
 | `list_bookmarks` | `before?` (ISO 8601 with an offset, or a date), `beforeId?` (UUID), `limit?` (1 to 100, default 30) | `{ items: [{ id, at, note, source, conversationId }], nextBefore, nextBeforeId }` |
 | `list_digests` | `before?` (a date, `yyyy-MM-dd`), `limit?` (1 to 100, default 30) | `{ items: [{ id, localDate, headline, overview, highlights: [{ text, conversationId }], decisions, openQuestions, createdAt }], nextBefore }` |
 | `search` | `query`, `kinds?` (a list of `conversation`, `memory` and `person`), `tag?`, `limit?` (1 to 30, default 10) | `{ items: [Hit] }` |

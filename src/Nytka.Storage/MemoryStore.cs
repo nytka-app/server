@@ -5,17 +5,24 @@ namespace Nytka.Storage;
 
 /// <summary>
 /// A live memory with the conversation it was taken from. The three <c>Conversation*</c> fields are null
-/// for a memory with no source (one added by hand).
+/// for a memory with no source (one added by hand). <see cref="Salience"/> and <see cref="ExpiresAt"/> are the model's, null
+/// for a memory made by hand or before they existed; an expired memory is listed only when asked for.
 /// </summary>
 public sealed record MemoryRow(
     Guid Id, string Text, string Source, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt,
-    DateTime CreatedAt, DateTime UpdatedAt);
+    DateTime CreatedAt, DateTime UpdatedAt, string? Salience = null, DateTime? ExpiresAt = null);
 
 /// <summary>A page of memories and the id to pass as <c>before</c> for the next one, or null on the last page.</summary>
 public sealed record MemoryPage(IReadOnlyList<MemoryRow> Items, Guid? NextBefore);
 
 /// <summary>A fact the model proposed. <paramref name="Replaces"/> names a memory it lists as known.</summary>
-public sealed record MemoryCandidate(string Text, string Fingerprint, Guid? Replaces);
+/// <remarks>
+/// <paramref name="SegmentIds"/> are the lines the fact comes from; <paramref name="Confirmed"/> false (none of them is the wearer's)
+/// stores it hidden, and such a fact never rewrites a known memory.
+/// </remarks>
+public sealed record MemoryCandidate(
+    string Text, string Fingerprint, Guid? Replaces, string? Salience = null, DateTimeOffset? ExpiresAt = null,
+    IReadOnlyList<long>? SegmentIds = null, bool Confirmed = true);
 
 /// <summary>A memory as the prompt lists it: <c>id: text</c>.</summary>
 public sealed record KnownMemory(Guid Id, string Text);
@@ -36,20 +43,21 @@ public sealed record MemoryRun(string Status, long? ThroughSegmentId, int Failur
 public sealed class MemoryStore(NpgsqlDataSource dataSource)
 {
     /// <summary>
-    /// Newest first by id (ids are UUID v7). Deleted memories are left out. <c>NextBefore</c> is the last id of a
-    /// page that has more behind it, else null.
+    /// Newest first by id (ids are UUID v7). Deleted memories are left out, and so are memories expired at <paramref name="now"/>
+    /// unless <paramref name="expired"/>. <c>NextBefore</c> is the last id of a page that has more behind it, else null.
     /// </summary>
-    public async Task<MemoryPage> ListAsync(Guid? before, int limit, CancellationToken ct)
+    public async Task<MemoryPage> ListAsync(Guid? before, int limit, DateTimeOffset now, CancellationToken ct, bool expired = false)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = (await connection.QueryAsync<MemoryRow>(new CommandDefinition(
             $"""
             {SelectMemory}
             where m.deleted_at is null and (cast(@before as uuid) is null or m.id < cast(@before as uuid))
+              and m.confirmed and (@expired or {Live})
             order by m.id desc
             limit @fetch
             """,
-            new { before, fetch = limit + 1 }, cancellationToken: ct))).ToList();
+            new { before, fetch = limit + 1, now, expired }, cancellationToken: ct))).ToList();
         var items = rows.Take(limit).ToList();
         return new MemoryPage(items, rows.Count > limit ? items[^1].Id : null);
     }
@@ -58,7 +66,7 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<MemoryRow>(new CommandDefinition(
-            $"{SelectMemory} where m.id = @id and m.deleted_at is null", new { id }, cancellationToken: ct));
+            $"{SelectMemory} where m.id = @id and m.deleted_at is null and m.confirmed", new { id }, cancellationToken: ct));
     }
 
     /// <summary>
@@ -101,12 +109,15 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
             new { id, now }, cancellationToken: ct)) > 0;
     }
 
-    /// <summary>The newest live memories, for the prompt.</summary>
+    /// <summary>
+    /// The newest live memories, for the prompt. Expired ones are listed too, so the model can replace a state that changed
+    /// rather than state it again.
+    /// </summary>
     public async Task<IReadOnlyList<KnownMemory>> NewestAsync(int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<KnownMemory>(new CommandDefinition(
-            "select id as Id, text as Text from memories where deleted_at is null order by id desc limit @limit",
+            "select id as Id, text as Text from memories where deleted_at is null and confirmed order by id desc limit @limit",
             new { limit }, cancellationToken: ct));
         return rows.ToList();
     }
@@ -218,34 +229,85 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
                 continue;
             }
 
-            if (candidate.Replaces is { } replaces && !rewritten.Contains(replaces)
+            if (candidate.Confirmed && candidate.Replaces is { } replaces && !rewritten.Contains(replaces)
                 && await connection.ExecuteAsync(new CommandDefinition(
                     """
                     update memories
-                    set text = @text, fingerprint = @fingerprint, conversation_id = @conversationId, updated_at = @now
+                    set text = @text, fingerprint = @fingerprint, conversation_id = @conversationId, salience = @Salience,
+                        expires_at = @ExpiresAt, updated_at = @now
                     where id = @replaces and deleted_at is null and edited = false and source = 'ai'
                     """,
-                    new { replaces, text = candidate.Text, fingerprint, conversationId, now }, transaction, cancellationToken: ct)) > 0)
+                    new { replaces, text = candidate.Text, fingerprint, conversationId, candidate.Salience, candidate.ExpiresAt, now }, transaction, cancellationToken: ct)) > 0)
             {
                 rewritten.Add(replaces);
+                await SourcesAsync(connection, transaction, replaces, candidate.SegmentIds, ct);
                 continue;
             }
 
             var id = Guid.CreateVersion7(now);
             if (await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into memories (id, text, fingerprint, source, conversation_id, created_at, updated_at)
-                values (@id, @text, @fingerprint, 'ai', @conversationId, @now, @now)
+                insert into memories (id, text, fingerprint, source, conversation_id, salience, expires_at, confirmed, created_at, updated_at)
+                values (@id, @text, @fingerprint, 'ai', @conversationId, @Salience, @ExpiresAt, @Confirmed, @now, @now)
                 on conflict (fingerprint) do nothing
                 """,
-                new { id, text = candidate.Text, fingerprint, conversationId, now },
+                new { id, text = candidate.Text, fingerprint, conversationId, candidate.Salience, candidate.ExpiresAt, candidate.Confirmed, now },
                 transaction, cancellationToken: ct)) > 0)
             {
-                inserted.Add(id);
+                await SourcesAsync(connection, transaction, id, candidate.SegmentIds, ct);
+                if (candidate.Confirmed)
+                {
+                    inserted.Add(id);
+                }
             }
         }
 
         return inserted;
+    }
+
+    /// <summary>The live memories extraction took from a conversation and nobody edited: the ones a re-check may judge.</summary>
+    public async Task<IReadOnlyList<KnownMemory>> OfConversationAsync(Guid conversationId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<KnownMemory>(new CommandDefinition(
+            """
+            select id as Id, text as Text from memories
+            where conversation_id = @conversationId and source = 'ai' and not edited and deleted_at is null
+            order by id
+            """,
+            new { conversationId }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>Stores a re-check's verdicts and cited lines in one transaction; a memory edited or deleted meanwhile is left alone.</summary>
+    public async Task RecordCheckAsync(IReadOnlyList<(Guid Id, IReadOnlyList<long> Lines, bool Confirmed)> results, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        foreach (var (id, lines, confirmed) in results)
+        {
+            if (await connection.ExecuteAsync(new CommandDefinition(
+                    "update memories set confirmed = @confirmed where id = @id and not edited and deleted_at is null",
+                    new { id, confirmed }, transaction, cancellationToken: ct)) > 0)
+            {
+                await SourcesAsync(connection, transaction, id, lines, ct);
+            }
+        }
+
+        await transaction.CommitAsync(ct);
+    }
+
+    /// <summary>Replaces the lines a memory cites, in the caller's transaction; a line deleted meanwhile is skipped.</summary>
+    private static async Task SourcesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid memoryId, IReadOnlyList<long>? segmentIds, CancellationToken ct)
+    {
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            delete from memory_sources where memory_id = @memoryId;
+            insert into memory_sources (memory_id, segment_id)
+            select @memoryId, s.id from segments s where s.id = any(@ids)
+            on conflict do nothing;
+            """,
+            new { memoryId, ids = (segmentIds ?? []).ToArray() }, transaction, cancellationToken: ct));
     }
 
     /// <summary>Records a finished run and the highest segment id it read, in the caller's transaction.</summary>
@@ -276,11 +338,14 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
             new { conversationId, message, now }, cancellationToken: ct));
     }
 
+    /// <summary>SQL for whether a memory aliased <c>m</c> has not expired at <c>@now</c>.</summary>
+    public const string Live = "(m.expires_at is null or m.expires_at > @now)";
+
     private const string SelectMemory =
         """
         select m.id as Id, m.text as Text, m.source as Source, m.conversation_id as ConversationId,
                coalesce(c.title, c.ai_title) as ConversationTitle, c.started_at as ConversationStartedAt,
-               m.created_at as CreatedAt, m.updated_at as UpdatedAt
+               m.created_at as CreatedAt, m.updated_at as UpdatedAt, m.salience as Salience, m.expires_at as ExpiresAt
         from memories m
         left join conversations c on c.id = m.conversation_id
         """;

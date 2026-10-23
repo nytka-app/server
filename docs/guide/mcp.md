@@ -76,7 +76,7 @@ structured content plus JSON text. The names below match the `McpServerTool` att
 | `get_conversation` | `id`, `transcript?`, `part?` |
 | `list_tasks` | `status?`, `conversationId?`, `before?`, `kind?` (`commitment` by default, `idea`, `all`), `limit?` (1 to 200, 50) |
 | `list_notes` | `topic?`, `conversationId?`, `before?`, `limit?` (1 to 200, 50) |
-| `list_memories` | `before?`, `limit?` (1 to 200, 50) |
+| `list_memories` | `before?`, `limit?` (1 to 200, 50), `expired?` (false: facts past their end date are left out) |
 | `list_bookmarks` | `before?`, `beforeId?`, `limit?` (1 to 100, 30) |
 | `list_digests` | `before?`, `limit?` (1 to 100, 30) |
 | `search` | `query`, `kinds?`, `tag?`, `limit?` (1 to 30, 10) |
@@ -114,7 +114,9 @@ List tools return `nextBefore`. Pass it as `before` to read the next page. `sear
 
 ### Transcripts
 
-`get_conversation` writes one line per segment, in UTC: `[HH:mm:ss] Speaker: text`. It cuts the
+`get_conversation` writes one line per segment, in UTC: `[HH:mm:ss] Speaker: text`. The speaker is `Wearer`, a
+person's name, `Media`, `Voice n` for a voice nobody named (never the provider's raw `SPEAKER_n`), or `Unknown`
+for a line with no speaker. It cuts the
 transcript at a line boundary after 60,000 characters into parts. `part` picks one (from 1),
 `parts` counts them and `truncated` is true while a later part exists. Only the first 20 parts
 are read. Pass `transcript: false` for the summary and tasks alone; `transcript` is then null.

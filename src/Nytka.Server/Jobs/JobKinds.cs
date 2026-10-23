@@ -14,6 +14,7 @@ public static class JobKinds
     public const string DeliverWebhook = "deliver-webhook";
     public const string MakeDigest = "make-digest";
     public const string RescoreVoice = "rescore-voice";
+    public const string RematchVoice = "rematch-voice";
     public const string ApplySpeech = "apply-speech";
     public const string ClassifySpeech = "classify-speech";
     public const string SuggestNames = "suggest-names";
@@ -21,9 +22,10 @@ public static class JobKinds
     public const string ExtractPersonFacts = "extract-person-facts";
     public const string SyncCalendar = "sync-calendar";
     public const string MakeBrief = "make-brief";
+    public const string TidyTags = "tidy-tags";
 
     /// <summary>
-    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, apply-speech, classify-speech and one nobody
+    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech and one nobody
     /// handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
@@ -34,6 +36,7 @@ public static class JobKinds
         [SuggestNames] = JobLane.Ai,
         [ExtractPersonFacts] = JobLane.Ai,
         [MakeBrief] = JobLane.Ai,
+        [TidyTags] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };
@@ -52,6 +55,8 @@ public static class JobKinds
 
     public static string SuggestNamesKey(Guid conversation) => $"{SuggestNames}:{conversation}";
     public static string ExtractPersonFactsKey(Guid conversation) => $"{ExtractPersonFacts}:{conversation}";
+
+    public static string TidyTagsKey(string localDate) => $"{TidyTags}:{localDate}";
 
     public static string MakeBriefKey(string uid, DateTimeOffset startsAt) => $"{MakeBrief}:{uid}:{startsAt.ToUnixTimeSeconds()}";
 

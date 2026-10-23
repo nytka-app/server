@@ -37,7 +37,8 @@ public static class VoiceGroupEndpoints
     public sealed record CardList(IReadOnlyList<CardItem> Items);
 
     /// <summary>
-    /// At most 4 cards, at most 2 from one conversation, newest first: a group with no person ("Who is this?") or a pending
+    /// At most 4 cards, at most 2 from one conversation, newest first: a group with no person heard in
+    /// <c>people.cardMinConversations</c> conversations ("Who is this?") or a pending
     /// match ("Is this Olena?"), each with a clean stretch of at least 5 s and its first lines. Empty with voice matching off.
     /// </summary>
     private static async Task<IResult> CardsAsync(VoiceGroupStore groups, SettingsService settings, TimeProvider time, CancellationToken ct)
@@ -47,7 +48,7 @@ public static class VoiceGroupEndpoints
             return Results.Ok(new CardList([]));
         }
 
-        var (owners, segments) = await groups.CardInputAsync(time.GetUtcNow(), ct);
+        var (owners, segments) = await groups.CardInputAsync(time.GetUtcNow(), ct, PeopleSettings.CardMinConversations(settings));
         return Results.Ok(new CardList([.. CardPicker.Pick(owners, segments).Select(c => new CardItem(
             c.Owner.Kind, c.Owner.Id, c.ConversationId, c.ConversationTitle, c.Owner.PersonId, c.Owner.PersonName, c.Owner.Similarity,
             new CardClipWindow(c.From, c.Until), c.Lines))]));
