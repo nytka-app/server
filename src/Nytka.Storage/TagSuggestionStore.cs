@@ -59,6 +59,21 @@ public sealed class TagSuggestionStore(NpgsqlDataSource dataSource)
         return inserted;
     }
 
+    /// <summary>
+    /// Records <paramref name="name"/> (normalized) as a proposal enrichment applied itself (<c>accepted</c>), in the caller's transaction.
+    /// False when the conversation already had a proposal of that name, in any status: a tag the owner rejected or removed is never
+    /// applied again.
+    /// </summary>
+    public static async Task<bool> AddAppliedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, string name, DateTimeOffset now, CancellationToken ct) =>
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into tag_suggestions (id, conversation_id, name, status, created_at, decided_at)
+            values (@id, @conversationId, @name, 'accepted', @now, @now)
+            on conflict do nothing
+            """,
+            new { id = Guid.CreateVersion7(now), conversationId, name, now }, transaction, cancellationToken: ct)) > 0;
+
     private sealed record Pending(Guid ConversationId, Guid? PersonId, string Name, string Status);
 
     /// <summary>

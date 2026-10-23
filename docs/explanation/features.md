@@ -191,6 +191,14 @@ The MCP tools carry them too: `list_tags`, a `tag` filter on `list_conversations
   under 60 words gets none. Accepting is the same add as `PUT`, so it is refused with `409` when the conversation or person
   has 20 tags, and the proposal stays pending. Merging two conversations or two people gives the survivor the proposals of both.
   A person's proposal also names the conversation it came from.
+- **Automatic tags.** With `Nytka__Tags__Auto` on (the default) a conversation's proposed tags are applied at once instead
+  of waiting, each as the tag it is an alias of (`tag_aliases`), so "ремонт", "ремонти" and "repair" end up as one tag. They
+  are recorded as accepted proposals, so a tag you remove is never applied again. Each night after 04:00 local time the
+  `tidy-tags` job asks the model, in one call over the tag names and their use counts, which tags mean the same; each group
+  is merged into its most used tag and the other names become its aliases. A tag applied automatically that stays on a single
+  conversation for 60 days is removed. Tags you added yourself are never removed. Proposals waiting from before are
+  applied by the first nightly run. People's proposed tags still wait for you.
+  Off, every proposal waits, as before.
 - **What the model sees.** With proposals on, the 100 tags in use most (names only) go to the model with each summary and
   each facts request so it reuses them, and the prompts ask for nothing about health, religion, ethnicity, politics or how
   someone sounds (nor age or gender, for a person). The model reads text, never audio. With proposals off no tag name is sent

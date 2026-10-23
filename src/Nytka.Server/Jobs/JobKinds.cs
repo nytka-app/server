@@ -22,6 +22,7 @@ public static class JobKinds
     public const string ExtractPersonFacts = "extract-person-facts";
     public const string SyncCalendar = "sync-calendar";
     public const string MakeBrief = "make-brief";
+    public const string TidyTags = "tidy-tags";
     public const string MeasureQuality = "measure-quality";
 
     /// <summary>
@@ -36,6 +37,7 @@ public static class JobKinds
         [SuggestNames] = JobLane.Ai,
         [ExtractPersonFacts] = JobLane.Ai,
         [MakeBrief] = JobLane.Ai,
+        [TidyTags] = JobLane.Ai,
         [MeasureQuality] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
@@ -55,6 +57,8 @@ public static class JobKinds
 
     public static string SuggestNamesKey(Guid conversation) => $"{SuggestNames}:{conversation}";
     public static string ExtractPersonFactsKey(Guid conversation) => $"{ExtractPersonFacts}:{conversation}";
+
+    public static string TidyTagsKey(string localDate) => $"{TidyTags}:{localDate}";
 
     public static string MakeBriefKey(string uid, DateTimeOffset startsAt) => $"{MakeBrief}:{uid}:{startsAt.ToUnixTimeSeconds()}";
 

@@ -8,6 +8,9 @@ namespace Nytka.Storage;
 /// <paramref name="MediaShare"/> is the share of the conversation's speech time whose speech kind is media, 0 with no speech.
 /// <paramref name="Noise"/> is true for a closed fragment with fewer than <see cref="ConversationStore.NoiseWords"/> words outside media.
 /// </summary>
+/// <summary>A conversation a backfill may run on, with the count of memories a re-check would judge.</summary>
+public sealed record AiBackfillCandidate(Guid Id, DateTime StartedAt, int Memories);
+
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
     int Bookmarks, string Source, double MediaShare, string TranscriptTier, bool Noise = false)
@@ -219,6 +222,27 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             new { endedBefore, now }, cancellationToken: ct));
     }
 
+    /// <summary>
+    /// Closed conversations that are not noise, by id, after <paramref name="after"/>: what a backfill walks. <c>Memories</c> counts the
+    /// live memories extraction took from each, which a re-check would judge.
+    /// </summary>
+    public async Task<IReadOnlyList<AiBackfillCandidate>> BackfillCandidatesAsync(Guid? after, int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<AiBackfillCandidate>(new CommandDefinition(
+            $"""
+            select c.id as Id, c.started_at as StartedAt,
+                   (select count(*)::int from memories m
+                    where m.conversation_id = c.id and m.source = 'ai' and not m.edited and m.deleted_at is null) as Memories
+            from conversations c
+            {NoiseJoin}
+            where c.status = 'closed' and not nz.noise and (cast(@after as uuid) is null or c.id > cast(@after as uuid))
+            order by c.id
+            limit @limit
+            """,
+            new { after, limit }, cancellationToken: ct))).ToList();
+    }
+
     /// <summary>A closed conversation with fewer words than this outside media is noise: too short to summarize, as enrichment counts.</summary>
     public const int NoiseWords = 20;
 
@@ -393,7 +417,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// </summary>
     public async Task<EnrichmentStore> StoreEnrichmentAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? title, string? summary,
-        long? throughSegmentId, int segmentCount, string? template, DateTimeOffset now, CancellationToken ct)
+        long? throughSegmentId, int segmentCount, string? template, DateTimeOffset now, CancellationToken ct, bool again = false)
     {
         var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
         if (current is null)
@@ -406,7 +430,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             return EnrichmentStore.Stale;
         }
 
-        if (current.AiStatus == "done" && current.AiThroughSegmentId == throughSegmentId)
+        // A run asked to summarize the same lines again (a backfill) replaces the summary; any other is a repeat.
+        if (!again && current.AiStatus == "done" && current.AiThroughSegmentId == throughSegmentId)
         {
             return EnrichmentStore.Duplicate;
         }

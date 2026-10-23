@@ -130,6 +130,7 @@ api.MapSettings();
 api.MapTasks();
 api.MapNotes();
 api.MapMemories();
+api.MapBackfill();
 api.MapSearch();
 api.MapAsk();
 api.MapWebhooks();

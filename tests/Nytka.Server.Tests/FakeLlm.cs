@@ -20,6 +20,9 @@ public sealed class FakeLlm : ILlmClient
 
     public Func<LlmRequest, string> Respond { get; set; } = _ => DefaultAnswer;
 
+    /// <summary>What a test answers the nightly tag tidy with, when its <see cref="Respond"/> passes it on.</summary>
+    public string TidyAnswer { get; set; } = """{ "groups": [] }""";
+
     /// <summary>When set, answers instead of <see cref="Respond"/>.</summary>
     public Func<LlmRequest, CancellationToken, Task<string>>? RespondAsync { get; set; }
 

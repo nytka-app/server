@@ -375,6 +375,11 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                     }
                 }
 
+                if (row is { Done: false, Edited: false, DeletedAt: null } && task.SegmentIds is not null)
+                {
+                    await SourcesAsync(connection, transaction, row.Id, task.SegmentIds, ct);
+                }
+
                 continue;
             }
 

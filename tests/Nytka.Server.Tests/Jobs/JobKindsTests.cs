@@ -51,12 +51,12 @@ public class JobKindsTests
         var audio = JobKinds.FilterOf(JobLane.Audio);
 
         Assert.False(ai.Exclude);
-        Assert.Equal(["enrich-conversation", "extract-memories", "extract-person-facts", "make-brief", "make-digest", "measure-quality", "suggest-names"], ai.Kinds.Order());
+        Assert.Equal(["enrich-conversation", "extract-memories", "extract-person-facts", "make-brief", "make-digest", "measure-quality", "suggest-names", "tidy-tags"], ai.Kinds.Order());
         Assert.False(hooks.Exclude);
         Assert.Equal(["deliver-webhook", "sync-calendar"], hooks.Kinds.Order());
         Assert.True(audio.Exclude);
         Assert.Equal(
-            ["deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "make-brief", "make-digest", "measure-quality", "suggest-names", "sync-calendar"],
+            ["deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "make-brief", "make-digest", "measure-quality", "suggest-names", "sync-calendar", "tidy-tags"],
             audio.Kinds.Order());
     }
 }

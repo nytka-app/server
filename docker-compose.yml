@@ -79,6 +79,7 @@ services:
       Nytka__People__CardMinConversations: "${Nytka__People__CardMinConversations:-}"
       Nytka__People__Facts: "${Nytka__People__Facts:-}"
       Nytka__Tags__Suggest: "${Nytka__Tags__Suggest:-}"
+      Nytka__Tags__Auto: "${Nytka__Tags__Auto:-}"
       Nytka__Summary__Templates__Enabled: "${Nytka__Summary__Templates__Enabled:-}"
       Nytka__Summary__Templates__Default: "${Nytka__Summary__Templates__Default:-}"
       Nytka__Summary__Templates__Meeting: "${Nytka__Summary__Templates__Meeting:-}"

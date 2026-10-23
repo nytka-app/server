@@ -56,7 +56,8 @@ public sealed class EnrichConversationHandler(
 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
     {
-        var conversationId = Payload(job).ConversationId;
+        var payload = Payload(job);
+        var conversationId = payload.ConversationId;
         if (await conversations.GetAsync(conversationId, ct) is not { } conversation)
         {
             return JobOutcome.Done;
@@ -70,7 +71,7 @@ public sealed class EnrichConversationHandler(
 
         var segments = await conversations.SegmentsAsync(conversationId, ct);
         var through = segments.Count == 0 ? (long?)null : segments.Max(s => s.Id);
-        if (conversation.AiStatus == "done" && conversation.AiThroughSegmentId == through)
+        if (!payload.Again && conversation.AiStatus == "done" && conversation.AiThroughSegmentId == through)
         {
             return JobOutcome.Done; // a repeated job: these segments are summarized already
         }
@@ -124,7 +125,7 @@ public sealed class EnrichConversationHandler(
 
         switch (await StoreAsync(
                 conversationId, answer, people, through, segments.Count, template.Recorded(answer.ConversationKind),
-                DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(conversation.StartedAt), zone).DateTime), ct))
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(conversation.StartedAt), zone).DateTime), payload.Again, ct))
         {
             case EnrichmentStore.Stale:
                 // A late batch or a merge changed the conversation during the call: read it again once it is closed.
@@ -235,7 +236,7 @@ public sealed class EnrichConversationHandler(
     /// <summary>Stores the result, reconciles the tasks and notes, records what was dropped and publishes the events, in one transaction.</summary>
     private async Task<EnrichmentStore> StoreAsync(
         Guid conversationId, ConversationAnswer answer, IReadOnlyList<TaskPerson> people, long? through, int segmentCount,
-        string? summaryTemplate, DateOnly conversationDate, CancellationToken ct)
+        string? summaryTemplate, DateOnly conversationDate, bool again, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var title = ConversationPrompt.Cut(answer.Title, ConversationPrompt.MaxTitle);
@@ -247,7 +248,7 @@ public sealed class EnrichConversationHandler(
 
         var stored = await conversations.StoreEnrichmentAsync(
             connection, transaction, conversationId, title.Length == 0 ? null : title, summary.Length == 0 ? null : summary,
-            through, segmentCount, summaryTemplate, now, ct);
+            through, segmentCount, summaryTemplate, now, ct, again);
         if (stored != EnrichmentStore.Stored)
         {
             return stored; // no event: the conversation is gone, changed since the read, or was summarized already
@@ -256,8 +257,7 @@ public sealed class EnrichConversationHandler(
         var created = await tasks.ReconcileAsync(connection, transaction, conversationId, classified.Tasks, now, ct);
         await NoteStore.ReplaceAsync(connection, transaction, conversationId, classified.Notes, now, ct);
         await NoteStore.ReplaceDroppedAsync(connection, transaction, conversationId, classified.Dropped, now, ct);
-        await TagSuggestionStore.AddAsync(
-            connection, transaction, conversationId, null, await ProposedTagsAsync(connection, transaction, conversationId, answer.Tags, people, ct), now, ct);
+        await TagAsync(connection, transaction, conversationId, await ProposedTagsAsync(connection, transaction, conversationId, answer.Tags, people, ct), now, ct);
         await events.PublishAsync(new NytkaEvent(NytkaEvent.ConversationReady, conversationId), connection, transaction, ct);
         foreach (var taskId in created)
         {
@@ -293,6 +293,30 @@ public sealed class EnrichConversationHandler(
             .OfType<string>()
             .ToHashSet();
         return names.Where(n => !held.Contains(n) && !persons.Contains(n)).Take(ConversationPrompt.MaxTags).ToList();
+    }
+
+    /// <summary>
+    /// With <c>tags.auto</c> each proposed name is applied at once as the tag it is an alias of, or as itself, unless the
+    /// conversation had a proposal of that name before (one the owner rejected or removed included); otherwise it waits as a proposal.
+    /// </summary>
+    private async Task TagAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, IReadOnlyList<string> names, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        if (!TagSettings.Auto(settings))
+        {
+            await TagSuggestionStore.AddAsync(connection, transaction, conversationId, null, names, now, ct);
+            return;
+        }
+
+        var aliases = await TagStore.ResolveAsync(connection, transaction, names, ct);
+        foreach (var name in names)
+        {
+            if (await TagSuggestionStore.AddAppliedAsync(connection, transaction, conversationId, name, now, ct))
+            {
+                await TagStore.AddToConversationAsync(connection, transaction, conversationId, aliases.GetValueOrDefault(name, name), now, ct, auto: true);
+            }
+        }
     }
 
     /// <summary>The listed person a name equals, ignoring case; null for no name or an unlisted one.</summary>
