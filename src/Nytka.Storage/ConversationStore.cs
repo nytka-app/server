@@ -9,7 +9,7 @@ namespace Nytka.Storage;
 /// </summary>
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
-    int Bookmarks, string Source, double MediaShare)
+    int Bookmarks, string Source, double MediaShare, string TranscriptTier)
 {
     /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -17,7 +17,7 @@ public sealed record ConversationSummary(
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute);
 
 /// <summary>
 /// A segment as a conversation shows it. <see cref="Speaker"/> is the provider's label, <see cref="SpeakerId"/> its stable id for the
@@ -58,6 +58,12 @@ public sealed class SegmentRow
     public string[] SpeechSignals { get; init; } = [];
 
     public bool SpeechMarked { get; init; }
+
+    /// <summary>Why the line was or was not sent to the paid engine (docs/specs/auto-transcription.md, Categorize); null until Auto sets it.</summary>
+    public string? Category { get; init; }
+
+    /// <summary>Whether the line came from a paid pass rather than the live draft.</summary>
+    public bool Final { get; init; }
 
     /// <summary>What a model reads as the speaker: <c>Media</c> for a media line, else the wearer, else the person's name, else the provider's label.</summary>
     public string? Label() => SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Speaker;
@@ -222,7 +228,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    c.ai_status as AiStatus,
                    (select count(*)::int from bookmarks b
                     where b.at >= c.started_at - interval '30 seconds' and b.at <= c.ended_at + interval '30 seconds') as Bookmarks,
-                   c.source as Source, m.share as MediaShare
+                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -255,7 +261,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             select id as Id, started_at as StartedAt, ended_at as EndedAt, status as Status,
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
                    ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
-                   ai_through_segment_id as AiThroughSegmentId, source as Source
+                   ai_through_segment_id as AiThroughSegmentId, source as Source, transcript_tier as TranscriptTier,
+                   auto_route as AutoRoute
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -267,7 +274,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
                {SpeakerLabel.IsUserSource} as IsUserSource, s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess,
                s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
-               s.speech_manual is not null as SpeechMarked
+               s.speech_manual is not null as SpeechMarked, s.category as Category, s.pass_id is not null as Final
         from segments s {SpeakerLabel.Joins}
         """;
 

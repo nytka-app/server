@@ -426,7 +426,7 @@ public sealed class SpeechKindTests(PostgresFixture db) : AiTestBase(db)
         var segments = detail.GetProperty("segments").EnumerateArray().ToList();
         Assert.All(
             segments,
-            s => Assert.Equal(["speechKind", "speechGuess", "speechScore", "speechSignals", "speechMarked"], s.EnumerateObject().Select(p => p.Name).TakeLast(5)));
+            s => Assert.Equal(["speechKind", "speechGuess", "speechScore", "speechSignals", "speechMarked"], s.EnumerateObject().Select(p => p.Name).TakeLast(7).Take(5)));
         var tv = segments[0];
         Assert.Equal(("media", "media", false), (tv.GetProperty("speechKind").GetString(), tv.GetProperty("speechGuess").GetString(), tv.GetProperty("speechMarked").GetBoolean()));
         Assert.Equal(0.9f, tv.GetProperty("speechScore").GetSingle());

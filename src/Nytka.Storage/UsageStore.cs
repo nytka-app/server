@@ -6,6 +6,9 @@ namespace Nytka.Storage;
 /// <summary>One answered transcription request; <paramref name="OverBudget"/> when it went to the budget model instead of the usual one.</summary>
 public sealed record NewUsage(long BatchId, Guid ConversationId, DateTimeOffset At, string Engine, long AudioMs, int TextChars, decimal CostUsd, bool OverBudget);
 
+/// <summary>One answered paid pass (docs/specs/auto-transcription.md): the ledger row of a conversation's piece, in place of a batch's.</summary>
+public sealed record NewPassUsage(long PassId, Guid ConversationId, DateTimeOffset At, string Engine, long AudioMs, int TextChars, decimal CostUsd);
+
 /// <summary>A cost as <c>PerRequest + PerAudioMs × audio ms + PerTextChar × text characters</c>, in US dollars.</summary>
 public readonly record struct UsageRate(decimal PerRequest, decimal PerAudioMs, decimal PerTextChar)
 {
@@ -35,6 +38,16 @@ public sealed class UsageStore(NpgsqlDataSource dataSource)
             """,
             usage, transaction, cancellationToken: ct));
     }
+
+    /// <summary>Writes the pass's request inside the caller's transaction.</summary>
+    public static Task InsertPassAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewPassUsage usage, CancellationToken ct) =>
+        connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into transcription_usage (pass_id, conversation_id, at, engine, audio_ms, text_chars, cost_usd)
+            values (@PassId, @ConversationId, @At, @Engine, @AudioMs, @TextChars, @CostUsd)
+            on conflict (pass_id) where pass_id is not null do nothing
+            """,
+            usage, transaction, cancellationToken: ct));
 
     /// <summary>What the requests from <paramref name="from"/> on cost, estimated rows included.</summary>
     public async Task<decimal> SpentSinceAsync(DateTimeOffset from, CancellationToken ct)

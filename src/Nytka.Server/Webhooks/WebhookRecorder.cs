@@ -21,7 +21,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     /// <summary>The types a webhook can ask for, <c>ping</c> (the test call's own) aside.</summary>
     public static readonly IReadOnlyList<string> Types =
         [NytkaEvent.ConversationReady, NytkaEvent.TaskCreated, NytkaEvent.TaskCompleted, NytkaEvent.MemoryCreated, NytkaEvent.BookmarkCreated, NytkaEvent.DigestReady, NytkaEvent.PersonFactCreated, NytkaEvent.BriefReady, NytkaEvent.SegmentCreated,
-         NytkaEvent.UsageBudgetWarning, NytkaEvent.UsageBudgetReached];
+         NytkaEvent.UsageBudgetWarning, NytkaEvent.UsageBudgetReached, NytkaEvent.TranscriptUpgraded];
 
     /// <summary>Types that only a webhook naming them gets: <c>*</c> does not match them, because a batch every half minute is not what "all" means.</summary>
     public static readonly IReadOnlyList<string> OptIn = [NytkaEvent.SegmentCreated];
@@ -68,6 +68,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private static Guid EventId(NytkaEvent e, object data) => WebhookSigner.NameGuid(e.Type + ":" + e.SubjectId + data switch
     {
         SegmentData d => ":" + d.BatchId,
+        UpgradedData d => ":" + d.PassId,
         TaskData { DoneAt: { } doneAt } when e.Type == NytkaEvent.TaskCompleted => ":" + doneAt.Ticks,
         ConversationData { AiUpdatedAt: { } at } => ":" + at.Ticks,
         _ => "",
@@ -145,6 +146,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
                 return await BriefAsync(e.SubjectId, connection, transaction, ct);
             case NytkaEvent.SegmentCreated:
                 return await SegmentsAsync(e, connection, transaction, ct);
+            case NytkaEvent.TranscriptUpgraded:
+                return await UpgradedAsync(e, connection, transaction, ct);
             case NytkaEvent.UsageBudgetWarning:
             case NytkaEvent.UsageBudgetReached:
                 return await UsageStore.GetAlertAsync(connection, transaction, e.SubjectId, ct) is { } alert
@@ -167,6 +170,19 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             new { batchId = e.BatchId }, transaction, cancellationToken: ct))).ToList();
         return segments.Count == 0 ? null : new SegmentData(e.SubjectId, e.BatchId!.Value, segments);
     }
+
+    /// <summary>What a swap did, in counts: never a line of text. Null when the pass is gone.</summary>
+    private static async Task<UpgradedData?> UpgradedAsync(NytkaEvent e, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct) =>
+        await connection.QuerySingleOrDefaultAsync<UpgradedData>(new CommandDefinition(
+            """
+            select p.conversation_id as ConversationId, p.id as PassId, p.engine as Engine,
+                   (select count(*) from segment_drafts d where d.pass_id = p.id)::int as Replaced,
+                   (select count(*) from segments s where s.pass_id = p.id)::int as Inserted,
+                   c.transcript_tier as Tier
+            from transcript_passes p join conversations c on c.id = p.conversation_id
+            where p.id = @passId
+            """,
+            new { passId = e.PassId }, transaction, cancellationToken: ct));
 
     /// <summary>The brief with the people it names; one deleted since is left out. Never a transcript.</summary>
     private static async Task<BriefData?> BriefAsync(Guid id, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
@@ -195,7 +211,7 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         var conversation = await connection.QuerySingleOrDefaultAsync<ConversationHead>(new CommandDefinition(
             """
             select id as Id, started_at as StartedAt, ended_at as EndedAt,
-                   coalesce(title, ai_title) as Title, ai_summary as Summary, ai_updated_at as AiUpdatedAt
+                   coalesce(title, ai_title) as Title, ai_summary as Summary, ai_updated_at as AiUpdatedAt, transcript_tier as TranscriptTier
             from conversations where id = @id
             """,
             new { id }, transaction, cancellationToken: ct));
@@ -209,14 +225,14 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
             new { id }, transaction, cancellationToken: ct))).ToList();
         var tags = (await TagStore.OfConversationsAsync(connection, transaction, [id], ct)).GetValueOrDefault(id) ?? [];
         return new ConversationData(
-            conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, tags, conversation.AiUpdatedAt);
+            conversation.Id, conversation.StartedAt, conversation.EndedAt, conversation.Title, conversation.Summary, tasks, tags, conversation.TranscriptTier, conversation.AiUpdatedAt);
     }
 
-    private sealed record ConversationHead(Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, DateTime? AiUpdatedAt);
+    private sealed record ConversationHead(Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, DateTime? AiUpdatedAt, string TranscriptTier);
 
     private sealed record ConversationData(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string? Title, string? Summary, IReadOnlyList<TaskRef> Tasks,
-        IReadOnlyList<string> Tags,
+        IReadOnlyList<string> Tags, string TranscriptTier,
         [property: System.Text.Json.Serialization.JsonIgnore] DateTime? AiUpdatedAt = null);
 
     private sealed record TaskRef(Guid Id, string Text);
@@ -252,6 +268,8 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
     private sealed record SegmentRef(long Id, DateTime StartedAt, DateTime EndedAt);
 
     private sealed record SegmentData(Guid ConversationId, long BatchId, IReadOnlyList<SegmentRef> Segments);
+
+    private sealed record UpgradedData(Guid ConversationId, long PassId, string Engine, int Replaced, int Inserted, string Tier);
 
     private sealed record BudgetData(Guid Id, string Month, decimal BudgetUsd, decimal SpentUsd, DateTime At);
 

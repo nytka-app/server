@@ -70,7 +70,37 @@ public sealed class UsageLedger(UsageStore usage, SettingsService settings, IOpt
         var now = time.GetUtcNow();
         var cost = UsageSettings.Prices(settings).RateOf(plan.Engine).Cost(audioMs, textChars);
         await UsageStore.InsertAsync(connection, transaction, new NewUsage(batchId, conversationId, now, plan.Engine, audioMs, textChars, cost, plan.OverBudget), ct);
+        await RaiseCrossingsAsync(connection, transaction, now, ct);
+    }
 
+    /// <summary>Writes a paid pass's row inside the swap's transaction, and raises the budget crossings it caused, as <see cref="RecordAsync"/> does for a batch.</summary>
+    public async Task RecordPassAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long passId, Guid conversationId, string engine, long audioMs, int textChars, CancellationToken ct)
+    {
+        var now = time.GetUtcNow();
+        var cost = UsageSettings.Prices(settings).RateOf(engine).Cost(audioMs, textChars);
+        await UsageStore.InsertPassAsync(connection, transaction, new NewPassUsage(passId, conversationId, now, engine, audioMs, textChars, cost), ct);
+        await RaiseCrossingsAsync(connection, transaction, now, ct);
+    }
+
+    /// <summary>
+    /// Whether a pass of <paramref name="audioMs"/> may start: with a budget set, the month's spend is under it and the pass's
+    /// estimated cost (<paramref name="textChars"/> being the draft's length) would not carry the month past it. No budget: always.
+    /// </summary>
+    public async Task<bool> CanAffordAsync(string engine, long audioMs, int textChars, CancellationToken ct)
+    {
+        if (UsageSettings.Budget(settings) is not { } budget)
+        {
+            return true;
+        }
+
+        var zone = UserTimeZone.Resolve(settings);
+        var spent = await usage.SpentSinceAsync(DigestDay.Bounds(MonthOf(time.GetUtcNow(), zone), zone).From, ct);
+        return spent < budget && spent + UsageSettings.Prices(settings).RateOf(engine).Cost(audioMs, textChars) <= budget;
+    }
+
+    private async Task RaiseCrossingsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, DateTimeOffset now, CancellationToken ct)
+    {
         if (UsageSettings.Budget(settings) is not { } budget)
         {
             return;

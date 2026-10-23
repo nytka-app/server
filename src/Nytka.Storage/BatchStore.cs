@@ -240,14 +240,16 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// Deletes speech audio of finished batches that ended before <paramref name="before"/>, and the fingerprints of every
     /// batch that loses audio: a fingerprint never outlives its audio, nor does a voice group left without one. Similarities and
-    /// verdicts stay on the segments.
+    /// verdicts stay on the segments. The draft lines a paid pass replaced go with the audio (<c>segment_drafts</c>).
     /// </summary>
     public async Task<int> DeleteSpeechAudioEndedBeforeAsync(DateTimeOffset before, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             """
-            with audio as (
+            with drafts as (
+                delete from segment_drafts where ended_at < @before),
+            audio as (
                 delete from speech_audio
                 where ended_at < @before
                   and batch_id in (select id from transcription_batches where status = 'done')

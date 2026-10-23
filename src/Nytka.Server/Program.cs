@@ -69,6 +69,7 @@ builder.Services.AddHttpClient<VoiceprintClient>(client => client.Timeout = Voic
 builder.Services.AddSingleton<IVoiceActivityDetector>(_ => new SileroVad());
 builder.Services.AddScoped<IJobHandler, ProcessSessionHandler>();
 builder.Services.AddScoped<IJobHandler, TranscribeHandler>();
+builder.Services.AddScoped<IJobHandler, TranscribeConversationHandler>();
 builder.Services.AddScoped<IJobHandler, CloseConversationsHandler>();
 builder.Services.AddScoped<IJobHandler, RetentionHandler>();
 

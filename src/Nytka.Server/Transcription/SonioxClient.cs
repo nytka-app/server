@@ -8,6 +8,9 @@ using Microsoft.Extensions.Options;
 
 namespace Nytka.Server.Transcription;
 
+/// <summary>The two ids a Soniox request leaves behind until it is cleaned up.</summary>
+public sealed record SonioxSubmission(string FileId, string TranscriptionId);
+
 /// <summary>
 /// Soniox's async API, called directly with the server's own key (<c>Nytka__Stt__SonioxApiKey</c>): upload the WAV, create a
 /// transcription, poll it, read the transcript, and delete the file and the transcription whatever happened, so no audio stays
@@ -71,6 +74,60 @@ public sealed class SonioxClient(
                 await DeleteAsync(stt, $"v1/transcriptions/{transcriptionId}", "transcription");
             }
 
+            await DeleteAsync(stt, $"v1/files/{fileId}", "file");
+        }
+    }
+
+    /// <summary>
+    /// The first half of <see cref="TranscribeAsync"/>, for a request that outlives one job run (a transcript pass): uploads the WAV and
+    /// creates the transcription, and returns without waiting. A failure after the upload deletes the file; the caller owns the
+    /// two ids from here and ends with <see cref="CleanUpAsync"/>.
+    /// </summary>
+    public async Task<SonioxSubmission> SubmitAsync(byte[] wav, CancellationToken ct)
+    {
+        var stt = options.Value.Stt;
+        var context = await ContextAsync(stt.Vocabulary, ct);
+        var fileId = await UploadAsync(stt, wav, ct);
+        try
+        {
+            return new SonioxSubmission(fileId, await CreateAsync(stt, fileId, context, ct));
+        }
+        catch
+        {
+            await DeleteAsync(stt, $"v1/files/{fileId}", "file");
+            throw;
+        }
+    }
+
+    /// <summary>One poll: true once the transcript is ready, false while Soniox works; an <c>error</c> status throws.</summary>
+    public async Task<bool> IsCompletedAsync(string transcriptionId, CancellationToken ct)
+    {
+        using var response = await GetAsync(options.Value.Stt, $"v1/transcriptions/{transcriptionId}", ct);
+        return await StatusAsync(response, ct) switch
+        {
+            "completed" => true,
+            "error" => throw new TranscriptionException("Soniox could not transcribe the audio."),
+            _ => false,
+        };
+    }
+
+    public async Task<TranscriptionResult> TranscriptAsync(string transcriptionId, CancellationToken ct)
+    {
+        using var response = await GetAsync(options.Value.Stt, $"v1/transcriptions/{transcriptionId}/transcript", ct);
+        return Parse(await response.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <summary>Deletes the file and the transcription, whichever are given; a failure is logged and never thrown.</summary>
+    public async Task CleanUpAsync(string? fileId, string? transcriptionId)
+    {
+        var stt = options.Value.Stt;
+        if (transcriptionId is not null)
+        {
+            await DeleteAsync(stt, $"v1/transcriptions/{transcriptionId}", "transcription");
+        }
+
+        if (fileId is not null)
+        {
             await DeleteAsync(stt, $"v1/files/{fileId}", "file");
         }
     }

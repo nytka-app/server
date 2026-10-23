@@ -472,6 +472,16 @@ topic goes to `general`. A conversation has up to five notes of up to ten points
 conversation replaces them. `GET /api/v1/notes` and the MCP `list_notes` list them; deleting the conversation deletes its
 notes.
 
+## Paid transcript pass
+
+Every batch gets a draft from the engine the server is set to. A **pass** sends a conversation's stored speech to a paid engine once and swaps its text for the draft lines (spec: [Auto transcription](../specs/auto-transcription.md), steps 5 of 11; Auto itself, which queues passes by itself, comes later). Today a pass starts with `POST /api/v1/conversations/{id}/upgrade`.
+
+- **Engine.** Soniox with `Nytka__Stt__SonioxApiKey`, else `stt.model` at `stt.url`; neither: the route answers `409`. Soniox is polled every 5 seconds across job runs, so a slow answer never blocks the Audio lane. The file and the transcription at Soniox are deleted after every outcome.
+- **What is sent.** The stored speech of the finished batches no pass covered, cut into stretches of continuous capture time and joined with 300 ms of silence, at most 30 minutes per pass (10 for an engine that answers in the request). A longer conversation becomes `mixed`; ask again for the rest. Times of the paid lines go through the pass's offset map, so they are capture times.
+- **The swap** is one transaction with the ledger row (`pass_id`, no batch) and the `transcript.upgraded` event: a crash leaves the whole draft or the whole swap. A draft line the paid text overlaps is replaced and kept in `segment_drafts` until its speech audio expires; a draft line nothing overlaps stays. A paid line takes `is_user_manual`, `speech_manual` and `person_id` when the draft lines it shares at least half a line with agree, and a speaker label takes the `speaker_id` that 60% of its draft time carries. Name suggestions, person facts and voice matches move to the new lines (a rejected name stays rejected); the summary, tasks and memories run again.
+- **Money.** A pass does not start when the month's spend is at the budget or its estimate would pass it (`409` from the route; a queued pass waits as `waiting`).
+- **State.** `GET /api/v1/conversations/{id}` has `transcript.tier` (`draft`, `final`, `mixed`) and the latest pass; a pass that fails keeps the draft and can be asked for again.
+
 ## Memories
 
 A memory is a lasting fact about you: who you are, family, friends, home, work, health, habits,
