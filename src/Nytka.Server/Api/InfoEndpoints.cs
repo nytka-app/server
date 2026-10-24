@@ -4,6 +4,7 @@ using System.Security.Claims;
 using Nytka.Audio.Frames;
 using Nytka.Server.Auth;
 using Nytka.Server.People;
+using Nytka.Server.Search;
 using Nytka.Server.Settings;
 using Nytka.Server.Voice;
 using Nytka.Storage;
@@ -45,8 +46,9 @@ public static class InfoEndpoints
     /// "usage": <c>GET /api/v1/usage</c> exists, with the <c>stt.prices</c> and <c>stt.monthlyBudgetUsd</c> settings (docs/specs/usage.md).
     /// "summary-templates": <c>/api/v1/summary-templates</c> exists, a conversation has <c>summaryTemplate</c>, and the <c>summary.templates.*</c> settings (NYTKA-82).
     /// "quality": <c>GET /api/v1/quality</c> exists, the nightly quality metrics.
+    /// "semantic-search": an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning (NYTKA-66).
     /// </summary>
-    public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
+    public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings, EmbeddingState? embeddings = null)
     {
         var features = voice.Available ? new List<string> { "offline-sync", "voice", "people", "review", "briefs" } : ["offline-sync", "people", "review", "briefs"];
         if (voice.Available && PeopleSettings.VoiceMatching(settings) && int.Parse(settings.Get("audio.retentionDays")!, CultureInfo.InvariantCulture) >= 1)
@@ -71,6 +73,10 @@ public static class InfoEndpoints
         features.Add("transcript-upgrade");
         features.Add("summary-templates");
         features.Add("quality");
+        if (embeddings?.IsReady == true)
+        {
+            features.Add("semantic-search");
+        }
 
         return features;
     }
@@ -78,8 +84,8 @@ public static class InfoEndpoints
     public static RouteGroupBuilder MapInfo(this RouteGroupBuilder api)
     {
         // The app reads scope to refuse a read token; a server without it counts as admin.
-        api.MapGet("/info", (ClaimsPrincipal user, SpeakerModel voice, SettingsService settings) => Results.Ok(new InfoResponse(
-            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice, settings), ChunkFormat.AcceptedCodecs)))
+        api.MapGet("/info", (ClaimsPrincipal user, SpeakerModel voice, SettingsService settings, EmbeddingState embeddings) => Results.Ok(new InfoResponse(
+            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice, settings, embeddings), ChunkFormat.AcceptedCodecs)))
             .AllowRead();
         return api;
     }

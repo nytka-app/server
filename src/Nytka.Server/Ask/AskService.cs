@@ -25,6 +25,7 @@ public sealed partial class AskService(
     IOptionsMonitor<LlmOptions> options,
     SettingsService settings,
     SearchStore search,
+    SemanticSearch semantic,
     ConversationStore conversations,
     TaskStore tasks,
     MemoryStore memories,
@@ -63,7 +64,7 @@ public sealed partial class AskService(
         var plan = LlmJson.Parse<AskPlan>(await llm.CompleteJsonAsync(
             new LlmRequest(AskPrompt.PlanSchemaName, AskPrompt.PlanSchema, AskPrompt.PlanSystem(zoneName), AskPrompt.PlanUser(today, question)), ct));
 
-        var candidates = await RetrieveAsync(plan, zone, ct);
+        var candidates = await RetrieveAsync(question, plan, zone, ct);
         var header = AskPrompt.AnswerUser(today, question, "");
         var sources = await LoadAsync(candidates, Math.Max(0, llmOptions.MaxInputChars - header.Length), zone, ct);
 
@@ -113,7 +114,11 @@ public sealed partial class AskService(
         return new AskResult(cleaned, cited);
     }
 
-    private async Task<IReadOnlyList<Candidate>> RetrieveAsync(AskPlan plan, TimeZoneInfo zone, CancellationToken ct)
+    /// <summary>
+    /// The plan's queries, each fused with the vector hits of the question itself when vector search is on (one
+    /// embedding for all of them); a hit keeps its best score across queries.
+    /// </summary>
+    private async Task<IReadOnlyList<Candidate>> RetrieveAsync(string question, AskPlan plan, TimeZoneInfo zone, CancellationToken ct)
     {
         var queries = plan.Queries.Select(SearchQuery.ExtractTerms).Where(t => t.Count > 0).Take(AskPrompt.MaxQueries).ToList();
         var (from, to) = Range(plan, zone);
@@ -129,10 +134,11 @@ public sealed partial class AskService(
             return recent.Select(c => new Candidate(SearchStore.Conversation, c.Id, 0, c.StartedAt, null, null)).ToList();
         }
 
+        var vector = await semantic.QueryAsync(question, ct);
         var merged = new Dictionary<Guid, Candidate>();
         foreach (var terms in queries)
         {
-            foreach (var row in await search.SearchAsync(terms, true, true, HitsPerQuery, 0, ct, from, to, anyTerm: true))
+            foreach (var row in await search.SearchAsync(terms, true, true, HitsPerQuery, 0, ct, from, to, anyTerm: true, semantic: vector))
             {
                 if (!merged.TryGetValue(row.Id, out var known) || known.Score < row.Score)
                 {

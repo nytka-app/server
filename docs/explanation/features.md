@@ -786,6 +786,9 @@ people by name or by [fact](#facts-about-people), in Ukrainian and English toget
   written. After the upgrade that adds search or people in search, or when
   you change the dictionary, the server indexes the archive in the background, so older rows appear
   over the next minutes; a row not yet indexed is simply not found.
+- With [vector search](../reference/configuration.md#vector-search) on, a hit may also match by
+  meaning, in any of the three languages, without sharing a word with `q`; the filters apply to it the
+  same way, and `score` becomes the fused rank (1/(60 + full-text rank) + 1/(60 + vector rank)).
 
 ### Ukrainian search (optional)
 
@@ -874,7 +877,10 @@ answer within `llm.timeoutSeconds`; `502` when it fails otherwise).
 The server makes two model calls. The first turns the question into up to three short keyword
 queries and, when the question names a period, a range of local days (in `user.timeZone`). The queries
 run through the search (any word of a query may match), limited to that range; a question about a
-period only takes the conversations of those days, newest first. At most 8 conversations and 10
+period only takes the conversations of those days, newest first. With
+[vector search](../reference/configuration.md#vector-search) on, each query also brings the passages
+closest in meaning to the question itself, so a conversation can be found that shares no word with
+it. At most 8 conversations and 10
 memories go to the second call, best first. A conversation brings its title, summary, tasks and the
 lines of its transcript around the best-matching one, cut so that everything fits
 `llm.maxInputChars`. The model answers with `[n]` markers; the server drops a marker that names no

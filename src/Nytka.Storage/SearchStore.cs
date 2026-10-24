@@ -13,6 +13,12 @@ public sealed record SearchHitRow(
     string Kind, Guid Id, float Score, string? Title, string Snippet, DateTime At, Guid? ConversationId, long? SegmentId = null);
 
 /// <summary>
+/// The query's embedding for hybrid search, and the largest cosine distance (0 to 2) a vector hit may have.
+/// Only made when the vector tables are ready (<see cref="EmbeddingStore.SetupAsync"/>).
+/// </summary>
+public sealed record SemanticQuery(float[] Vector, double MaxDistance);
+
+/// <summary>
 /// Full-text search over transcripts, titles, summaries, memories, people and their facts (config <c>nytka</c>). Postgres loads the
 /// Ukrainian dictionary (about 65 MB) once per session, so everything that uses the configuration, the indexer and
 /// the queries, goes through one small pool of its own; ingest never touches it.
@@ -59,6 +65,12 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         }
     }
 
+    /// <summary>Vector hits asked of each kind, at least; a deeper page asks for as many as it reaches.</summary>
+    public const int VectorCandidates = 40;
+
+    /// <summary>The <c>k</c> of reciprocal-rank fusion: a hit at rank r of a list adds 1 / (k + r).</summary>
+    public const int FusionK = 60;
+
     /// <summary>
     /// Every term must match (or any one, with <c>anyTerm</c>), each as a prefix. Ranked by <c>ts_rank_cd</c> with its default weights (title 1.0,
     /// summary, memory and fact 0.4, transcript 0.1; a person's name is a title), best score first. Fetches <paramref name="limit"/> rows from
@@ -66,26 +78,37 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     /// not reached yet are not found. <paramref name="from"/> and <paramref name="to"/> (exclusive) keep conversations
     /// that started, and memories that were last changed, inside that range; it does not apply to people.
     /// <paramref name="tag"/> (normalized) keeps only conversations and people that have it, and leaves memories out.
+    /// <para>
+    /// With <paramref name="semantic"/> the full-text ranking fuses with the nearest segments, conversations and
+    /// memories by reciprocal rank (<see cref="FusionK"/>), under the same kinds, range and tag; a hit then scores
+    /// 1/(k + full-text rank) + 1/(k + vector rank), and may match no word at all. People have no vectors. Should the
+    /// vector part fail (the tables are being rebuilt for another model), the full-text answer comes back alone.
+    /// </para>
     /// </summary>
     public async Task<IReadOnlyList<SearchHitRow>> SearchAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct,
-        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false, bool people = false, string? tag = null)
+        DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false, bool people = false, string? tag = null,
+        SemanticQuery? semantic = null)
     {
         try
         {
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, semantic, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ConfigFileError)
         {
             // The dictionary files went away while the server ran: fall back to simple, then ask again.
             await SetupDictionaryAsync(Simple, ct);
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, semantic, ct);
+        }
+        catch (PostgresException ex) when (semantic is not null && ex.SqlState != PostgresErrorCodes.ConfigFileError)
+        {
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, null, ct);
         }
     }
 
     private async Task<IReadOnlyList<SearchHitRow>> QueryAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, bool people, int limit, int offset,
-        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, string? tag, CancellationToken ct)
+        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, string? tag, SemanticQuery? semantic, CancellationToken ct)
     {
         var parameters = new DynamicParameters();
         var query = string.Join(anyTerm ? " || " : " && ", terms.Select((term, i) =>
@@ -103,6 +126,25 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         parameters.Add("tag", tag);
 
         await using var connection = await DataSource.OpenConnectionAsync(ct);
+        await using var transaction = semantic is null ? null : await connection.BeginTransactionAsync(ct);
+        var nearest = "";
+        var source = "hits";
+        if (semantic is not null)
+        {
+            var k = Math.Max(VectorCandidates, limit + offset);
+            parameters.Add("vector", EmbeddingStore.Literal(semantic.Vector));
+            parameters.Add("k", k);
+            parameters.Add("maxDistance", semantic.MaxDistance);
+            // An HNSW scan returns at most ef_search rows; the iterative scan keeps going while filters drop them.
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                select set_config('hnsw.ef_search', @ef, true), set_config('hnsw.iterative_scan', 'relaxed_order', true)
+                """,
+                new { ef = Math.Clamp(k, 40, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture) }, transaction, cancellationToken: ct));
+            nearest = Nearest;
+            source = "fused_hits";
+        }
+
         var rows = await connection.QueryAsync<SearchHitRow>(new CommandDefinition(
             $"""
             with q as materialized (select {query} as query),
@@ -161,9 +203,9 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                   and (cast(@tag as text) is null or exists (
                         select 1 from person_tags pt join tags t on t.id = pt.tag_id
                         where pt.person_id = p.id and t.name = @tag))
-            ),
+            ),{nearest}
             page as (
-                select * from hits order by score desc, at desc, id limit @limit offset @offset
+                select * from {source} order by score desc, at desc, id limit @limit offset @offset
             )
             select p.kind as Kind, p.id as Id, p.score as Score, p.title as Title,
                    case when p.source = '' then ''
@@ -172,9 +214,93 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
             from page p cross join q
             order by p.score desc, p.at desc, p.id
             """,
-            parameters, cancellationToken: ct));
+            parameters, transaction, cancellationToken: ct));
         return rows.ToList();
     }
+
+    /// <summary>
+    /// The vector half of a hybrid search and the fusion, as more CTEs after <c>hits</c>: each kind's nearest rows under
+    /// the same filters, those within <c>@maxDistance</c> ranked by distance (a conversation by its nearest segment or
+    /// its title and summary), then <c>fused_hits</c> in the shape of <c>hits</c>. A conversation's snippet stays its
+    /// best full-text segment and is otherwise its nearest one.
+    /// </summary>
+    private const string Nearest =
+        """
+
+            segment_near as materialized (
+                select s.conversation_id as id, s.id as segment_id, s.text, e.embedding <=> cast(@vector as vector) as distance
+                from segment_embeddings e
+                join segments s on s.id = e.segment_id
+                join conversations c on c.id = s.conversation_id
+                where @conversations
+                  and (cast(@from as timestamptz) is null or c.started_at >= cast(@from as timestamptz))
+                  and (cast(@to as timestamptz) is null or c.started_at < cast(@to as timestamptz))
+                  and (cast(@tag as text) is null or exists (
+                        select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
+                        where ct.conversation_id = c.id and t.name = @tag))
+                order by e.embedding <=> cast(@vector as vector)
+                limit @k
+            ),
+            conversation_near as materialized (
+                select c.id, e.embedding <=> cast(@vector as vector) as distance
+                from conversation_embeddings e
+                join conversations c on c.id = e.conversation_id
+                where @conversations
+                  and (cast(@from as timestamptz) is null or c.started_at >= cast(@from as timestamptz))
+                  and (cast(@to as timestamptz) is null or c.started_at < cast(@to as timestamptz))
+                  and (cast(@tag as text) is null or exists (
+                        select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
+                        where ct.conversation_id = c.id and t.name = @tag))
+                order by e.embedding <=> cast(@vector as vector)
+                limit @k
+            ),
+            memory_near as materialized (
+                select m.id, e.embedding <=> cast(@vector as vector) as distance
+                from memory_embeddings e
+                join memories m on m.id = e.memory_id
+                where @memories and cast(@tag as text) is null and m.deleted_at is null and m.confirmed
+                  and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
+                  and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
+                order by e.embedding <=> cast(@vector as vector)
+                limit @k
+            ),
+            nearest_segment as (
+                select distinct on (id) id, segment_id, text
+                from segment_near where distance <= @maxDistance
+                order by id, distance, segment_id
+            ),
+            near as (
+                select 'conversation' as kind, n.id, min(n.distance) as distance
+                from (select id, distance from segment_near union all select id, distance from conversation_near) n
+                where n.distance <= @maxDistance
+                group by n.id
+                union all
+                select 'memory', id, distance from memory_near where distance <= @maxDistance
+            ),
+            fused as (
+                select coalesce(f.kind, n.kind) as kind, coalesce(f.id, n.id) as id,
+                       cast(coalesce(1.0 / (60 + f.rank), 0) + coalesce(1.0 / (60 + n.rank), 0) as real) as score
+                from (select kind, id, row_number() over (order by score desc, at desc, id) as rank from hits) f
+                full join (select kind, id, row_number() over (order by distance, id) as rank from near) n
+                  on n.kind = f.kind and n.id = f.id
+            ),
+            fused_hits as (
+                select fu.kind, fu.id, fu.score,
+                       case when h.id is not null then h.title
+                            when fu.kind = 'conversation' then coalesce(c.title, c.ai_title) end as title,
+                       case when h.id is not null and (fu.kind <> 'conversation' or h.segment_id is not null) then h.source
+                            when fu.kind = 'conversation' then coalesce(ns.text, c.ai_summary, '')
+                            else m.text end as source,
+                       coalesce(h.at, c.started_at, m.updated_at) as at,
+                       case when h.id is not null then h.conversation_id else m.conversation_id end as conversation_id,
+                       coalesce(h.segment_id, ns.segment_id) as segment_id
+                from fused fu
+                left join hits h on h.kind = fu.kind and h.id = fu.id
+                left join conversations c on fu.kind = 'conversation' and c.id = fu.id
+                left join memories m on fu.kind = 'memory' and m.id = fu.id
+                left join nearest_segment ns on fu.kind = 'conversation' and ns.id = fu.id
+            ),
+        """;
 
     /// <summary>
     /// Runs <c>nytka_search_setup(dictionary)</c>: <see cref="Simple"/> or <see cref="UkHunspell"/>, the latter used
