@@ -24,6 +24,32 @@ public sealed class BookmarkStore(NpgsqlDataSource dataSource)
          limit 1)
         """;
 
+    /// <summary>How far either side of a line a bookmark still marks it, and the items that cite it, as vital.</summary>
+    public static readonly TimeSpan MarkReach = TimeSpan.FromSeconds(60);
+
+    /// <summary>SQL for whether the bookmark aliased <c>b</c> marks the segment aliased <c>s</c> (<see cref="MarkReach"/>).</summary>
+    private const string Marks = "b.at between s.started_at - interval '60 seconds' and s.ended_at + interval '60 seconds'";
+
+    /// <summary>SQL for whether a bookmark marks the segment aliased <c>s</c>.</summary>
+    public const string SegmentMarked = $"exists (select 1 from bookmarks b where {Marks})";
+
+    /// <summary>
+    /// SQL for the mark of the task aliased <c>t</c>, for a lateral join: the earliest bookmark that marks a line the task cites
+    /// (<c>at</c>) and the cited line nearest it (<c>segment_id</c>); no row when none does.
+    /// </summary>
+    public const string TaskMark =
+        $"""
+        select b.at, s.id as segment_id from task_sources ts join segments s on s.id = ts.segment_id join bookmarks b on {Marks}
+        where ts.task_id = t.id order by b.at, abs(extract(epoch from b.at - s.started_at)), s.id limit 1
+        """;
+
+    /// <summary>The same as <see cref="TaskMark"/> for the memory aliased <c>m</c>.</summary>
+    public const string MemoryMark =
+        $"""
+        select b.at, s.id as segment_id from memory_sources ms join segments s on s.id = ms.segment_id join bookmarks b on {Marks}
+        where ms.memory_id = m.id order by b.at, abs(extract(epoch from b.at - s.started_at)), s.id limit 1
+        """;
+
     private const string Select = $"select b.id as Id, b.at as At, b.note as Note, b.source as Source, {ConversationOf} as ConversationId from bookmarks b";
 
     /// <summary>Inserts the bookmark unless its id exists; false then. Runs in the caller's transaction.</summary>

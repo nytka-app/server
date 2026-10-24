@@ -644,6 +644,14 @@ conversation stays in `GET /api/v1/bookmarks` alone (`conversationId` is then nu
 conversation keeps its bookmarks. The `bookmark.created` webhook and the `list_bookmarks` MCP tool
 carry the same fields.
 
+A bookmark also says "this matters". A line that starts or ends within 60 seconds of a bookmark is
+`marked`, and a task or memory that cites a marked line reads as `vital` whatever the model judged, with
+`markedAt` (the earliest such bookmark) and `markedSegmentId` (the cited line nearest it) as the evidence the app
+shows as "you marked this". The mark is
+worked out when an item is read, not stored, so it holds whether the tap came before the conversation was
+processed or after, and deleting the bookmark takes it back. The model's own value stays in the database
+(quality metrics count that one). Notes cite no lines, so a bookmark does not mark them.
+
 ## Context from the phone
 
 The pendant also hears what your phone plays: a video, a podcast, the far side of a call on speaker. The app can
