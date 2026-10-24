@@ -30,8 +30,8 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
     public const string Tag = "tag";
     public const string Person = "person";
 
-    /// <summary>SQL for the conversation ids of the topic aliased <c>tp</c>.</summary>
-    private const string Members =
+    /// <summary>SQL for the conversation ids of the topic aliased <c>tp</c>; <see cref="RollupStore"/> reads it too.</summary>
+    internal const string Members =
         $"""
         (select ct.conversation_id from conversation_tags ct where tp.kind = 'tag' and ct.tag_id = tp.tag_id
          union
