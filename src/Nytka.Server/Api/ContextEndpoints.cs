@@ -33,17 +33,18 @@ public static class ContextEndpoints
 
     public sealed record ContextRangePage(IReadOnlyList<ContextRangeRow> Items);
 
-    private const string TimeMessage = "Must be an ISO 8601 time with an offset.";
-
-    private static readonly string KindMessage = $"Must be {string.Join(" or ", ContextRangeStore.Kinds)}.";
-
-    private static readonly string RouteMessage =
-        $"Must be {string.Join(", ", ContextRangeStore.Routes.SkipLast(1))} or {ContextRangeStore.Routes[^1]}.";
+    /// <summary>The reasons a row is refused on its own, as codes: a newer app sends kinds an older server does not know.</summary>
+    public const string UnknownKind = "unknown-kind";
+    public const string BadRoute = "bad-route";
+    public const string BadDetail = "bad-detail";
+    public const string BadTimes = "bad-times";
 
     /// <summary>
-    /// Body <c>{ items: [{ id, kind, route, startedAt, endedAt }] }</c>, 1 to 500 items. Every item is checked before any is
-    /// stored, so a bad one makes the upload a 400 that names the field and the index (<c>items[3].kind</c>), never the
-    /// value. Answers <c>{ accepted, skipped }</c>; <c>skipped</c> counts the ranges whose id is already stored, a repeat inside the batch included.
+    /// Body <c>{ items: [{ id, kind, route, startedAt, endedAt, detail? }] }</c>, 1 to 500 items. An item that is no object or has
+    /// no UUID id makes the upload a 400 naming the field and the index (<c>items[3].id</c>), never the value. Any other bad item
+    /// (a kind the server does not know, a route or detail its kind does not take, times out of bounds) is refused on its own and
+    /// listed in <c>rejected</c> with a reason code, and the rest are stored. Answers <c>{ accepted, skipped, rejected }</c>;
+    /// <c>skipped</c> counts the ranges whose id is already stored, a repeat inside the batch included, and a rejected row counts in neither.
     /// </summary>
     private static async Task<IResult> PostAsync(HttpRequest http, ContextRangeStore ranges, TimeProvider time, CancellationToken ct)
     {
@@ -55,6 +56,7 @@ public static class ContextEndpoints
         var now = time.GetUtcNow();
         var errors = new Dictionary<string, string[]>();
         var items = new List<NewContextRange>();
+        var rejected = new List<RejectedRange>();
         try
         {
             if (!body.TryGetProperty("items", out var list) || list.ValueKind != JsonValueKind.Array
@@ -66,9 +68,14 @@ public static class ContextEndpoints
             var index = 0;
             foreach (var item in list.EnumerateArray())
             {
-                if (Read(item, index++, now, errors) is { } range)
+                switch (Read(item, index++, now, errors))
                 {
-                    items.Add(range);
+                    case NewContextRange range:
+                        items.Add(range);
+                        break;
+                    case RejectedRange refused:
+                        rejected.Add(refused);
+                        break;
                 }
             }
         }
@@ -78,11 +85,16 @@ public static class ContextEndpoints
             return PeopleEndpoints.Invalid("body", "Must be valid JSON text.");
         }
 
-        return errors.Count > 0 ? Results.ValidationProblem(errors) : Results.Ok(await ranges.InsertAsync(items, now, ct));
+        return errors.Count > 0
+            ? Results.ValidationProblem(errors)
+            : Results.Ok(await ranges.InsertAsync(items, now, ct) with { Rejected = rejected });
     }
 
-    /// <summary>The range, or null after adding each bad field to <paramref name="errors"/> as <c>items[index].field</c>.</summary>
-    private static NewContextRange? Read(JsonElement item, int index, DateTimeOffset now, Dictionary<string, string[]> errors)
+    /// <summary>
+    /// The range, a <see cref="RejectedRange"/> for a row refused on its own, or null after adding the field that makes the whole
+    /// upload bad (no object, no UUID id) to <paramref name="errors"/> as <c>items[index].field</c>.
+    /// </summary>
+    private static object? Read(JsonElement item, int index, DateTimeOffset now, Dictionary<string, string[]> errors)
     {
         if (item.ValueKind != JsonValueKind.Object)
         {
@@ -90,69 +102,42 @@ public static class ContextEndpoints
             return null;
         }
 
-        var failed = false;
-        void Fail(string field, string message)
-        {
-            errors[$"items[{index}].{field}"] = [message];
-            failed = true;
-        }
-
-        Guid id = default;
         if (!item.TryGetProperty("id", out var idValue) || idValue.ValueKind != JsonValueKind.String
-            || !Guid.TryParse(idValue.GetString(), out id))
+            || !Guid.TryParse(idValue.GetString(), out var id))
         {
-            Fail("id", "Must be a UUID.");
+            errors[$"items[{index}].id"] = ["Must be a UUID."];
+            return null;
         }
 
-        var kind = Choice(item, "kind", ContextRangeStore.Kinds);
-        if (kind is null)
+        if (ContextRangeStore.KindRules.FirstOrDefault(k => k.Name == Text(item, "kind")) is not { } kind)
         {
-            Fail("kind", KindMessage);
+            return new RejectedRange(id, UnknownKind);
         }
 
-        var route = Choice(item, "route", ContextRangeStore.Routes);
-        if (route is null)
+        if (Text(item, "route") is not { } route || !kind.Routes.Contains(route))
         {
-            Fail("route", RouteMessage);
+            return new RejectedRange(id, BadRoute);
         }
 
-        var hasStart = ReadTime(item, "startedAt", out var startedAt);
-        var hasEnd = ReadTime(item, "endedAt", out var endedAt);
-        if (!hasStart)
+        var hasDetail = item.TryGetProperty("detail", out var detailValue) && detailValue.ValueKind != JsonValueKind.Null;
+        var detail = Text(item, "detail");
+        if (kind.Details is null ? hasDetail : detail is null || !kind.Details.Contains(detail))
         {
-            Fail("startedAt", TimeMessage);
-        }
-        else if (startedAt < Earliest)
-        {
-            Fail("startedAt", $"Must not be before {Earliest.Year}.");
-        }
-        else if (startedAt > now + MaxAhead)
-        {
-            Fail("startedAt", $"Must be at most {MaxAhead.TotalHours} hours ahead of the server's clock.");
+            return new RejectedRange(id, BadDetail);
         }
 
-        if (!hasEnd)
+        if (!ReadTime(item, "startedAt", out var startedAt) || !ReadTime(item, "endedAt", out var endedAt)
+            || startedAt < Earliest || startedAt > now + MaxAhead || endedAt < startedAt || endedAt - startedAt > MaxLength)
         {
-            Fail("endedAt", TimeMessage);
-        }
-        else if (hasStart && endedAt < startedAt)
-        {
-            Fail("endedAt", "Must not be before startedAt.");
-        }
-        else if (hasStart && endedAt - startedAt > MaxLength)
-        {
-            Fail("endedAt", $"Must be at most {MaxLength.TotalHours} hours after startedAt.");
+            return new RejectedRange(id, BadTimes);
         }
 
-        return failed ? null : new NewContextRange(id, kind!, route!, startedAt, endedAt);
+        return new NewContextRange(id, kind.Name, route, startedAt, endedAt, kind.Details is null ? null : detail);
     }
 
-    /// <summary>The string property when it is one of <paramref name="allowed"/>, spelled exactly so; else null.</summary>
-    private static string? Choice(JsonElement item, string name, IReadOnlyList<string> allowed) =>
-        item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-        && value.GetString() is { } text && allowed.Contains(text)
-            ? text
-            : null;
+    /// <summary>The string property, or null when it is missing or not a string.</summary>
+    private static string? Text(JsonElement item, string name) =>
+        item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     /// <summary>A time with an explicit offset, like a bookmark's: one without would mean the server's zone.</summary>
     private static bool ReadTime(JsonElement item, string name, out DateTimeOffset time)
