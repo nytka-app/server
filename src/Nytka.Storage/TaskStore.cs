@@ -17,6 +17,9 @@ public sealed record AiTask(
     string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null, string? Salience = null,
     IReadOnlyList<long>? SegmentIds = null, string? Sensitivity = null);
 
+/// <summary>The first line a task cites (<c>task_sources</c>): where its evidence starts.</summary>
+public sealed record TaskSource(Guid TaskId, long SegmentId, Guid ConversationId, DateTime At);
+
 /// <summary>A user's change of a task's person: <see langword="null"/> clears it.</summary>
 public sealed record PersonChange(Guid? PersonId);
 
@@ -117,6 +120,21 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             + $" and {Sensitivity.Visible("t")} and (c.id is null or {Sensitivity.Visible("c")}) order by t.due_at, t.id",
             new { kind = TaskKinds.Commitment, hidden = hidden ?? [] }, cancellationToken: ct));
         return rows.ToList();
+    }
+
+    /// <summary>The earliest line each of the tasks cites, for the tasks that cite any.</summary>
+    public async Task<IReadOnlyDictionary<Guid, TaskSource>> FirstSourcesAsync(IReadOnlyCollection<Guid> taskIds, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<TaskSource>(new CommandDefinition(
+            """
+            select distinct on (ts.task_id) ts.task_id as TaskId, s.id as SegmentId, s.conversation_id as ConversationId, s.started_at as At
+            from task_sources ts join segments s on s.id = ts.segment_id
+            where ts.task_id = any(@taskIds)
+            order by ts.task_id, s.started_at, s.id
+            """,
+            new { taskIds = taskIds.ToArray() }, cancellationToken: ct));
+        return rows.ToDictionary(r => r.TaskId);
     }
 
     /// <summary>A conversation's commitments in creation order, deleted ones left out.</summary>
