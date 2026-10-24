@@ -4,14 +4,19 @@ using System.Text;
 
 namespace Nytka.Server.Auth;
 
-/// <summary>The two scopes a token has. <c>admin</c> may call everything; <c>read</c> only what <see cref="AuthExtensions.AllowRead{T}"/> marks, and MCP.</summary>
+/// <summary>
+/// The three scopes a token has. <c>admin</c> may call everything; <c>read</c> only what <see cref="AuthExtensions.AllowRead{T}"/> marks,
+/// and MCP; <c>labeling</c> only what <see cref="AuthExtensions.AllowLabeling{T}"/> marks, the labelling routes.
+/// </summary>
 public static class NytkaScopes
 {
     public const string Admin = "admin";
 
     public const string Read = "read";
 
-    public static bool IsValid(string? scope) => scope is Admin or Read;
+    public const string Labeling = "labeling";
+
+    public static bool IsValid(string? scope) => scope is Admin or Read or Labeling;
 }
 
 /// <summary>The shape of a named token: <c>nyt_</c> and 43 base64url characters (32 random bytes).</summary>

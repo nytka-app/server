@@ -272,6 +272,9 @@ agent reading a transcript knows; `list_conversations` items carry `mediaShare`.
   the owner's server, carry no app, title or number, and die with the audio retention. README's "What it stores"
   says so, and the app's switch turns them off.
 - No new third-party flow: the study's LLM judge is not shipped, so no transcript goes to a model for this.
+- Labels from the labelling app set marks too (`live` as `person`, `device` as `media`, `call`), and the label is the
+  record: deleting it clears the mark it set. With `labeling.keepClips` on, a labelled clip of a media or call voice
+  outlives `audio.retentionDays` until its label is deleted; off, it dies with its audio as today.
 - The transcription adapter outside this repository keeps every voice's fingerprint indefinitely, media voices
   included. That is not Nytka's to change; the report recommends a retention policy there.
 

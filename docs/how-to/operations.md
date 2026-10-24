@@ -14,6 +14,11 @@ transcripts and your webhook secrets.
 - Transcripts, titles, summaries, tasks and memories stay until you delete them. Deleting a
   conversation deletes its audio, transcript, tasks and memories.
 - Daily digests stay until you delete their rows; they hold model-written text about your day, so a dump holds them too.
+- [Labels](../explanation/features.md#labelling) you give in a labeller app (what the audio is, a corrected text, the
+  person, how long you listened) stay until you delete them or their conversation; a deleted person leaves the label
+  without them. With `Nytka__Labeling__KeepClips` on, the clip of each labelled line (at most 20 s of Opus, which can
+  hold other people's voices) is kept with its label past `RetentionDays`, until you delete the label; off, the default,
+  it goes with its audio. Labels never leave the server except through `GET /api/v1/labeling/labels`, which carries no audio.
 - Tokens are kept as a hash, and the settings the app saved as plain rows. An API key is never in the
   database. A webhook secret is, as plain text, because signing needs it.
 - A person's name and your note on them, and the person you set on a segment, stay until you delete the person (the links go with them). A person known only by a [role](../explanation/features.md#roles) is marked `named: false` until a name is given.
