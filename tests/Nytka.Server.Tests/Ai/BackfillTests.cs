@@ -54,6 +54,7 @@ public sealed class BackfillTests(PostgresFixture db) : AiTestBase(db)
         var invalid = await Step("enrich", id, new() { [pending.GetProperty("key").GetString()!] = """{ "title": 1 }""" });
 
         Assert.Equal("invalid", invalid.GetProperty("status").GetString());
+        Assert.Equal("The language model endpoint answered with JSON that does not match the schema.", invalid.GetProperty("reason").GetString());
         var ai = await Ai(id);
         Assert.Equal(("done", 0), (ai.AiStatus, ai.Failures));
     }

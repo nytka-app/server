@@ -35,12 +35,13 @@ public static class WebhookEndpoints
     public sealed record LastDelivery(string Status, DateTime At);
 
     public sealed record Webhook(
-        Guid Id, string Url, string[] Events, string Format, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery);
+        Guid Id, string Url, string[] Events, string Format, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery,
+        bool Sensitive);
 
     /// <summary>The webhook as created: the same fields, and the <paramref name="Secret"/>, which nothing shows again.</summary>
     public sealed record CreatedWebhook(
         Guid Id, string Url, string[] Events, string Format, string? Description, bool Active, DateTime CreatedAt, LastDelivery? LastDelivery,
-        string Secret);
+        bool Sensitive, string Secret);
 
     public sealed record WebhookList(IReadOnlyList<Webhook> Items);
 
@@ -184,6 +185,19 @@ public static class WebhookEndpoints
             }
         }
 
+        var sensitive = false;
+        if (json.TryGetProperty("sensitive", out var sensitiveValue))
+        {
+            if (sensitiveValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                errors["sensitive"] = ["Must be true or false."];
+            }
+            else
+            {
+                sensitive = sensitiveValue.GetBoolean();
+            }
+        }
+
         if (errors.Count > 0)
         {
             return Invalid(errors);
@@ -192,7 +206,7 @@ public static class WebhookEndpoints
         var now = time.GetUtcNow();
         var id = Guid.CreateVersion7(now);
         var secret = WebhookSigner.GenerateSecret();
-        if (!await webhooks.CreateAsync(id, url!, secret, events!, format, description, now, ct))
+        if (!await webhooks.CreateAsync(id, url!, secret, events!, format, description, now, ct, sensitive))
         {
             return Results.Problem(
                 statusCode: StatusCodes.Status409Conflict, title: $"At most {WebhookStore.MaxWebhooks} webhooks are allowed.");
@@ -200,13 +214,13 @@ public static class WebhookEndpoints
 
         http.HttpContext!.Response.Headers.CacheControl = "no-store";
         return Results.Json(
-            new CreatedWebhook(id, url!, events!, format, description, true, now.UtcDateTime, null, secret),
+            new CreatedWebhook(id, url!, events!, format, description, true, now.UtcDateTime, null, sensitive, secret),
             statusCode: StatusCodes.Status201Created);
     }
 
     private static Webhook ToWebhook(WebhookRow r) => new(
         r.Id, r.Url, r.Events, r.Format, r.Description, r.Active, r.CreatedAt,
-        r.LastDeliveryStatus is { } status ? new LastDelivery(status, r.LastDeliveryAt!.Value) : null);
+        r.LastDeliveryStatus is { } status ? new LastDelivery(status, r.LastDeliveryAt!.Value) : null, r.Sensitive);
 
     private static async Task<IResult> ListAsync(WebhookStore webhooks, CancellationToken ct) =>
         Results.Ok(new WebhookList((await webhooks.ListAsync(ct)).Select(ToWebhook).ToList()));

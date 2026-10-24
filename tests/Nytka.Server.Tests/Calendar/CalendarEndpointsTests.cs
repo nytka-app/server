@@ -153,6 +153,19 @@ public sealed class CalendarEndpointsTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_sensitive_commitment_is_neither_a_VTODO_nor_a_VEVENT_for_a_read_token()
+    {
+        var created = await (await Client.PostAsJsonAsync("/api/v1/tasks", new { text = "Book the therapist", due = "2026-10-24" }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        await db.ExecuteAsync("update tasks set sensitivity = 'therapy' where id = @id", new { id = created.GetProperty("id").GetGuid() });
+
+        var response = await _server.CreateClientWithScope("read").GetAsync("/api/v1/calendar.ics?tasks=both");
+        var ics = await response.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("therapist", ics);
+    }
+
+    [Fact]
     public async Task An_unknown_tasks_value_is_refused()
     {
         var response = await Client.GetAsync("/api/v1/calendar.ics?tasks=reminder");

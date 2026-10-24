@@ -6,6 +6,7 @@ using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Memories;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Privacy;
 using Nytka.Server.Settings;
 using Nytka.Storage;
 
@@ -49,7 +50,7 @@ public sealed class MakeDigestHandler(
         var (from, to) = DigestDay.Bounds(date, zone);
         try
         {
-            var input = await digests.ReadDayAsync(from, to, ct);
+            var input = await digests.ReadDayAsync(from, to, ct, PrivacySettings.Hidden(settings));
             if (input.Conversations.Count == 0)
             {
                 return JobOutcome.Done;

@@ -15,7 +15,7 @@ public sealed record TaskRow(
 /// </summary>
 public sealed record AiTask(
     string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null, string? Salience = null,
-    IReadOnlyList<long>? SegmentIds = null);
+    IReadOnlyList<long>? SegmentIds = null, string? Sensitivity = null);
 
 /// <summary>The first line a task cites (<c>task_sources</c>): where its evidence starts.</summary>
 public sealed record TaskSource(Guid TaskId, long SegmentId, Guid ConversationId, DateTime At);
@@ -58,21 +58,22 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     /// stored kind, or null for every kind.
     /// </summary>
     public async Task<IReadOnlyList<TaskRow>> ListAsync(
-        bool done, Guid? conversationId, Guid? before, string? kind, int limit, CancellationToken ct)
+        bool done, Guid? conversationId, Guid? before, string? kind, int limit, CancellationToken ct, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
             Select +
-            """
+            $"""
 
             where t.deleted_at is null and t.done = @done
+              and {Sensitivity.Visible("t")} and (c.id is null or {Sensitivity.Visible("c")})
               and (cast(@conversationId as uuid) is null or t.conversation_id = @conversationId)
               and (cast(@before as uuid) is null or t.id < @before)
               and (cast(@kind as text) is null or t.kind = @kind)
             order by t.id desc
             limit @limit
             """,
-            new { done, conversationId, before, kind, limit }, cancellationToken: ct));
+            new { done, conversationId, before, kind, limit, hidden = hidden ?? [] }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -111,12 +112,13 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>Open commitments with a due date, soonest due first: the <c>calendar.ics</c> feed's <c>VTODO</c>s.</summary>
-    public async Task<IReadOnlyList<TaskRow>> OpenWithDueAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<TaskRow>> OpenWithDueAsync(CancellationToken ct, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<TaskRow>(new CommandDefinition(
-            Select + "\nwhere t.kind = @kind and t.done = false and t.deleted_at is null and t.due_at is not null order by t.due_at, t.id",
-            new { kind = TaskKinds.Commitment }, cancellationToken: ct));
+            Select + "\nwhere t.kind = @kind and t.done = false and t.deleted_at is null and t.due_at is not null"
+            + $" and {Sensitivity.Visible("t")} and (c.id is null or {Sensitivity.Visible("c")}) order by t.due_at, t.id",
+            new { kind = TaskKinds.Commitment, hidden = hidden ?? [] }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -398,6 +400,13 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                     await SourcesAsync(connection, transaction, row.Id, task.SegmentIds, ct);
                 }
 
+                if (row is { Done: false, Edited: false, DeletedAt: null } && task.Sensitivity is not null)
+                {
+                    await connection.ExecuteAsync(new CommandDefinition(
+                        "update tasks set sensitivity = @Sensitivity where id = @Id",
+                        new { row.Id, task.Sensitivity }, transaction, cancellationToken: ct));
+                }
+
                 continue;
             }
 
@@ -427,10 +436,10 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             var id = Guid.CreateVersion7(now.AddMilliseconds(inserted++));
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, due_at, salience, created_at, updated_at)
-                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @Due, @Salience, @now, @now)
+                insert into tasks (id, conversation_id, text, fingerprint, person_id, kind, due_at, salience, sensitivity, created_at, updated_at)
+                values (@id, @conversationId, @Text, @Fingerprint, (select id from people where id = @PersonId), @Kind, @Due, @Salience, @Sensitivity, @now, @now)
                 """,
-                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
+                new { id, conversationId, task.Text, task.Fingerprint, task.PersonId, task.Kind, task.Due, task.Salience, task.Sensitivity, now }, transaction, cancellationToken: ct));
             await SourcesAsync(connection, transaction, id, task.SegmentIds, ct);
             if (match.Unsure is { } duplicateOf)
             {

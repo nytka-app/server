@@ -6,6 +6,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Nytka.Server.Ai;
 using Nytka.Server.Api;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Mcp;
@@ -29,7 +30,7 @@ public sealed record McpTaskList(IReadOnlyList<McpTaskItem> Items, Guid? NextBef
 /// and rules match the REST API. Later versions add tools in their own classes; the assembly scan finds them.
 /// </summary>
 [McpServerToolType]
-public sealed class McpTools(McpQueries queries)
+public sealed class McpTools(McpQueries queries, SensitivityScope sensitivity)
 {
     public const int PreviewLength = 140;
     public const int MaxTranscriptChars = 60_000;
@@ -59,7 +60,7 @@ public sealed class McpTools(McpQueries queries)
         }
 
         var take = Math.Clamp(limit, 1, 50);
-        var rows = await queries.ListConversationsAsync(ParseTime(since, nameof(since)), ParseTime(before, nameof(before)), take, normalized, ct);
+        var rows = await queries.ListConversationsAsync(ParseTime(since, nameof(since)), ParseTime(before, nameof(before)), take, normalized, ct, sensitivity.Hidden);
         var items = rows.Select(r => new McpConversationItem(r.Id, r.StartedAt, r.EndedAt, r.Title, r.Summary, Trim(r.Preview), r.MediaShare, r.Tags)).ToList();
         return Ok(new McpConversationList(items, items.Count == take ? items[^1].StartedAt : null));
     }
@@ -73,12 +74,12 @@ public sealed class McpTools(McpQueries queries)
         CancellationToken ct = default)
     {
         var conversationId = ParseId(id, nameof(id));
-        if (await queries.GetConversationAsync(conversationId, ct) is not { } conversation)
+        if (await queries.GetConversationAsync(conversationId, ct, sensitivity.Hidden) is not { } conversation)
         {
             return Error("No such conversation.");
         }
 
-        var tasks = (await queries.ConversationTasksAsync(conversationId, ct)).Select(t => new McpTask(t.Id, t.Text, t.Done, t.PersonId, t.PersonName, t.Due)).ToList();
+        var tasks = (await queries.ConversationTasksAsync(conversationId, ct, sensitivity.Hidden)).Select(t => new McpTask(t.Id, t.Text, t.Done, t.PersonId, t.PersonName, t.Due)).ToList();
         if (!transcript)
         {
             return Ok(new McpConversation(
@@ -128,7 +129,7 @@ public sealed class McpTools(McpQueries queries)
             conversationId is null ? null : ParseId(conversationId, nameof(conversationId)),
             before is null ? null : ParseId(before, nameof(before)),
             TaskEndpoints.StoredKind(kind),
-            take, ct);
+            take, ct, sensitivity.Hidden);
         return Ok(new McpTaskList(items, items.Count == take ? items[^1].Id : null));
     }
 

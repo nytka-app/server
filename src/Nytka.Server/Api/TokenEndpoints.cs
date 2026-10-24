@@ -18,15 +18,16 @@ public static class TokenEndpoints
         return api;
     }
 
-    public sealed record CreateRequest(string? Name, string? Scope);
+    /// <summary><paramref name="Sensitive"/> trusts the token with sensitive content (privacy.hide), only when it is made.</summary>
+    public sealed record CreateRequest(string? Name, string? Scope, bool? Sensitive = null);
 
     public sealed record Token(
-        Guid Id, string Name, string Scope, string Hint, DateTime CreatedAt, DateTime? LastUsedAt, DateTime? RevokedAt);
+        Guid Id, string Name, string Scope, string Hint, DateTime CreatedAt, DateTime? LastUsedAt, DateTime? RevokedAt, bool Sensitive);
 
     /// <summary>The token as created: the same fields, and <paramref name="Secret"/> (sent as <c>token</c>), which nothing shows again.</summary>
     public sealed record CreatedToken(
         Guid Id, string Name, string Scope, string Hint, DateTime CreatedAt, DateTime? LastUsedAt, DateTime? RevokedAt,
-        string Token);
+        bool Sensitive, string Token);
 
     public sealed record TokenList(IReadOnlyList<Token> Items);
 
@@ -68,7 +69,7 @@ public static class TokenEndpoints
             return Results.ValidationProblem(errors);
         }
 
-        var created = await CreateNamedTokenAsync(tokens, time, name!, request!.Scope!, ct);
+        var created = await CreateNamedTokenAsync(tokens, time, name!, request!.Scope!, ct, request.Sensitive == true);
         if (created is null)
         {
             return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "A token with this name is already in use.");
@@ -80,22 +81,22 @@ public static class TokenEndpoints
 
     /// <summary>Mints a named token: null when the name is already in use by an active token.</summary>
     internal static async Task<CreatedToken?> CreateNamedTokenAsync(
-        TokenStore tokens, TimeProvider time, string name, string scope, CancellationToken ct)
+        TokenStore tokens, TimeProvider time, string name, string scope, CancellationToken ct, bool sensitive = false)
     {
         var now = time.GetUtcNow();
         var id = Guid.CreateVersion7(now);
         var secret = TokenSecret.Generate();
-        if (!await tokens.CreateAsync(id, name, scope, TokenSecret.Hash(secret), TokenSecret.Hint(secret), now, ct))
+        if (!await tokens.CreateAsync(id, name, scope, TokenSecret.Hash(secret), TokenSecret.Hint(secret), now, ct, sensitive))
         {
             return null;
         }
 
-        return new CreatedToken(id, name, scope, TokenSecret.Hint(secret), now.UtcDateTime, null, null, secret);
+        return new CreatedToken(id, name, scope, TokenSecret.Hint(secret), now.UtcDateTime, null, null, sensitive, secret);
     }
 
     private static async Task<IResult> ListAsync(TokenStore tokens, CancellationToken ct) =>
         Results.Ok(new TokenList((await tokens.ListAsync(ct))
-            .Select(t => new Token(t.Id, t.Name, t.Scope, t.Hint, t.CreatedAt, t.LastUsedAt, t.RevokedAt))
+            .Select(t => new Token(t.Id, t.Name, t.Scope, t.Hint, t.CreatedAt, t.LastUsedAt, t.RevokedAt, t.Sensitive))
             .ToList()));
 
     private static async Task<IResult> RevokeAsync(Guid id, TokenStore tokens, TimeProvider time, CancellationToken ct) =>

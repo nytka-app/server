@@ -11,13 +11,13 @@ public class ConversationPromptTests
         var schema = JsonSerializer.Deserialize<JsonElement>(ConversationPrompt.Schema);
 
         Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
-        Assert.Equal(["title", "summary", "items", "tags"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
-        Assert.Equal(["title", "summary", "tags", "items"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["title", "summary", "items", "tags", "sensitivity"], schema.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["title", "summary", "tags", "sensitivity", "items"], schema.GetProperty("properties").EnumerateObject().Select(p => p.Name));
         Assert.Equal("string", schema.GetProperty("properties").GetProperty("tags").GetProperty("items").GetProperty("type").GetString());
         var item = schema.GetProperty("properties").GetProperty("items").GetProperty("items");
         Assert.False(item.GetProperty("additionalProperties").GetBoolean());
-        Assert.Equal(["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
-        Assert.Equal(["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds", "sensitivity"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds", "sensitivity"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
         Assert.Equal(["commitment", "idea", "advice", "noise"], item.GetProperty("properties").GetProperty("kind").GetProperty("enum").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(["wearer", "other"], item.GetProperty("properties").GetProperty("owner").GetProperty("enum").EnumerateArray().Select(p => p.GetString()));
     }

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Nytka.Server.Auth;
 using Nytka.Server.Calendar;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -29,7 +30,8 @@ public static class CalendarEndpoints
 
     /// <summary><c>tasks</c> is <c>todo</c> (the default), <c>event</c> or <c>both</c>: how the commitments are written.</summary>
     private static async Task<IResult> GetAsync(
-        string? tasks, CalendarStore calendar, TaskStore taskStore, TimeProvider time, HttpRequest http, CancellationToken ct)
+        string? tasks, CalendarStore calendar, TaskStore taskStore, SensitivityScope sensitivity, TimeProvider time, HttpRequest http,
+        CancellationToken ct)
     {
         if (tasks is not (null or "todo" or "event" or "both"))
         {
@@ -39,7 +41,7 @@ public static class CalendarEndpoints
         var now = time.GetUtcNow();
         var events = (await calendar.FeedAsync(now, ct))
             .Select(e => new IcsEvent($"{e.Uid}-{e.StartsAt:yyyyMMddTHHmmss}@nytka.local", e.Title, e.StartsAt, e.EndsAt)).ToList();
-        var commitments = await taskStore.OpenWithDueAsync(ct);
+        var commitments = await taskStore.OpenWithDueAsync(ct, sensitivity.Hidden);
         if (tasks is "event" or "both")
         {
             var sources = await taskStore.FirstSourcesAsync([.. commitments.Select(t => t.Id)], ct);

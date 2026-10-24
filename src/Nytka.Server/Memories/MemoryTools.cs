@@ -8,6 +8,7 @@ using Npgsql;
 using Nytka.Server.Api;
 using Nytka.Server.Auth;
 using Nytka.Server.Events;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Memories;
@@ -19,7 +20,8 @@ namespace Nytka.Server.Memories;
 /// <c>tools/call</c> too. Their fields and rules match REST's <c>GET</c> and <c>POST /api/v1/memories</c>.
 /// </summary>
 [McpServerToolType]
-public sealed class MemoryTools(MemoryStore memories, NpgsqlDataSource dataSource, IEventPublisher events, TimeProvider time)
+public sealed class MemoryTools(
+    MemoryStore memories, NpgsqlDataSource dataSource, IEventPublisher events, TimeProvider time, SensitivityScope sensitivity)
 {
     /// <summary>Like REST, every field is written, null ones too.</summary>
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
@@ -44,7 +46,7 @@ public sealed class MemoryTools(MemoryStore memories, NpgsqlDataSource dataSourc
         }
 
         var take = Math.Clamp(limit, 1, MemoryEndpoints.MaxLimit);
-        var element = JsonSerializer.SerializeToElement(await memories.ListAsync(cursor, take, time.GetUtcNow(), ct, expired), Json);
+        var element = JsonSerializer.SerializeToElement(await memories.ListAsync(cursor, take, time.GetUtcNow(), ct, expired, sensitivity.Hidden), Json);
         return new CallToolResult
         {
             Content = [new TextContentBlock { Text = element.GetRawText() }],
