@@ -25,7 +25,8 @@ public static class BackfillEndpoints
 
     public sealed record StepRequest(Dictionary<string, string>? Answers);
 
-    public sealed record StepResponse(string Status, string? Key, string? SchemaName, JsonElement? Schema, string? System, string? User);
+    public sealed record StepResponse(
+        string Status, string? Key, string? SchemaName, JsonElement? Schema, string? System, string? User, string? Reason);
 
     /// <summary>Closed conversations that are not noise, oldest id first, after <paramref name="after"/>.</summary>
     private static async Task<IResult> ConversationsAsync(Guid? after, int? limit, ConversationStore conversations, CancellationToken ct)
@@ -38,7 +39,7 @@ public static class BackfillEndpoints
     /// <summary>
     /// Runs one kind for one conversation with the answers given so far, keyed as <c>key</c> was handed out: <c>200</c> with
     /// <c>done</c>, <c>pending</c> and the next request, <c>busy</c> (open or still transcribing; try later) or <c>invalid</c> (an
-    /// answer broke the schema; ask the model again). <c>400</c> for an unknown kind, <c>404</c> for an unknown conversation.
+    /// answer broke the schema, <c>reason</c> a fixed sentence saying how; ask the model again). <c>400</c> for an unknown kind, <c>404</c> for an unknown conversation.
     /// </summary>
     private static async Task<IResult> StepAsync(
         string kind, Guid id, StepRequest? body, ConversationStore conversations, BackfillService backfill, CancellationToken ct)
@@ -57,6 +58,6 @@ public static class BackfillEndpoints
         return Results.Ok(new StepResponse(
             step.Status, step.Key, step.Request?.SchemaName,
             step.Request is { } request ? JsonDocument.Parse(request.SchemaJson).RootElement.Clone() : null,
-            step.Request?.System, step.Request?.User));
+            step.Request?.System, step.Request?.User, step.Reason));
     }
 }
