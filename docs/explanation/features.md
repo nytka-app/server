@@ -652,6 +652,14 @@ loudspeaker (`kind` `media`) or was in a call (`call`). A range the app sends ho
 `earpiece`, `headset`, `bluetooth` or `other`) and two times, and nothing else: never an app name, a title or a number.
 Android does not tell the app which app plays, and the app does not ask.
 
+Newer apps send more of what the phone knows, each kind behind its own `/api/v1/info` feature: the screen was on
+(`screen`, feature `context-device`), sound went to headphones and not into the room (`headphones`, `context-device`), what
+you were doing (`activity`: still, walking, running, cycling or in a vehicle, `context-activity`), a category of what played
+(`now-playing`: video, music, podcast, messenger, browser or other, mapped on the phone; never the app or the title,
+`context-now-playing`), and the pendant's microphone gain step in effect (`gain`, "0" to "8", `context-gain`). The category,
+activity or step is the range's `detail`. A range of a kind the server does not know, or with a route or detail its kind does
+not take, is refused on its own and listed in the answer's `rejected`, so a newer app never loses a whole batch.
+
 The app sends ranges to `POST /api/v1/context/ranges` in batches of up to 500, each with an id it made, so a batch it
 retries changes nothing. It sends them while `/api/v1/info` lists `context-ranges` and its "Phone context" switch is on.
 `GET /api/v1/context/ranges` lists them. Nothing else reads them yet; they are the context for telling a person near you
