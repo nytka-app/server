@@ -20,7 +20,7 @@ every 30 seconds. The server drops silence with Silero VAD, sends the speech to 
 transcription endpoint and stores the result in Postgres. A conversation ends after two minutes
 without speech (`Nytka__Conversations__Gap`). With a language model you configure, each closed
 conversation gets a title, a summary and tasks, and the server keeps lasting facts about you as
-memories. Search, webhooks and an MCP endpoint (13 read tools, 3 write tools) sit on top. [Architecture](architecture.md)
+memories. Search, webhooks and an MCP endpoint (14 read tools, 3 write tools) sit on top. [Architecture](architecture.md)
 has the detail.
 
 ## What is in the two repositories

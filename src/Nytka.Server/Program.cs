@@ -14,6 +14,7 @@ using Nytka.Server.Mcp;
 using Nytka.Server.Memories;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Quality;
 using Nytka.Server.Search;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
@@ -90,6 +91,7 @@ builder.Services.AddNytkaTags();
 builder.Services.AddNytkaCalendar();
 builder.Services.AddNytkaSpeech();
 builder.Services.AddNytkaUsage();
+builder.Services.AddNytkaQuality();
 builder.Services.AddNytkaBatching();
 
 var app = builder.Build();
@@ -147,6 +149,7 @@ api.MapReview();
 api.MapBriefs();
 api.MapCalendarFeed();
 api.MapUsage();
+api.MapQuality();
 api.MapSummaryTemplates();
 app.MapNytkaMcp();
 
