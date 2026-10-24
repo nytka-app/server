@@ -6,6 +6,7 @@ using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Speech;
 using Nytka.Server.Usage;
+using Nytka.Server.Related;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -38,7 +39,8 @@ public static class ConversationEndpoints
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript,
+        IReadOnlyList<RelatedLink> Related);
 
     /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
     public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
@@ -87,12 +89,12 @@ public static class ConversationEndpoints
 
     private static async Task<IResult> GetAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        IOptions<NytkaOptions> options, CancellationToken ct) =>
-        await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, options, ct);
+        RelatedStore related, IOptions<NytkaOptions> options, CancellationToken ct) =>
+        await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, related, options, ct);
 
     private static async Task<IResult> DetailAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        IOptions<NytkaOptions> options, CancellationToken ct)
+        RelatedStore related, IOptions<NytkaOptions> options, CancellationToken ct)
     {
         if (await conversations.GetAsync(id, ct) is not { } conversation)
         {
@@ -107,13 +109,14 @@ public static class ConversationEndpoints
             await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct), conversation.SummaryTemplate,
             new TranscriptView(
                 conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
-                TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0)));
+                TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0),
+            [.. (await related.ForConversationAsync(id, RelatedRule.MaxLinks, ct)).Select(RelatedLink.From)]));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
     private static async Task<IResult> PatchAsync(
         Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags,
-        TranscriptPassStore passes, IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
+        TranscriptPassStore passes, RelatedStore related, IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
     {
         string? title = null;
         if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("title", out var value))
@@ -135,7 +138,7 @@ public static class ConversationEndpoints
         }
 
         return await conversations.SetTitleAsync(id, title, time.GetUtcNow(), ct)
-            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, options, ct)
+            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, related, options, ct)
             : NotFound();
     }
 
