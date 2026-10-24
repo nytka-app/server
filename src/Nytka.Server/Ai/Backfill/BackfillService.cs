@@ -7,7 +7,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Ai.Backfill;
 
 /// <summary>Where a backfill step stands: <c>done</c>, <c>pending</c> with the next request to answer, <c>busy</c> or <c>invalid</c>.</summary>
-public sealed record BackfillStep(string Status, string? Key = null, LlmRequest? Request = null);
+public sealed record BackfillStep(string Status, string? Key = null, LlmRequest? Request = null, string? Reason = null);
 
 /// <summary>
 /// Runs one kind of model work for one conversation with answers the owner's own model wrote (docs/how-to/backfill-with-claude.md):
@@ -46,10 +46,10 @@ public sealed class BackfillService(IEnumerable<IJobHandler> handlers, MemoryRec
         {
             return new BackfillStep("pending", BackfillSession.KeyOf(request), request);
         }
-        catch (LlmException)
+        catch (LlmException ex)
         {
-            // An answer that does not parse or breaks the schema: the caller asks its model again.
-            return new BackfillStep("invalid");
+            // An answer that does not parse or breaks the schema: the caller asks its model again. The message is a fixed sentence.
+            return new BackfillStep("invalid", Reason: ex.Message);
         }
         finally
         {
