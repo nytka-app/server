@@ -176,7 +176,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
 
         var request = Assert.Single(Llm.Requests);
         Assert.Equal("memories", request.SchemaName);
-        Assert.Contains("\"required\": [\"text\", \"replaces\", \"salience\", \"expires\", \"segmentIds\"]", request.SchemaJson);
+        Assert.Contains("\"required\": [\"text\", \"replaces\", \"salience\", \"expires\", \"segmentIds\", \"sensitivity\"]", request.SchemaJson);
         Assert.Contains("Conversation: Lunch with Anna", request.User);
         Assert.Contains("Date: 2026-09-29 Tuesday", request.User);
         Assert.Contains("\"You\" is Yehor.", request.User);

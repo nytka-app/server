@@ -14,7 +14,8 @@ public static class WebhookFormats
 }
 
 /// <summary>An active webhook that wants an event, and the shape it wants it in.</summary>
-public sealed record WebhookTarget(Guid Id, string Format);
+/// <summary>A webhook an event goes to; <paramref name="Sensitive"/> when the owner trusted it with sensitive content.</summary>
+public sealed record WebhookTarget(Guid Id, string Format, bool Sensitive = false);
 
 /// <summary>A webhook as the API shows it: no secret, and its newest delivery's status and time.</summary>
 /// <remarks>A class, not a record: Dapper cannot pass a <c>text[]</c> to a constructor parameter of type <c>string[]</c>.</remarks>
@@ -31,6 +32,9 @@ public sealed class WebhookRow
     public string? Description { get; init; }
 
     public bool Active { get; init; }
+
+    /// <summary>Trusted with sensitive content (privacy.hide), set only when the webhook was made.</summary>
+    public bool Sensitive { get; init; }
 
     public DateTime CreatedAt { get; init; }
 
@@ -58,7 +62,7 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
     private const string WebhookColumns =
         """
         w.id as Id, w.url as Url, w.events as Events, w.format as Format, w.description as Description, w.active as Active,
-        w.created_at as CreatedAt, d.status as LastDeliveryStatus, d.created_at as LastDeliveryAt
+        w.sensitive as Sensitive, w.created_at as CreatedAt, d.status as LastDeliveryStatus, d.created_at as LastDeliveryAt
         """;
 
     private const string WebhookJoin =
@@ -71,16 +75,17 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
 
     /// <summary>Stores a webhook; false when <see cref="MaxWebhooks"/> already exist.</summary>
     public async Task<bool> CreateAsync(
-        Guid id, string url, string secret, string[] events, string format, string? description, DateTimeOffset now, CancellationToken ct)
+        Guid id, string url, string secret, string[] events, string format, string? description, DateTimeOffset now, CancellationToken ct,
+        bool sensitive = false)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into webhooks (id, url, secret, events, format, description, created_at, updated_at)
-            select @id, @url, @secret, @events, @format, @description, @now, @now
+            insert into webhooks (id, url, secret, events, format, description, sensitive, created_at, updated_at)
+            select @id, @url, @secret, @events, @format, @description, @sensitive, @now, @now
             where (select count(*) from webhooks) < @max
             """,
-            new { id, url, secret, events, format, description, now, max = MaxWebhooks },
+            new { id, url, secret, events, format, description, sensitive, now, max = MaxWebhooks },
             cancellationToken: ct)) == 1;
     }
 
@@ -138,7 +143,7 @@ public sealed class WebhookStore(NpgsqlDataSource dataSource)
     public async Task<IReadOnlyList<WebhookTarget>> ActiveFor(
         NpgsqlConnection connection, NpgsqlTransaction? transaction, string eventType, bool wildcard, CancellationToken ct) =>
         (await connection.QueryAsync<WebhookTarget>(new CommandDefinition(
-            "select id as Id, format as Format from webhooks where active and (@eventType = any(events) or (@wildcard and '*' = any(events))) order by created_at, id",
+            "select id as Id, format as Format, sensitive as Sensitive from webhooks where active and (@eventType = any(events) or (@wildcard and '*' = any(events))) order by created_at, id",
             new { eventType, wildcard }, transaction, cancellationToken: ct))).ToList();
 
     /// <summary>

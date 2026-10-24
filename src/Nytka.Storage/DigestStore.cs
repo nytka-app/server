@@ -42,7 +42,8 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
         "started_at >= @from and started_at < @to and (coalesce(title, ai_title) is not null or ai_summary is not null) "
         + "and coalesce((select sum(extract(epoch from s.ended_at - s.started_at)::float8) filter (where " + SpeechKinds.IsMedia + ") "
         + "/ nullif(sum(extract(epoch from s.ended_at - s.started_at)::float8), 0) from segments s where s.conversation_id = conversations.id), 0) < "
-        + SpeechKinds.MediaShareLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        + SpeechKinds.MediaShareLimit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        + " and " + Sensitivity.Visible("conversations");
 
     private const string Select =
         "select id as Id, to_char(local_date, 'YYYY-MM-DD') as LocalDate, headline as Headline, overview as Overview, body::text as Body, created_at as CreatedAt from digests";
@@ -81,22 +82,23 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>Whether a conversation counts for the digest of <c>[from, to)</c>: the same predicate <see cref="ReadDayAsync"/> reads by.</summary>
-    public async Task<bool> HasConversationsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    public async Task<bool> HasConversationsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
             $"select exists (select 1 from conversations where {CountsForDigest})",
-            new { from = from.ToUniversalTime(), to = to.ToUniversalTime() }, cancellationToken: ct));
+            new { from = from.ToUniversalTime(), to = to.ToUniversalTime(), hidden = hidden ?? [] }, cancellationToken: ct));
     }
 
     /// <summary>
     /// The conversations that started in <c>[from, to)</c> and have a title or a summary, and the live tasks and memories
     /// created in it. One connection, so the three lists describe the same moment.
     /// </summary>
-    public async Task<DigestInput> ReadDayAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    /// <remarks>A conversation, task or memory whose sensitivity <paramref name="hidden"/> names stays out: a digest goes to MCP and webhooks.</remarks>
+    public async Task<DigestInput> ReadDayAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        var args = new { from = from.ToUniversalTime(), to = to.ToUniversalTime() };
+        var args = new { from = from.ToUniversalTime(), to = to.ToUniversalTime(), hidden = hidden ?? [] };
         var total = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             $"select count(*) from conversations where {CountsForDigest}", args, cancellationToken: ct));
         var conversations = (await connection.QueryAsync<DigestConversation>(new CommandDefinition(
@@ -109,10 +111,10 @@ public sealed class DigestStore(NpgsqlDataSource dataSource)
             """,
             args, cancellationToken: ct))).ToList();
         var tasks = (await connection.QueryAsync<string>(new CommandDefinition(
-            $"select text from tasks where deleted_at is null and kind = 'commitment' and created_at >= @from and created_at < @to order by created_at, id limit {MaxTasks}",
+            $"select text from tasks t where deleted_at is null and kind = 'commitment' and created_at >= @from and created_at < @to and {Sensitivity.Visible("t")} order by created_at, id limit {MaxTasks}",
             args, cancellationToken: ct))).ToList();
         var memories = (await connection.QueryAsync<string>(new CommandDefinition(
-            $"select text from memories where deleted_at is null and confirmed and created_at >= @from and created_at < @to order by created_at, id limit {MaxMemories}",
+            $"select text from memories m where deleted_at is null and confirmed and created_at >= @from and created_at < @to and {Sensitivity.Visible("m")} order by created_at, id limit {MaxMemories}",
             args, cancellationToken: ct))).ToList();
         return new DigestInput(conversations, total, tasks, memories);
     }

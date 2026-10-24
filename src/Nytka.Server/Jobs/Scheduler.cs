@@ -4,6 +4,7 @@ using Nytka.Server.Calendar;
 using Nytka.Server.Digests;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Privacy;
 using Nytka.Server.Quality;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
@@ -145,7 +146,7 @@ public sealed class Scheduler(
     {
         var text = DigestDay.Text(date);
         var (from, to) = DigestDay.Bounds(date, zone);
-        if (!await digests.ExistsAsync(text, ct) && await digests.HasConversationsAsync(from, to, ct))
+        if (!await digests.ExistsAsync(text, ct) && await digests.HasConversationsAsync(from, to, ct, PrivacySettings.Hidden(settings)))
         {
             await queue.EnqueueAsync(JobKinds.MakeDigest, new DigestPayload(text, false), JobKinds.MakeDigestKey(text), now, ct);
         }

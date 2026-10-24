@@ -23,7 +23,7 @@ public sealed record MemoryPage(IReadOnlyList<MemoryRow> Items, Guid? NextBefore
 /// </remarks>
 public sealed record MemoryCandidate(
     string Text, string Fingerprint, Guid? Replaces, string? Salience = null, DateTimeOffset? ExpiresAt = null,
-    IReadOnlyList<long>? SegmentIds = null, bool Confirmed = true);
+    IReadOnlyList<long>? SegmentIds = null, bool Confirmed = true, string? Sensitivity = null);
 
 /// <summary>A memory as the prompt lists it: <c>id: text</c>.</summary>
 public sealed record KnownMemory(Guid Id, string Text);
@@ -47,18 +47,19 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
     /// Newest first by id (ids are UUID v7). Deleted memories are left out, and so are memories expired at <paramref name="now"/>
     /// unless <paramref name="expired"/>. <c>NextBefore</c> is the last id of a page that has more behind it, else null.
     /// </summary>
-    public async Task<MemoryPage> ListAsync(Guid? before, int limit, DateTimeOffset now, CancellationToken ct, bool expired = false)
+    public async Task<MemoryPage> ListAsync(
+        Guid? before, int limit, DateTimeOffset now, CancellationToken ct, bool expired = false, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = (await connection.QueryAsync<MemoryRow>(new CommandDefinition(
             $"""
             {SelectMemory}
             where m.deleted_at is null and (cast(@before as uuid) is null or m.id < cast(@before as uuid))
-              and m.confirmed and (@expired or {Live})
+              and m.confirmed and (@expired or {Live}) and {Sensitivity.Visible("m")}
             order by m.id desc
             limit @fetch
             """,
-            new { before, fetch = limit + 1, now, expired }, cancellationToken: ct))).ToList();
+            new { before, fetch = limit + 1, now, expired, hidden = hidden ?? [] }, cancellationToken: ct))).ToList();
         var items = rows.Take(limit).ToList();
         return new MemoryPage(items, rows.Count > limit ? items[^1].Id : null);
     }
@@ -235,10 +236,10 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
                     """
                     update memories
                     set text = @text, fingerprint = @fingerprint, conversation_id = @conversationId, salience = @Salience,
-                        expires_at = @ExpiresAt, updated_at = @now
+                        expires_at = @ExpiresAt, sensitivity = coalesce(@Sensitivity, sensitivity), updated_at = @now
                     where id = @replaces and deleted_at is null and edited = false and source = 'ai'
                     """,
-                    new { replaces, text = candidate.Text, fingerprint, conversationId, candidate.Salience, candidate.ExpiresAt, now }, transaction, cancellationToken: ct)) > 0)
+                    new { replaces, text = candidate.Text, fingerprint, conversationId, candidate.Salience, candidate.ExpiresAt, candidate.Sensitivity, now }, transaction, cancellationToken: ct)) > 0)
             {
                 rewritten.Add(replaces);
                 await SourcesAsync(connection, transaction, replaces, candidate.SegmentIds, ct);
@@ -248,11 +249,11 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
             var id = Guid.CreateVersion7(now);
             if (await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into memories (id, text, fingerprint, source, conversation_id, salience, expires_at, confirmed, created_at, updated_at)
-                values (@id, @text, @fingerprint, 'ai', @conversationId, @Salience, @ExpiresAt, @Confirmed, @now, @now)
+                insert into memories (id, text, fingerprint, source, conversation_id, salience, expires_at, confirmed, sensitivity, created_at, updated_at)
+                values (@id, @text, @fingerprint, 'ai', @conversationId, @Salience, @ExpiresAt, @Confirmed, @Sensitivity, @now, @now)
                 on conflict (fingerprint) do nothing
                 """,
-                new { id, text = candidate.Text, fingerprint, conversationId, candidate.Salience, candidate.ExpiresAt, candidate.Confirmed, now },
+                new { id, text = candidate.Text, fingerprint, conversationId, candidate.Salience, candidate.ExpiresAt, candidate.Confirmed, candidate.Sensitivity, now },
                 transaction, cancellationToken: ct)) > 0)
             {
                 await SourcesAsync(connection, transaction, id, candidate.SegmentIds, ct);

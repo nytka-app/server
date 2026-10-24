@@ -1,4 +1,5 @@
 using Nytka.Server.Auth;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -17,7 +18,8 @@ public static class NoteEndpoints
 
     public sealed record NotePage(IReadOnlyList<NoteRow> Items, Guid? NextBefore);
 
-    private static async Task<IResult> ListAsync(string? topic, Guid? conversationId, Guid? before, int? limit, NoteStore notes, CancellationToken ct)
+    private static async Task<IResult> ListAsync(
+        string? topic, Guid? conversationId, Guid? before, int? limit, NoteStore notes, SensitivityScope sensitivity, CancellationToken ct)
     {
         var normalized = TagName.Normalize(topic);
         if (topic is not null && normalized is null)
@@ -26,7 +28,7 @@ public static class NoteEndpoints
         }
 
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
-        var items = await notes.ListAsync(normalized, conversationId, before, take, ct);
+        var items = await notes.ListAsync(normalized, conversationId, before, take, ct, sensitivity.Hidden);
         return Results.Ok(new NotePage(items, items.Count == take ? items[^1].Id : null));
     }
 }
