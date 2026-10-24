@@ -40,11 +40,12 @@ public sealed class ExtractMemoriesHandler(
         """
         { "type": "object", "additionalProperties": false, "required": ["memories"],
           "properties": { "memories": { "type": "array", "items": { "type": "object",
-            "additionalProperties": false, "required": ["text", "replaces", "salience", "expires", "segmentIds"],
+            "additionalProperties": false, "required": ["text", "replaces", "salience", "expires", "segmentIds", "sensitivity"],
             "properties": { "text": { "type": "string" }, "replaces": { "type": ["string", "null"] },
                             "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
                             "expires": { "type": ["string", "null"] },
-                            "segmentIds": { "type": "array", "items": { "type": "integer" } } } } } } }
+                            "segmentIds": { "type": "array", "items": { "type": "integer" } },
+                            "sensitivity": { "type": "string", "enum": ["none", "health", "therapy", "intimate", "money"] } } } } } }
         """;
 
     public string Kind => JobKinds.ExtractMemories;
@@ -54,7 +55,8 @@ public sealed class ExtractMemoriesHandler(
 
     /// <summary>A proposed fact. <paramref name="Salience"/> and <paramref name="Expires"/> are missing in answers from before they existed.</summary>
     public sealed record Candidate(
-        string Text, string? Replaces, string? Salience = null, string? Expires = null, IReadOnlyList<long>? SegmentIds = null);
+        string Text, string? Replaces, string? Salience = null, string? Expires = null, IReadOnlyList<long>? SegmentIds = null,
+        string? Sensitivity = null);
 
     public sealed record Answer(IReadOnlyList<Candidate> Memories);
 
@@ -127,7 +129,7 @@ public sealed class ExtractMemoriesHandler(
                 var cited = Cited(candidate.SegmentIds, input.Segments);
                 pooled.Add(new MemoryCandidate(
                     text, fingerprint, replaces, Salience.Parse(candidate.Salience), ExpiresAt(candidate.Expires, from, zone),
-                    cited, candidate.SegmentIds is null || IsGrounded(cited, input.Segments)));
+                    cited, candidate.SegmentIds is null || IsGrounded(cited, input.Segments), Storage.Sensitivity.Parse(candidate.Sensitivity)));
             }
         }
 
@@ -197,6 +199,7 @@ public sealed class ExtractMemoriesHandler(
         Times and dates are in the time zone {timeZone}. Write dates in a fact as absolute dates, never as "tomorrow" or "Friday".
         Write each fact as one short sentence, at most {MaxTextLength} characters, in {outputLanguage}.
         Some facts are true only for a while: where you are staying, an illness, a job you are about to leave, a plan with a date. Set "expires" to the last date (YYYY-MM-DD) the fact is still true when the transcript says it or makes it plain, and to null for a lasting fact; never guess a date.
+        Set "sensitivity" to "health", "therapy", "intimate" or "money" for a fact about your health, a therapy or counselling session, your sex life or the private side of a relationship, or your money; "none" otherwise.
         Set "salience" to "vital" for what shapes your life (family, health, home, work, money, a big decision), "noise" for trivia (a passing taste or opinion), and "ordinary" for the rest.
         Return at most {MaxMemoriesPerRun} facts, none that a known memory already states. When a fact updates a
         known memory, set "replaces" to that memory's id, otherwise to null. Return an empty list when there is

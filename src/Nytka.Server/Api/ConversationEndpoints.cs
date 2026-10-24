@@ -4,6 +4,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Auth;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Privacy;
 using Nytka.Server.Speech;
 using Nytka.Server.Usage;
 using Nytka.Storage;
@@ -42,7 +43,7 @@ public static class ConversationEndpoints
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
         IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript,
-        IReadOnlyList<TopicRef> Topics);
+        string? Sensitivity, IReadOnlyList<TopicRef> Topics);
 
     /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
     public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
@@ -63,7 +64,7 @@ public static class ConversationEndpoints
     /// <summary><c>media</c> is <c>hide</c> (leave out conversations that are mostly media) or <c>only</c> (keep just those), else <c>400</c>.</summary>
     private static async Task<IResult> ListAsync(
         DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, string? media, string? noise, ConversationStore conversations,
-        TopicStore topics, CancellationToken ct)
+        SensitivityScope sensitivity, TopicStore topics, CancellationToken ct)
     {
         var normalized = TagName.Normalize(tag);
         if (tag is not null && normalized is null)
@@ -83,7 +84,7 @@ public static class ConversationEndpoints
 
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         // Npgsql takes only UTC offsets for timestamptz.
-        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, media, ct, noise))
+        var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, media, ct, noise, sensitivity.Hidden))
             .Select(c => c.Preview.Length > PreviewLength ? c with { Preview = c.Preview[..(char.IsHighSurrogate(c.Preview[PreviewLength - 1]) ? PreviewLength - 1 : PreviewLength)] } : c)
             .ToList();
         var topicsOf = await topics.ForConversationsAsync([.. items.Select(c => c.Id)], MaxTopics, ct);
@@ -91,10 +92,13 @@ public static class ConversationEndpoints
         return Results.Ok(new ConversationPage(items, items.Count == take ? items[^1].StartedAt : null));
     }
 
+    /// <summary>The detail; a conversation whose sensitivity the reader may not see is a 404, as if it did not exist.</summary>
     private static async Task<IResult> GetAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        TopicStore topics, IOptions<NytkaOptions> options, CancellationToken ct) =>
-        await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, options, ct);
+        TopicStore topics, IOptions<NytkaOptions> options, SensitivityScope sensitivity, CancellationToken ct) =>
+        await conversations.GetAsync(id, ct) is { Sensitivity: { } kind } && sensitivity.Hidden.Contains(kind)
+            ? NotFound()
+            : await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, options, ct);
 
     private static async Task<IResult> DetailAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
@@ -114,6 +118,7 @@ public static class ConversationEndpoints
             new TranscriptView(
                 conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
                 TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0),
+            conversation.Sensitivity,
             (await topics.ForConversationsAsync([id], MaxTopics, ct)).GetValueOrDefault(id) ?? []));
     }
 

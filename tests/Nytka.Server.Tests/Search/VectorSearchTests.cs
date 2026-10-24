@@ -193,6 +193,25 @@ public sealed class VectorSearchTests(VectorPostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_hidden_conversation_or_memory_found_only_by_meaning_stays_out_for_a_read_token()
+    {
+        var conversation = await SearchSeed.ConversationAsync(
+            db.DataSource, SearchSeed.T0, aiTitle: "Work", segments: ["моя зарплата виросла цього місяця"]);
+        var memory = await SearchSeed.MemoryAsync(db.DataSource, "Keeps his money in two banks");
+        await db.ExecuteAsync("update conversations set sensitivity = 'money' where id = @conversation", new { conversation });
+        await db.ExecuteAsync("update memories set sensitivity = 'money' where id = @memory", new { memory });
+        await IndexAsync();
+
+        var read = Ids(await _server.CreateClientWithScope("read").GetFromJsonAsync<JsonElement>("/api/v1/search?q=budget"));
+        var admin = Ids(await Get("q=budget"));
+
+        Assert.DoesNotContain(conversation, read);
+        Assert.DoesNotContain(memory, read);
+        Assert.Contains(conversation, admin);
+        Assert.Contains(memory, admin);
+    }
+
+    [Fact]
     public async Task Filters_apply_to_vector_hits_as_to_words()
     {
         var tagged = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, segments: ["we talked about the salary review"]);

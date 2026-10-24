@@ -20,7 +20,7 @@ public sealed class TopicTests(PostgresFixture db) : Ai.AiTestBase(db)
         var id = await SeedAt(end, "closed", Talk);
         await Db.ExecuteAsync(
             """
-            update conversations set ai_title = @title, ai_summary = @summary, ai_status = 'done', ai_updated_at = now(),
+            update conversations set ai_title = @title, ai_summary = @summary, ai_status = 'done', ai_updated_at = now(), sensitivity = 'none',
                 ai_through_segment_id = (select max(id) from segments where conversation_id = @id)
             where id = @id;
             insert into tags (id, name, created_at) values (gen_random_uuid(), @tag, now()) on conflict (name) do nothing;
@@ -121,6 +121,32 @@ public sealed class TopicTests(PostgresFixture db) : Ai.AiTestBase(db)
         var page = await client.GetFromJsonAsync<JsonElement>($"/api/v1/topics/{id}");
         Assert.Equal(["Buy new balls"], page.GetProperty("commitments").EnumerateArray().Select(t => t.GetProperty("text").GetString()));
         Assert.Equal(1, page.GetProperty("openCommitments").GetInt32());
+    }
+
+    [Fact]
+    public async Task A_sensitive_or_unclassified_conversation_is_never_folded_and_a_sensitive_one_is_off_a_read_tokens_timeline()
+    {
+        EnableTopics();
+        Llm.Respond = r => r.SchemaName == TopicPrompt.SchemaName ? Page("Tennis.") : FakeLlm.DefaultAnswer;
+        for (var i = 0; i < 3; i++)
+        {
+            await SummarizedAsync(Now.AddDays(-4 + i), $"Tennis {i}", $"Tennis {i}.", "tennis");
+        }
+
+        var therapy = await SummarizedAsync(Now.AddDays(-1), "Session", "They talked about anxiety.", "tennis");
+        await Db.ExecuteAsync("update conversations set sensitivity = 'therapy' where id = @therapy", new { therapy });
+        var unclassified = await SummarizedAsync(Now.AddHours(-2), "Later", "Not classified yet.", "tennis");
+        await Db.ExecuteAsync("update conversations set sensitivity = null where id = @unclassified", new { unclassified });
+
+        await TickAndRun();
+
+        Assert.DoesNotContain(Folds(), r => r.User.Contains("anxiety", StringComparison.Ordinal) || r.User.Contains("Not classified", StringComparison.Ordinal));
+        var id = await Db.ScalarAsync<Guid>("select id from topics");
+        var admin = await Server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>($"/api/v1/topics/{id}");
+        Assert.Contains(admin.GetProperty("timeline").EnumerateArray(), m => m.GetProperty("conversationId").GetGuid() == therapy);
+        var reader = await Server.CreateClientWithScope("read").GetFromJsonAsync<JsonElement>($"/api/v1/topics/{id}");
+        Assert.DoesNotContain(reader.GetProperty("timeline").EnumerateArray(), m => m.GetProperty("conversationId").GetGuid() == therapy);
+        Assert.Equal(4, reader.GetProperty("moments").GetInt32());
     }
 
     [Fact]

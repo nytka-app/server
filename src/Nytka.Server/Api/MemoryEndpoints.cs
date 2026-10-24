@@ -1,7 +1,8 @@
 using System.Text.Json;
+using Nytka.Server.Ai;
 using Nytka.Server.Auth;
 using Nytka.Server.Events;
-using Nytka.Server.Ai;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 using Npgsql;
 
@@ -29,10 +30,10 @@ public static class MemoryEndpoints
     internal sealed record ValidText(string? Text, string? Fingerprint, IResult? Problem);
 
     private static async Task<IResult> ListAsync(
-        Guid? before, int? limit, bool? expired, MemoryStore memories, TimeProvider time, CancellationToken ct)
+        Guid? before, int? limit, bool? expired, MemoryStore memories, TimeProvider time, SensitivityScope sensitivity, CancellationToken ct)
     {
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
-        return Results.Ok(await memories.ListAsync(before, take, time.GetUtcNow(), ct, expired == true));
+        return Results.Ok(await memories.ListAsync(before, take, time.GetUtcNow(), ct, expired == true, sensitivity.Hidden));
     }
 
     private static async Task<IResult> CreateAsync(

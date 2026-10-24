@@ -23,7 +23,11 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-api() { curl -fsS -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" -H "Content-Type: application/json" "$@"; }
+# --retry covers 502, 503 and refused connections, with a doubling delay, so a deploy restart does not end the run.
+api() {
+  curl -fsS --retry 8 --retry-connrefused --retry-max-time 600 \
+    -H "Authorization: Bearer $NYTKA_ADMIN_TOKEN" -H "Content-Type: application/json" "$@"
+}
 
 # Every conversation a backfill may run on, with how many memories a re-check would judge.
 candidates="$(mktemp)"
@@ -46,17 +50,22 @@ fi
 calls=0
 ask() {
   # $1 = response of a step that is pending. Prints the model's JSON answer.
-  local step="$1" system user schema raw
+  local step="$1" system user schema out
   system="$(jq -r '.system' <<<"$step")"
   user="$(jq -r '.user' <<<"$step")"
   schema="$(jq -c '.schema' <<<"$step")"
   # stdin from /dev/null, so claude never reads the list of conversations the loop below is reading.
-  raw="$(claude -p ${model_args[@]+"${model_args[@]}"} --output-format json --max-turns 1 --system-prompt "$system" \
+  out="$(claude -p ${model_args[@]+"${model_args[@]}"} --output-format json --max-turns 1 --system-prompt "$system" \
     "$user
 
-Answer with one JSON object and nothing else, no code fence, that matches this JSON schema: $schema" </dev/null | jq -r '.result')"
+Answer with one JSON object and nothing else, no code fence, that matches this JSON schema: $schema" </dev/null)" || true
+  # A CLI failure (signed out, usage limit) is no answer: stop the run rather than spend the server's retries on it.
+  if ! jq -e 'type == "object" and (.is_error | not)' >/dev/null 2>&1 <<<"$out"; then
+    echo "claude CLI error: sign in again with \`claude\` and rerun" >&2
+    return 1
+  fi
   # Tolerate a code fence the model added anyway.
-  sed -e 's/^```json//' -e 's/^```//' -e 's/```$//' <<<"$raw"
+  jq -r '.result' <<<"$out" | sed -e 's/^```json//' -e 's/^```//' -e 's/```$//'
 }
 
 run() {
@@ -70,11 +79,12 @@ run() {
       busy) echo "  $kind $id: busy, skipped"; return 0 ;;
       invalid)
         invalid=$((invalid + 1))
+        echo "  $kind $id: invalid answer: $(jq -r '.reason // "no reason given"' <<<"$step")"
         [[ $invalid -lt 3 ]] || { echo "  $kind $id: 3 invalid answers, skipped"; return 0; }
         answers='{}' ;;
       pending)
         key="$(jq -r '.key' <<<"$step")"
-        answer="$(ask "$step")"
+        answer="$(ask "$step")" || exit 3
         calls=$((calls + 1))
         if ! jq -e . >/dev/null 2>&1 <<<"$answer"; then
           answer='{}'

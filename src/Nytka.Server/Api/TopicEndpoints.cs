@@ -1,4 +1,5 @@
 using Nytka.Server.Auth;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -30,7 +31,8 @@ public static class TopicEndpoints
         DateTime UpdatedAt, IReadOnlyList<TopicMoment> Timeline, DateTime? NextBefore, IReadOnlyList<TaskRow> Commitments);
 
     /// <summary><c>kind</c> is <c>tag</c> or <c>person</c>; <c>q</c> keeps names that start with it.</summary>
-    private static async Task<IResult> ListAsync(string? kind, string? q, int? limit, TopicStore topics, CancellationToken ct)
+    private static async Task<IResult> ListAsync(
+        string? kind, string? q, int? limit, TopicStore topics, SensitivityScope sensitivity, CancellationToken ct)
     {
         if (kind is not (null or TopicStore.Tag or TopicStore.Person))
         {
@@ -38,29 +40,32 @@ public static class TopicEndpoints
         }
 
         return Results.Ok(new TopicList(await topics.ListAsync(
-            kind, string.IsNullOrWhiteSpace(q) ? null : q.Trim(), Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit), ct)));
+            kind, string.IsNullOrWhiteSpace(q) ? null : q.Trim(), sensitivity.Hidden, Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit), ct)));
     }
 
     /// <summary>The page; <c>before</c> (an instant) and <c>limit</c> page the timeline, newest first.</summary>
     private static async Task<IResult> GetAsync(
-        Guid id, DateTimeOffset? before, int? limit, TopicStore topics, TaskStore tasks, CancellationToken ct) =>
-        await PageAsync(id, before, limit, topics, tasks, ct) is { } page
+        Guid id, DateTimeOffset? before, int? limit, TopicStore topics, TaskStore tasks, SensitivityScope sensitivity, CancellationToken ct) =>
+        await PageAsync(id, before, limit, topics, tasks, sensitivity.Hidden, ct) is { } page
             ? Results.Ok(page)
             : Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "No such topic.");
 
-    /// <summary>Shared with the MCP tool, so both return the same page; null when there is no such topic.</summary>
+    /// <summary>
+    /// Shared with the MCP tool, so both return the same page; null when there is no such topic. Its counts, timeline and
+    /// commitments leave out what is of a class in <paramref name="hidden"/>; the summary never holds it.
+    /// </summary>
     public static async Task<TopicPage?> PageAsync(
-        Guid id, DateTimeOffset? before, int? limit, TopicStore topics, TaskStore tasks, CancellationToken ct)
+        Guid id, DateTimeOffset? before, int? limit, TopicStore topics, TaskStore tasks, string[] hidden, CancellationToken ct)
     {
-        if (await topics.GetAsync(id, ct) is not { } topic)
+        if (await topics.GetAsync(id, ct, hidden) is not { } topic)
         {
             return null;
         }
 
         var take = Math.Clamp(limit ?? TimelineLimit, 1, MaxTimeline);
-        var timeline = await topics.TimelineAsync(id, before?.ToUniversalTime(), take, ct);
+        var timeline = await topics.TimelineAsync(id, before?.ToUniversalTime(), hidden, take, ct);
         var commitments = new List<TaskRow>();
-        foreach (var taskId in await topics.OpenCommitmentsAsync(id, MaxCommitments, ct))
+        foreach (var taskId in await topics.OpenCommitmentsAsync(id, hidden, MaxCommitments, ct))
         {
             if (await tasks.GetAsync(taskId, ct) is { } task)
             {

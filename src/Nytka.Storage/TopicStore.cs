@@ -41,13 +41,21 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
 
     private const string Name = "coalesce(t.name, p.name)";
 
-    private const string SelectTopic =
+    /// <summary>
+    /// SQL for whether the conversation aliased <c>c</c> may go into a page: one classified as not sensitive. A page is shown to every
+    /// reader, so a conversation not yet classified waits for the classification (docs/explanation/features.md#sensitive-content).
+    /// </summary>
+    public const string Foldable = "c.sensitivity = 'none'";
+
+    private static readonly string SelectTopic =
         $"""
         select tp.id as Id, tp.kind as Kind, {Name} as Name, tp.tag_id as TagId, tp.person_id as PersonId, tp.summary as Summary,
-               (select count(*)::int from conversations c where c.id in {Members}) as Moments,
-               (select count(*)::int from tasks k where k.done = false and k.deleted_at is null and k.kind = 'commitment'
+               (select count(*)::int from conversations c where c.id in {Members} and {Sensitivity.Visible("c")}) as Moments,
+               (select count(*)::int from tasks k left join conversations kc on kc.id = k.conversation_id
+                where k.done = false and k.deleted_at is null and k.kind = 'commitment' and {Sensitivity.Visible("k")}
+                  and (kc.id is null or {Sensitivity.Visible("kc")})
                   and (k.conversation_id in {Members} or (tp.kind = 'person' and k.person_id = tp.person_id))) as OpenCommitments,
-               (select max(c.started_at) from conversations c where c.id in {Members}) as LastAt,
+               (select max(c.started_at) from conversations c where c.id in {Members} and {Sensitivity.Visible("c")}) as LastAt,
                tp.updated_at as UpdatedAt
         from topics tp
         left join tags t on t.id = tp.tag_id
@@ -86,7 +94,7 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
             $"""
             select tp.id from topics tp
             where tp.failures < @maxFailures and exists (
-                select 1 from conversations c where c.id in {Members} and c.ai_summary is not null
+                select 1 from conversations c where c.id in {Members} and c.ai_summary is not null and {Foldable}
                 and not exists (select 1 from topic_folds f where f.topic_id = tp.id and f.conversation_id = c.id))
             order by tp.updated_at, tp.id limit @limit
             """,
@@ -101,7 +109,7 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
             $"""
             select c.id as ConversationId, c.started_at as StartedAt, coalesce(c.title, c.ai_title) as Title, c.ai_summary as Summary
             from topics tp join conversations c on c.id in {Members}
-            where tp.id = @topicId and c.ai_summary is not null
+            where tp.id = @topicId and c.ai_summary is not null and {Foldable}
               and not exists (select 1 from topic_folds f where f.topic_id = tp.id and f.conversation_id = c.id)
             order by c.started_at, c.id limit @limit
             """,
@@ -135,7 +143,7 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
     /// Topics with at least one conversation, most recent first; <paramref name="kind"/> keeps tag or person pages, <paramref name="prefix"/>
     /// those whose name starts with it (any case).
     /// </summary>
-    public async Task<IReadOnlyList<TopicRow>> ListAsync(string? kind, string? prefix, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<TopicRow>> ListAsync(string? kind, string? prefix, string[] hidden, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<TopicRow>(new CommandDefinition(
@@ -147,18 +155,19 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
             order by x.LastAt desc nulls last, x.Id
             limit @limit
             """,
-            new { kind, prefix = prefix?.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_"), limit }, cancellationToken: ct))).ToList();
+            new { kind, prefix = prefix?.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_"), hidden, limit }, cancellationToken: ct))).ToList();
     }
 
-    public async Task<TopicRow?> GetAsync(Guid id, CancellationToken ct)
+    /// <summary>The topic, its counts left to what a reader that hides <paramref name="hidden"/> may see (empty for the jobs).</summary>
+    public async Task<TopicRow?> GetAsync(Guid id, CancellationToken ct, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<TopicRow>(new CommandDefinition(
-            $"{SelectTopic} where tp.id = @id", new { id }, cancellationToken: ct));
+            $"{SelectTopic} where tp.id = @id", new { id, hidden = hidden ?? [] }, cancellationToken: ct));
     }
 
     /// <summary>The topic's conversations, newest first, started before <paramref name="before"/> when given.</summary>
-    public async Task<IReadOnlyList<TopicMoment>> TimelineAsync(Guid id, DateTimeOffset? before, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<TopicMoment>> TimelineAsync(Guid id, DateTimeOffset? before, string[] hidden, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<TopicMoment>(new CommandDefinition(
@@ -170,24 +179,26 @@ public sealed class TopicStore(NpgsqlDataSource dataSource)
                 select s.id, s.started_at from segments s {SpeakerLabel.Joins}
                 where tp.kind = 'person' and s.conversation_id = c.id and {SpeakerLabel.PersonId} = tp.person_id
                 order by s.started_at, s.id limit 1) first on true
-            where tp.id = @id and (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz))
+            where tp.id = @id and (cast(@before as timestamptz) is null or c.started_at < cast(@before as timestamptz)) and {Sensitivity.Visible("c")}
             order by c.started_at desc, c.id
             limit @limit
             """,
-            new { id, before, limit }, cancellationToken: ct))).ToList();
+            new { id, before, hidden, limit }, cancellationToken: ct))).ToList();
     }
 
     /// <summary>The ids of the topic's open commitments, newest first: said in one of its conversations or, for a person, owed to them.</summary>
-    public async Task<IReadOnlyList<Guid>> OpenCommitmentsAsync(Guid id, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<Guid>> OpenCommitmentsAsync(Guid id, string[] hidden, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<Guid>(new CommandDefinition(
             $"""
             select k.id from topics tp join tasks k on k.conversation_id in {Members} or (tp.kind = 'person' and k.person_id = tp.person_id)
+            left join conversations kc on kc.id = k.conversation_id
             where tp.id = @id and k.done = false and k.deleted_at is null and k.kind = 'commitment'
+              and {Sensitivity.Visible("k")} and (kc.id is null or {Sensitivity.Visible("kc")})
             order by k.id desc limit @limit
             """,
-            new { id, limit }, cancellationToken: ct))).ToList();
+            new { id, hidden, limit }, cancellationToken: ct))).ToList();
     }
 
     /// <summary>The topics of each conversation, at most <paramref name="perConversation"/>, the most recent pages first.</summary>

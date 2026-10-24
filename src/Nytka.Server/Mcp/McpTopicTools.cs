@@ -5,13 +5,14 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Nytka.Server.Api;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Mcp;
 
 /// <summary>The <c>list_topics</c> and <c>get_topic</c> tools: the fields and limits of <c>GET /api/v1/topics</c> and <c>/topics/{id}</c>.</summary>
 [McpServerToolType]
-public sealed class McpTopicTools(TopicStore topics, TaskStore tasks)
+public sealed class McpTopicTools(TopicStore topics, TaskStore tasks, SensitivityScope sensitivity)
 {
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
     {
@@ -31,7 +32,7 @@ public sealed class McpTopicTools(TopicStore topics, TaskStore tasks)
             throw new McpProtocolException("kind must be tag or person.", McpErrorCode.InvalidParams);
         }
 
-        var items = await topics.ListAsync(kind, string.IsNullOrWhiteSpace(q) ? null : q.Trim(), Math.Clamp(limit, 1, TopicEndpoints.MaxLimit), ct);
+        var items = await topics.ListAsync(kind, string.IsNullOrWhiteSpace(q) ? null : q.Trim(), sensitivity.Hidden, Math.Clamp(limit, 1, TopicEndpoints.MaxLimit), ct);
         return Result(new TopicEndpoints.TopicList(items));
     }
 
@@ -52,7 +53,7 @@ public sealed class McpTopicTools(TopicStore topics, TaskStore tasks)
                 : throw new McpProtocolException("before must be an ISO 8601 time with an offset.", McpErrorCode.InvalidParams);
         }
 
-        var page = await TopicEndpoints.PageAsync(topicId, beforeTime, limit, topics, tasks, ct)
+        var page = await TopicEndpoints.PageAsync(topicId, beforeTime, limit, topics, tasks, sensitivity.Hidden, ct)
             ?? throw new McpProtocolException("No such topic.", McpErrorCode.InvalidParams);
         return Result(page);
     }
