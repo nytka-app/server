@@ -9,6 +9,7 @@ using Nytka.Server.Quality;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
 using Nytka.Server.Tags;
+using Nytka.Server.Topics;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
@@ -18,13 +19,13 @@ namespace Nytka.Server.Jobs;
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
 /// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs, the
-/// quality metrics and the speech kinds' follow-up of their settings. Dedupe keys make every call safe to repeat.
+/// quality metrics, the speech kinds' follow-up of their settings and the topic pages with conversations to fold in. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
     CalendarQueue calendar, QualityQueue quality, SpeechStore speech, BatchRetryQueue batchRetries,
-    SpeakerModel speaker, TagStore tags, TimeProvider time)
+    SpeakerModel speaker, TagStore tags, TopicStore topics, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -33,6 +34,12 @@ public sealed class Scheduler(
     private const int ClassifyPerTick = 50;
 
     private const int ConsecutiveFailuresBeforeProbing = 3;
+
+    /// <summary>The most topic pages one tick queues.</summary>
+    private const int FoldPerTick = 20;
+
+    /// <summary>A tag or a named person gets a page once it is on this many conversations.</summary>
+    public const int TopicMinConversations = 3;
 
     public async Task TickAsync(CancellationToken ct)
     {
@@ -59,6 +66,22 @@ public sealed class Scheduler(
         await calendar.QueueAsync(now, ct);
         await QueueApplySpeechAsync(now, ct);
         await QueueClassifySpeechAsync(now, ct);
+        await QueueTopicsAsync(now, ct);
+    }
+
+    /// <summary>Starts the pages that are due and queues <c>fold-topic</c> for those with conversations to take in, while <c>topics.enabled</c>.</summary>
+    private async Task QueueTopicsAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (!llm.IsConfigured || !TopicSettings.Enabled(settings))
+        {
+            return;
+        }
+
+        await topics.EnsureAsync(TopicMinConversations, now, ct);
+        foreach (var id in await topics.DueAsync(FoldTopicHandler.MaxFailures, FoldPerTick, ct))
+        {
+            await queue.EnqueueAsync(JobKinds.FoldTopic, new FoldTopicPayload(id), JobKinds.FoldTopicKey(id), now, ct);
+        }
     }
 
     /// <summary>

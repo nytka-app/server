@@ -46,6 +46,7 @@ public static class InfoEndpoints
     /// "usage": <c>GET /api/v1/usage</c> exists, with the <c>stt.prices</c> and <c>stt.monthlyBudgetUsd</c> settings (docs/specs/usage.md).
     /// "summary-templates": <c>/api/v1/summary-templates</c> exists, a conversation has <c>summaryTemplate</c>, and the <c>summary.templates.*</c> settings (NYTKA-82).
     /// "quality": <c>GET /api/v1/quality</c> exists, the nightly quality metrics.
+    /// "topics": <c>GET /api/v1/topics</c> exists and a conversation has <c>topics</c>; pages fill while <c>topics.enabled</c> is on.
     /// "semantic-search": an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning (NYTKA-66).
     /// </summary>
     public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings, EmbeddingState? embeddings = null)
@@ -73,6 +74,7 @@ public static class InfoEndpoints
         features.Add("transcript-upgrade");
         features.Add("summary-templates");
         features.Add("quality");
+        features.Add("topics");
         if (embeddings?.IsReady == true)
         {
             features.Add("semantic-search");

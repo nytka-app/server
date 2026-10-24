@@ -26,7 +26,7 @@ been verified over a week of wear: that is listed below as partial.
 | Search | works | [`SearchApiTests.cs`](../../tests/Nytka.Server.Tests/Search/SearchApiTests.cs) |
 | Ukrainian search dictionary | partial | [`SearchDictionaryTests.cs`](../../tests/Nytka.Server.Tests/Search/SearchDictionaryTests.cs) |
 | Webhooks | works | [`WebhookDeliveryTests.cs`](../../tests/Nytka.Server.Tests/Webhooks/WebhookDeliveryTests.cs) |
-| MCP, 14 read tools and 3 write tools (admin token) | works | [`McpToolTests.cs`](../../tests/Nytka.Server.Tests/Mcp/McpToolTests.cs) |
+| MCP, 16 read tools and 3 write tools (admin token) | works | [`McpToolTests.cs`](../../tests/Nytka.Server.Tests/Mcp/McpToolTests.cs) |
 | Token scopes | works | [`ScopeTests.cs`](../../tests/Nytka.Server.Tests/Auth/ScopeTests.cs) |
 | Ask over your history | works | [`AskTests.cs`](../../tests/Nytka.Server.Tests/Ask/AskTests.cs) |
 | Omi import | works | [`OmiImportTests.cs`](../../tests/Nytka.Server.Tests/Import/OmiImportTests.cs) |
