@@ -4,10 +4,10 @@ using Npgsql;
 namespace Nytka.Storage;
 
 public sealed record TokenRow(
-    Guid Id, string Name, string Scope, string Hint, DateTime CreatedAt, DateTime? LastUsedAt, DateTime? RevokedAt);
+    Guid Id, string Name, string Scope, string Hint, DateTime CreatedAt, DateTime? LastUsedAt, DateTime? RevokedAt, bool Sensitive = false);
 
-/// <summary>The scope of a token that is known and not revoked.</summary>
-public sealed record TokenIdentity(Guid Id, string Name, string Scope);
+/// <summary>The scope of a token that is known and not revoked, and whether the owner trusted it with sensitive content.</summary>
+public sealed record TokenIdentity(Guid Id, string Name, string Scope, bool Sensitive = false);
 
 /// <summary>Named API tokens (<c>api_tokens</c>). The table keeps a token's SHA-256, never the token.</summary>
 public sealed class TokenStore(NpgsqlDataSource dataSource)
@@ -19,17 +19,17 @@ public sealed class TokenStore(NpgsqlDataSource dataSource)
 
     /// <summary>Stores a token; false when an active token already has the name (ignoring case).</summary>
     public async Task<bool> CreateAsync(
-        Guid id, string name, string scope, byte[] hash, string hint, DateTimeOffset now, CancellationToken ct)
+        Guid id, string name, string scope, byte[] hash, string hint, DateTimeOffset now, CancellationToken ct, bool sensitive = false)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         try
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into api_tokens (id, name, scope, token_hash, hint, created_at)
-                values (@id, @name, @scope, @hash, @hint, @now)
+                insert into api_tokens (id, name, scope, token_hash, hint, created_at, sensitive)
+                values (@id, @name, @scope, @hash, @hint, @now, @sensitive)
                 """,
-                new { id, name, scope, hash, hint, now }, cancellationToken: ct));
+                new { id, name, scope, hash, hint, now, sensitive }, cancellationToken: ct));
             return true;
         }
         catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation
@@ -46,7 +46,7 @@ public sealed class TokenStore(NpgsqlDataSource dataSource)
         var rows = await connection.QueryAsync<TokenRow>(new CommandDefinition(
             """
             select id as Id, name as Name, scope as Scope, hint as Hint, created_at as CreatedAt,
-                   last_used_at as LastUsedAt, revoked_at as RevokedAt
+                   last_used_at as LastUsedAt, revoked_at as RevokedAt, sensitive as Sensitive
             from api_tokens
             order by created_at desc, id desc
             """,
@@ -72,7 +72,7 @@ public sealed class TokenStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var token = await connection.QuerySingleOrDefaultAsync<UsedToken>(new CommandDefinition(
             """
-            select id as Id, name as Name, scope as Scope, last_used_at as LastUsedAt
+            select id as Id, name as Name, scope as Scope, last_used_at as LastUsedAt, sensitive as Sensitive
             from api_tokens
             where token_hash = @hash and revoked_at is null
             """,
@@ -89,8 +89,8 @@ public sealed class TokenStore(NpgsqlDataSource dataSource)
                 new { id = token.Id, now }, cancellationToken: ct));
         }
 
-        return new TokenIdentity(token.Id, token.Name, token.Scope);
+        return new TokenIdentity(token.Id, token.Name, token.Scope, token.Sensitive);
     }
 
-    private sealed record UsedToken(Guid Id, string Name, string Scope, DateTime? LastUsedAt);
+    private sealed record UsedToken(Guid Id, string Name, string Scope, DateTime? LastUsedAt, bool Sensitive);
 }

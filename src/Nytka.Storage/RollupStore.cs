@@ -120,9 +120,11 @@ public sealed class RollupStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// A week of everything: each day's digest (headline and overview), and for a day with conversations but no digest, their
-    /// summaries. <c>Have</c> is the number of local days with a summarized conversation.
+    /// summaries. <c>Have</c> is the number of local days with a summarized conversation. A conversation of a class in
+    /// <paramref name="hidden"/> stays out, as it does from the digests: a rollup goes to every reader.
     /// </summary>
-    public async Task<RollupInput> WeekAsync(string start, string end, DateTimeOffset from, DateTimeOffset to, string zone, CancellationToken ct)
+    public async Task<RollupInput> WeekAsync(
+        string start, string end, DateTimeOffset from, DateTimeOffset to, string zone, string[] hidden, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var digests = (await connection.QueryAsync<RollupLine>(new CommandDefinition(
@@ -133,13 +135,13 @@ public sealed class RollupStore(NpgsqlDataSource dataSource)
             new { start, end }, cancellationToken: ct))).ToList();
         var days = digests.Select(d => d.Date).ToArray();
         var summaries = (await connection.QueryAsync<RollupLine>(new CommandDefinition(
-            """
+            $"""
             select to_char(started_at at time zone @zone, 'YYYY-MM-DD') as Date, coalesce(title, ai_title) as Title, ai_summary as Text from conversations
-            where started_at >= @from and started_at < @to and ai_summary is not null
+            where started_at >= @from and started_at < @to and ai_summary is not null and {Sensitivity.Visible("conversations")}
               and not (to_char(started_at at time zone @zone, 'YYYY-MM-DD') = any(@days))
             order by started_at limit @max
             """,
-            new { from, to, zone, days, max = MaxDaySummaries }, cancellationToken: ct))).ToList();
+            new { from, to, zone, days, hidden, max = MaxDaySummaries }, cancellationToken: ct))).ToList();
         var counts = await connection.QuerySingleAsync<(int Conversations, int Days)>(new CommandDefinition(
             """
             select count(*)::int, count(distinct (started_at at time zone @zone)::date)::int from conversations
@@ -149,7 +151,7 @@ public sealed class RollupStore(NpgsqlDataSource dataSource)
         return new RollupInput([.. digests, .. summaries], digests.Count, counts.Conversations, counts.Days);
     }
 
-    /// <summary>A topic's week: the summaries of its conversations in it. <c>Have</c> is how many there are.</summary>
+    /// <summary>A topic's week: the summaries of its conversations in it that a page may hold (<see cref="TopicStore.Foldable"/>). <c>Have</c> is how many there are.</summary>
     public async Task<RollupInput> TopicWeekAsync(Guid topicId, DateTimeOffset from, DateTimeOffset to, string zone, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -157,7 +159,7 @@ public sealed class RollupStore(NpgsqlDataSource dataSource)
             $"""
             select to_char(c.started_at at time zone @zone, 'YYYY-MM-DD') as Date, coalesce(c.title, c.ai_title) as Title, c.ai_summary as Text
             from topics tp join conversations c on c.id in {TopicStore.Members}
-            where tp.id = @topicId and c.started_at >= @from and c.started_at < @to and c.ai_summary is not null
+            where tp.id = @topicId and c.started_at >= @from and c.started_at < @to and c.ai_summary is not null and {TopicStore.Foldable}
             order by c.started_at limit @max
             """,
             new { topicId, from, to, zone, max = MaxTopicSummaries }, cancellationToken: ct))).ToList();
@@ -172,7 +174,7 @@ public sealed class RollupStore(NpgsqlDataSource dataSource)
             $"""
             select tp.id from topics tp
             where (select count(*) from conversations c where c.id in {TopicStore.Members}
-                   and c.started_at >= @from and c.started_at < @to and c.ai_summary is not null) >= @min
+                   and c.started_at >= @from and c.started_at < @to and c.ai_summary is not null and {TopicStore.Foldable}) >= @min
             order by tp.id
             """,
             new { from, to, min }, cancellationToken: ct))).ToList();

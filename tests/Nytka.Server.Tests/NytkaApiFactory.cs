@@ -47,7 +47,7 @@ public sealed class NytkaApiFactory(
     /// A client whose bearer token is a new named token of <paramref name="scope"/> (<c>admin</c> or
     /// <c>read</c>). Its row goes straight into <c>api_tokens</c>, hashed as the API stores tokens.
     /// </summary>
-    public HttpClient CreateClientWithScope(string scope)
+    public HttpClient CreateClientWithScope(string scope, bool sensitive = false)
     {
         var token = "nyt_" + Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
         var id = Guid.CreateVersion7(Time.GetUtcNow());
@@ -55,8 +55,8 @@ public sealed class NytkaApiFactory(
         {
             connection.Execute(
                 """
-                insert into api_tokens (id, name, scope, token_hash, hint, created_at)
-                values (@id, @name, @scope, @hash, @hint, @now)
+                insert into api_tokens (id, name, scope, token_hash, hint, created_at, sensitive)
+                values (@id, @name, @scope, @hash, @hint, @now, @sensitive)
                 """,
                 new
                 {
@@ -66,6 +66,7 @@ public sealed class NytkaApiFactory(
                     hash = SHA256.HashData(Encoding.UTF8.GetBytes(token)),
                     hint = token[^4..],
                     now = Time.GetUtcNow(),
+                    sensitive,
                 });
         }
 

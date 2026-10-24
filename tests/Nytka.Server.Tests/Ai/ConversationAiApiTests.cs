@@ -54,10 +54,10 @@ public sealed class ConversationAiApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.True(renamed.GetProperty("titleEdited").GetBoolean());
         Assert.Equal("My title", listed.GetProperty("title").GetString());
         Assert.Equal(
-            ["id", "startedAt", "endedAt", "status", "preview", "title", "summary", "aiStatus", "bookmarks", "source", "mediaShare", "transcriptTier", "noise", "tags", "topics"],
+            ["id", "startedAt", "endedAt", "status", "preview", "title", "summary", "aiStatus", "bookmarks", "source", "mediaShare", "transcriptTier", "noise", "sensitivity", "tags", "topics"],
             listed.EnumerateObject().Select(p => p.Name));
         Assert.Equal(
-            ["id", "startedAt", "endedAt", "status", "title", "summary", "aiStatus", "titleEdited", "aiMessage", "aiUpdatedAt", "tasks", "segments", "bookmarks", "source", "tags", "summaryTemplate", "transcript", "topics"],
+            ["id", "startedAt", "endedAt", "status", "title", "summary", "aiStatus", "titleEdited", "aiMessage", "aiUpdatedAt", "tasks", "segments", "bookmarks", "source", "tags", "summaryTemplate", "transcript", "sensitivity", "topics"],
             renamed.EnumerateObject().Select(p => p.Name));
     }
 

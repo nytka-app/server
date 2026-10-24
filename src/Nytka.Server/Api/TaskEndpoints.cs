@@ -4,6 +4,7 @@ using Npgsql;
 using Nytka.Server.Ai;
 using Nytka.Server.Auth;
 using Nytka.Server.Events;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -35,7 +36,8 @@ public static class TaskEndpoints
 
     /// <summary><c>kind</c> is <c>commitment</c> (the default), <c>idea</c>, <c>waiting_on</c> or <c>all</c>.</summary>
     private static async Task<IResult> ListAsync(
-        string? status, Guid? conversationId, Guid? before, string? kind, int? limit, TaskStore tasks, CancellationToken ct)
+        string? status, Guid? conversationId, Guid? before, string? kind, int? limit, TaskStore tasks, SensitivityScope sensitivity,
+        CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         if (status is not (null or "open" or "done"))
@@ -54,7 +56,7 @@ public static class TaskEndpoints
         }
 
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
-        var items = await tasks.ListAsync(status == "done", conversationId, before, StoredKind(kind), take, ct);
+        var items = await tasks.ListAsync(status == "done", conversationId, before, StoredKind(kind), take, ct, sensitivity.Hidden);
         return Results.Ok(new TaskPage(items, items.Count == take ? items[^1].Id : null));
     }
 

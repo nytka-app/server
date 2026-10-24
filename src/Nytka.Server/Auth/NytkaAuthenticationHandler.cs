@@ -28,6 +28,12 @@ public sealed class NytkaAuthenticationHandler(
 
     public const string ScopeClaim = "scope";
 
+    /// <summary>The name of the environment's admin token (<c>Nytka__AdminToken</c>).</summary>
+    public const string EnvironmentName = "environment";
+
+    /// <summary>Present, as <c>true</c>, on a token the owner trusted with sensitive content when it was made.</summary>
+    public const string SensitiveClaim = "sensitive";
+
     private const string Bearer = "Bearer ";
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -42,12 +48,12 @@ public sealed class NytkaAuthenticationHandler(
         var hash = TokenSecret.Hash(token);
         if (CryptographicOperations.FixedTimeEquals(hash, SHA256.HashData(Encoding.UTF8.GetBytes(options.CurrentValue.AdminToken))))
         {
-            return fromQuery ? QueryTokenRefused() : Succeed("environment", NytkaScopes.Admin);
+            return fromQuery ? QueryTokenRefused() : Succeed(EnvironmentName, NytkaScopes.Admin);
         }
 
         if (await tokens.AuthenticateAsync(hash, time.GetUtcNow(), Context.RequestAborted) is { } identity)
         {
-            return fromQuery && identity.Scope != NytkaScopes.Read ? QueryTokenRefused() : Succeed(identity.Name, identity.Scope);
+            return fromQuery && identity.Scope != NytkaScopes.Read ? QueryTokenRefused() : Succeed(identity.Name, identity.Scope, identity.Sensitive);
         }
 
         return AuthenticateResult.Fail("Unknown or revoked token.");
@@ -88,9 +94,12 @@ public sealed class NytkaAuthenticationHandler(
         Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "This token's scope does not allow this request.")
             .ExecuteAsync(Context);
 
-    private AuthenticateResult Succeed(string name, string scope)
+    private AuthenticateResult Succeed(string name, string scope, bool sensitive = false)
     {
-        var identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, name), new Claim(ScopeClaim, scope)], SchemeName);
+        Claim[] claims = sensitive
+            ? [new Claim(ClaimTypes.Name, name), new Claim(ScopeClaim, scope), new Claim(SensitiveClaim, "true")]
+            : [new Claim(ClaimTypes.Name, name), new Claim(ScopeClaim, scope)];
+        var identity = new ClaimsIdentity(claims, SchemeName);
         return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
     }
 }

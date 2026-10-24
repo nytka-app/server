@@ -92,8 +92,13 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
 
     private sealed record DigestRaw(Guid Id, string LocalDate, string Headline, string Overview, string Body, DateTime CreatedAt);
 
-    public async IAsyncEnumerable<ExportLine> ReadAsync([EnumeratorCancellation] CancellationToken ct)
+    /// <remarks>
+    /// Conversations, tasks and memories whose sensitivity <paramref name="hidden"/> names (or whose conversation's does) are left
+    /// out; a full backup needs a reader trusted with them (docs/explanation/features.md, Sensitive content).
+    /// </remarks>
+    public async IAsyncEnumerable<ExportLine> ReadAsync([EnumeratorCancellation] CancellationToken ct, string[]? hidden = null)
     {
+        hidden ??= [];
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         await connection.ExecuteAsync(new CommandDefinition("set transaction read only", transaction: transaction, cancellationToken: ct));
@@ -119,15 +124,16 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
         while (true)
         {
             var page = (await connection.QueryAsync<ConversationRow>(new CommandDefinition(
-                """
+                $"""
                 select id as Id, source as Source, external_id as ExternalId, started_at as StartedAt, ended_at as EndedAt,
                        status as Status, coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary
                 from conversations
-                where cast(@afterAt as timestamptz) is null or (started_at, id) > (cast(@afterAt as timestamptz), cast(@afterId as uuid))
+                where (cast(@afterAt as timestamptz) is null or (started_at, id) > (cast(@afterAt as timestamptz), cast(@afterId as uuid)))
+                  and {Sensitivity.Visible("conversations")}
                 order by started_at, id
                 limit @PageSize
                 """,
-                new { afterAt, afterId, PageSize }, transaction, cancellationToken: ct))).ToList();
+                new { afterAt, afterId, PageSize, hidden }, transaction, cancellationToken: ct))).ToList();
             if (page.Count == 0)
             {
                 break;
@@ -157,21 +163,25 @@ public sealed class ExportStore(NpgsqlDataSource dataSource)
         }
 
         await foreach (var task in connection.QueryUnbufferedAsync<ExportTask>(
-            """
-            select id as Id, conversation_id as ConversationId, person_id as PersonId, text as Text, done as Done, done_at as DoneAt,
-                   created_at as CreatedAt, updated_at as UpdatedAt, kind as Kind, due_at as Due
-            from tasks where deleted_at is null order by created_at, id
-            """, transaction: transaction).WithCancellation(ct))
+            $"""
+            select t.id as Id, t.conversation_id as ConversationId, t.person_id as PersonId, t.text as Text, t.done as Done, t.done_at as DoneAt,
+                   t.created_at as CreatedAt, t.updated_at as UpdatedAt, t.kind as Kind, t.due_at as Due
+            from tasks t left join conversations c on c.id = t.conversation_id
+            where t.deleted_at is null and {Sensitivity.Visible("t")} and (c.id is null or {Sensitivity.Visible("c")})
+            order by t.created_at, t.id
+            """, new { hidden }, transaction).WithCancellation(ct))
         {
             yield return task;
         }
 
         await foreach (var memory in connection.QueryUnbufferedAsync<ExportMemory>(
-            """
-            select id as Id, text as Text, source as Source, conversation_id as ConversationId,
-                   created_at as CreatedAt, updated_at as UpdatedAt
-            from memories where deleted_at is null order by created_at, id
-            """, transaction: transaction).WithCancellation(ct))
+            $"""
+            select m.id as Id, m.text as Text, m.source as Source, m.conversation_id as ConversationId,
+                   m.created_at as CreatedAt, m.updated_at as UpdatedAt
+            from memories m left join conversations c on c.id = m.conversation_id
+            where m.deleted_at is null and {Sensitivity.Visible("m")} and (c.id is null or {Sensitivity.Visible("c")})
+            order by m.created_at, m.id
+            """, new { hidden }, transaction).WithCancellation(ct))
         {
             yield return memory;
         }

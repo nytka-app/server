@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.36.0](https://github.com/nytka-app/server/compare/v0.35.0...v0.36.0) (2026-10-24)
+
+
+### Features
+
+* **privacy:** sensitivity class, filtered outside admin ([#191](https://github.com/nytka-app/server/issues/191)) ([9573305](https://github.com/nytka-app/server/commit/95733057c586b720e8a7318981655740c8203e58))
+
+
+### Bug Fixes
+
+* **backfill:** stop on a claude CLI error, retry a restarting server, show why an answer is invalid ([#192](https://github.com/nytka-app/server/issues/192)) ([a94fa98](https://github.com/nytka-app/server/commit/a94fa9804925a689035161c2166369af970e9c5d))
+
 ## [0.35.0](https://github.com/nytka-app/server/compare/v0.34.0...v0.35.0) (2026-10-24)
 
 

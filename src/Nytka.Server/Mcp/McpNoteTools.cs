@@ -4,6 +4,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Nytka.Server.Api;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Mcp;
@@ -15,7 +16,7 @@ public sealed record McpNoteList(IReadOnlyList<McpNote> Items, Guid? NextBefore)
 
 /// <summary>The <c>list_notes</c> tool (docs/specs/task-kinds.md): the fields and limits of <c>GET /api/v1/notes</c>.</summary>
 [McpServerToolType]
-public sealed class McpNoteTools(NoteStore notes)
+public sealed class McpNoteTools(NoteStore notes, SensitivityScope sensitivity)
 {
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
     {
@@ -42,7 +43,7 @@ public sealed class McpNoteTools(NoteStore notes)
                 normalized,
                 conversationId is null ? null : ParseId(conversationId, nameof(conversationId)),
                 before is null ? null : ParseId(before, nameof(before)),
-                take, ct))
+                take, ct, sensitivity.Hidden))
             .Select(n => new McpNote(n.Id, n.ConversationId, n.ConversationTitle, n.ConversationStartedAt, n.Topic, n.Points, n.CreatedAt))
             .ToList();
         var element = JsonSerializer.SerializeToElement(new McpNoteList(items, items.Count == take ? items[^1].Id : null), Json);

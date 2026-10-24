@@ -88,27 +88,27 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     public async Task<IReadOnlyList<SearchHitRow>> SearchAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, int limit, int offset, CancellationToken ct,
         DateTimeOffset? from = null, DateTimeOffset? to = null, bool anyTerm = false, bool people = false, string? tag = null,
-        SemanticQuery? semantic = null)
+        string[]? hidden = null, SemanticQuery? semantic = null)
     {
         try
         {
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, semantic, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, hidden ?? [], semantic, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ConfigFileError)
         {
             // The dictionary files went away while the server ran: fall back to simple, then ask again.
             await SetupDictionaryAsync(Simple, ct);
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, semantic, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, hidden ?? [], semantic, ct);
         }
         catch (PostgresException ex) when (semantic is not null && ex.SqlState != PostgresErrorCodes.ConfigFileError)
         {
-            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, null, ct);
+            return await QueryAsync(terms, conversations, memories, people, limit, offset, from, to, anyTerm, tag, hidden ?? [], null, ct);
         }
     }
 
     private async Task<IReadOnlyList<SearchHitRow>> QueryAsync(
         IReadOnlyList<string> terms, bool conversations, bool memories, bool people, int limit, int offset,
-        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, string? tag, SemanticQuery? semantic, CancellationToken ct)
+        DateTimeOffset? from, DateTimeOffset? to, bool anyTerm, string? tag, string[] hidden, SemanticQuery? semantic, CancellationToken ct)
     {
         var parameters = new DynamicParameters();
         var query = string.Join(anyTerm ? " || " : " && ", terms.Select((term, i) =>
@@ -124,6 +124,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
         parameters.Add("from", from);
         parameters.Add("to", to);
         parameters.Add("tag", tag);
+        parameters.Add("hidden", hidden);
 
         await using var connection = await DataSource.OpenConnectionAsync(ct);
         await using var transaction = semantic is null ? null : await connection.BeginTransactionAsync(ct);
@@ -185,12 +186,14 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                   and (cast(@tag as text) is null or exists (
                         select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
                         where ct.conversation_id = c.id and t.name = @tag))
+                  and {Sensitivity.Visible("c")}
                 union all
                 select 'memory', m.id, ts_rank_cd(m.search, q.query), null, m.text, m.updated_at, m.conversation_id, null::bigint
                 from memories m cross join q
                 where @memories and cast(@tag as text) is null and m.deleted_at is null and m.confirmed and m.search @@ q.query
                   and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
                   and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
+                  and {Sensitivity.Visible("m")}
                 union all
                 select 'person', p.id, greatest(pn.score, bf.score), p.name,
                        case when bf.id is null or coalesce(pn.score, 0) >= bf.score then p.name else bf.text end,
@@ -224,8 +227,8 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
     /// its title and summary), then <c>fused_hits</c> in the shape of <c>hits</c>. A conversation's snippet stays its
     /// best full-text segment and is otherwise its nearest one.
     /// </summary>
-    private const string Nearest =
-        """
+    private static readonly string Nearest =
+        $"""
 
             segment_near as materialized (
                 select s.conversation_id as id, s.id as segment_id, s.text, e.embedding <=> cast(@vector as vector) as distance
@@ -238,6 +241,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                   and (cast(@tag as text) is null or exists (
                         select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
                         where ct.conversation_id = c.id and t.name = @tag))
+                  and {Sensitivity.Visible("c")}
                 order by e.embedding <=> cast(@vector as vector)
                 limit @k
             ),
@@ -251,6 +255,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                   and (cast(@tag as text) is null or exists (
                         select 1 from conversation_tags ct join tags t on t.id = ct.tag_id
                         where ct.conversation_id = c.id and t.name = @tag))
+                  and {Sensitivity.Visible("c")}
                 order by e.embedding <=> cast(@vector as vector)
                 limit @k
             ),
@@ -261,6 +266,7 @@ public sealed class SearchStore(IConfiguration configuration) : IDisposable
                 where @memories and cast(@tag as text) is null and m.deleted_at is null and m.confirmed
                   and (cast(@from as timestamptz) is null or m.updated_at >= cast(@from as timestamptz))
                   and (cast(@to as timestamptz) is null or m.updated_at < cast(@to as timestamptz))
+                  and {Sensitivity.Visible("m")}
                 order by e.embedding <=> cast(@vector as vector)
                 limit @k
             ),

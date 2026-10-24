@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
+using Nytka.Server.Privacy;
 using Nytka.Server.Settings;
 using Nytka.Storage;
 
@@ -80,7 +81,7 @@ public sealed class MakeRollupHandler(
             }
             else
             {
-                input = await rollups.WeekAsync(RollupPeriod.Text(start), RollupPeriod.Text(end), from, to, zoneName, ct);
+                input = await rollups.WeekAsync(RollupPeriod.Text(start), RollupPeriod.Text(end), from, to, zoneName, PrivacySettings.Hidden(settings), ct);
             }
         }
         else

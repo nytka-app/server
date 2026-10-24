@@ -133,7 +133,7 @@ public sealed class RollupTests(PostgresFixture db) : Ai.AiTestBase(db)
 
         await Db.ExecuteAsync(
             """
-            update conversations set ai_summary = 'They played tennis.';
+            update conversations set ai_summary = 'They played tennis.', sensitivity = 'none';
             insert into tags (id, name, created_at) values (gen_random_uuid(), 'tennis', now());
             insert into conversation_tags (conversation_id, tag_id, created_at) select c.id, t.id, now() from conversations c, tags t;
             insert into topics (id, kind, tag_id, created_at, updated_at) select gen_random_uuid(), 'tag', id, now(), now() from tags;

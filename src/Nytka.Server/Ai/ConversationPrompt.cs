@@ -7,8 +7,10 @@ namespace Nytka.Server.Ai;
 /// What the model returns for a conversation (or for one window of it), before the lengths are enforced.
 /// <paramref name="ConversationKind"/> is in the answer only when the request asked for it (<see cref="ConversationPrompt.SchemaWithKind"/>).
 /// </summary>
+/// <paramref name="Sensitivity"/> is a <see cref="Nytka.Storage.Sensitivity"/> value, missing in answers from before it.
 public sealed record ConversationAnswer(
-    string Title, string Summary, IReadOnlyList<AnswerItem> Items, IReadOnlyList<string> Tags, string? ConversationKind = null);
+    string Title, string Summary, IReadOnlyList<AnswerItem> Items, IReadOnlyList<string> Tags, string? ConversationKind = null,
+    string? Sensitivity = null);
 
 /// <summary>
 /// A candidate task as the model words and labels it (docs/specs/task-kinds.md). <paramref name="Kind"/> and <paramref name="Owner"/> are
@@ -17,7 +19,8 @@ public sealed record ConversationAnswer(
 /// <see cref="Nytka.Storage.Salience"/> value (missing in answers from before it). <see cref="ItemClassifier"/> decides what is kept.
 /// </summary>
 public sealed record AnswerItem(
-    string Text, string Kind, string Owner, string? Person, string? Topic, string? Due, string? Salience = null, IReadOnlyList<long>? SegmentIds = null);
+    string Text, string Kind, string Owner, string? Person, string? Topic, string? Due, string? Salience = null, IReadOnlyList<long>? SegmentIds = null,
+    string? Sensitivity = null);
 
 /// <summary>The messages and the schema of the <c>enrich-conversation</c> call. Server code, not a setting.</summary>
 public static class ConversationPrompt
@@ -26,23 +29,25 @@ public static class ConversationPrompt
 
     public const string Schema =
         """
-        { "type": "object", "additionalProperties": false, "required": ["title", "summary", "items", "tags"],
+        { "type": "object", "additionalProperties": false, "required": ["title", "summary", "items", "tags", "sensitivity"],
           "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
                           "tags": { "type": "array", "items": { "type": "string" } },
+                          "sensitivity": { "type": "string", "enum": ["none", "health", "therapy", "intimate", "money"] },
                           "items": { "type": "array", "items": {
-                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"],
+                            "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds", "sensitivity"],
                             "properties": { "text": { "type": "string" },
                                             "kind": { "type": "string", "enum": ["commitment", "idea", "advice", "noise"] },
                                             "owner": { "type": "string", "enum": ["wearer", "other"] },
                                             "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] },
                                             "due": { "type": ["string", "null"] },
                                             "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
-                                            "segmentIds": { "type": "array", "items": { "type": "integer" } } } } } } }
+                                            "segmentIds": { "type": "array", "items": { "type": "integer" } },
+                                            "sensitivity": { "type": "string", "enum": ["none", "health", "therapy", "intimate", "money"] } } } } } }
         """;
 
     /// <summary>The schema when the model also names the kind of conversation, to pick a summary template.</summary>
     public static readonly string SchemaWithKind = Schema
-        .Replace("\"required\": [\"title\", \"summary\", \"items\", \"tags\"]", "\"required\": [\"title\", \"summary\", \"items\", \"tags\", \"conversationKind\"]", StringComparison.Ordinal)
+        .Replace("\"required\": [\"title\", \"summary\", \"items\", \"tags\", \"sensitivity\"]", "\"required\": [\"title\", \"summary\", \"items\", \"tags\", \"sensitivity\", \"conversationKind\"]", StringComparison.Ordinal)
         .Replace(
             "\"properties\": { \"title\": { \"type\": \"string\" },",
             "\"properties\": { \"conversationKind\": { \"type\": \"string\", \"enum\": [\"meeting\", \"lecture\", \"doctor\", \"call\", \"other\"] }, \"title\": { \"type\": \"string\" },",
@@ -112,6 +117,7 @@ public static class ConversationPrompt
             Audio from a TV, video, podcast, radio, song or game playing nearby, and text the wearer reads aloud from a script or screen, is not the wearer's life: take no tasks from it (the summary may say that media was playing). Keep the summary describing what happened.{media}
             The wearer's own lines are labelled "Wearer". A label that is a person's name comes from voice recognition. A line labelled "Unknown" has no known speaker: it is never the wearer's, and a commitment needs more than such a line. Each line starts with its time and its segment id ("#48121"); give each item the ids (without "#") of the lines it comes from in segmentIds. Any other speaker label may differ between parts of the transcript: the same label can mean different people, and one person can carry different labels. Do not rely on those.
             All times and dates you are given are in the time zone {timeZone}. Resolve relative words such as "tomorrow" or "Friday" against the conversation's date in that time zone. Put a deadline into a task only when someone said it in the conversation; never invent one, and never turn the time a line was spoken at into a deadline.
+            Set sensitivity for the conversation, and for each item, to "health" (illness, symptoms, a doctor or a medicine), "therapy" (a therapy or counselling session, or what was said in one), "intimate" (sex or the private matters of a romantic relationship), "money" (debts, salary, account details or a private cost), or "none". Choose the one that fits best; most conversations are "none".
             Write the title, the summary and the tasks in {language}.
             """;
     }
@@ -125,7 +131,7 @@ public static class ConversationPrompt
         string? summarySpec = null, IReadOnlyDictionary<string, string>? kinds = null) =>
         System(outputLanguage, timeZone, suggestTags: suggestTags, mediaLines: mediaLines, summarySpec: summarySpec, kinds: kinds)
         + "\n\nThe transcript was too long for one request, so it was described in consecutive parts. "
-        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic, due, salience and segmentIds, and dropping duplicates and items a later part shows as done."
+        + "You get the answer for each part instead of a transcript. Merge them into one title, one summary, one item list and one tag list, keeping each item's kind, owner, person, topic, due, salience, segmentIds and sensitivity, and dropping duplicates and items a later part shows as done."
         + (kinds is null ? "" : " Set conversationKind to the kind that fits the whole conversation.");
 
     /// <summary>The date line: the conversation's local date and weekday, so the model can resolve "Friday".</summary>
