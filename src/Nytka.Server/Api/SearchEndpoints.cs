@@ -1,5 +1,6 @@
 using System.Net;
 using Nytka.Server.Auth;
+using Nytka.Server.Privacy;
 using Nytka.Server.Search;
 using Nytka.Storage;
 
@@ -20,23 +21,23 @@ public static class SearchEndpoints
     }
 
     private static async Task<IResult> SearchAsync(
-        string? q, string? kinds, string? tag, int? limit, int? offset, SearchStore search, CancellationToken ct)
+        string? q, string? kinds, string? tag, int? limit, int? offset, SearchStore search, SensitivityScope sensitivity, CancellationToken ct)
     {
         if (SearchQuery.Parse(q, kinds is null ? null : [kinds], out var error, tag) is not { } query)
         {
             return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: error);
         }
 
-        var page = await RunAsync(search, query, limit ?? SearchQuery.DefaultLimit, offset ?? 0, ct);
+        var page = await RunAsync(search, query, limit ?? SearchQuery.DefaultLimit, offset ?? 0, ct, sensitivity.Hidden);
         return Results.Ok(page);
     }
 
-    /// <summary>Shared with the MCP tool, so both return the same hits.</summary>
-    public static async Task<HitPage> RunAsync(SearchStore search, SearchQuery query, int limit, int offset, CancellationToken ct)
+    /// <summary>Shared with the MCP tool, so both return the same hits; conversations and memories <paramref name="hidden"/> names are left out.</summary>
+    public static async Task<HitPage> RunAsync(SearchStore search, SearchQuery query, int limit, int offset, CancellationToken ct, string[] hidden)
     {
         var take = Math.Clamp(limit, 1, SearchQuery.MaxLimit);
         var skip = Math.Clamp(offset, 0, SearchQuery.MaxOffset);
-        var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct, people: query.People, tag: query.Tag);
+        var rows = await search.SearchAsync(query.Terms, query.Conversations, query.Memories, take + 1, skip, ct, people: query.People, tag: query.Tag, hidden: hidden);
         var items = rows.Take(take)
             .Select(r => new Hit(r.Kind, r.Id, r.Score, r.Title, Markup(r.Snippet), r.At, r.ConversationId))
             .ToList();

@@ -13,7 +13,7 @@ public sealed record AiBackfillCandidate(Guid Id, DateTime StartedAt, int Memori
 
 public sealed record ConversationSummary(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string Preview, string? Title, string? Summary, string AiStatus,
-    int Bookmarks, string Source, double MediaShare, string TranscriptTier, bool Noise = false)
+    int Bookmarks, string Source, double MediaShare, string TranscriptTier, bool Noise = false, string? Sensitivity = null)
 {
     /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -21,7 +21,8 @@ public sealed record ConversationSummary(
 
 public sealed record ConversationHeader(
     Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, bool TitleEdited, string? Summary,
-    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute, string? SummaryTemplate);
+    string AiStatus, string? AiMessage, DateTime? AiUpdatedAt, long? AiThroughSegmentId, string Source, string TranscriptTier, string? AutoRoute, string? SummaryTemplate,
+    string? Sensitivity = null);
 
 /// <summary>
 /// A segment as a conversation shows it. <see cref="Speaker"/> is the provider's label, <see cref="SpeakerId"/> its stable id for the
@@ -267,7 +268,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// <paramref name="noise"/> does the same for noise (<see cref="NoiseJoin"/>).
     /// </summary>
     public async Task<IReadOnlyList<ConversationSummary>> ListAsync(
-        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct, string? noise = null)
+        DateTimeOffset? before, DateTimeOffset? since, int limit, string? tag, string? media, CancellationToken ct, string? noise = null,
+        string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<ConversationSummary>(new CommandDefinition(
@@ -277,7 +279,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    c.ai_status as AiStatus,
                    (select count(*)::int from bookmarks b
                     where b.at >= c.started_at - interval '30 seconds' and b.at <= c.ended_at + interval '30 seconds') as Bookmarks,
-                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier, nz.noise as Noise
+                   c.source as Source, m.share as MediaShare, c.transcript_tier as TranscriptTier, nz.noise as Noise, c.sensitivity as Sensitivity
             from conversations c
             left join lateral (
                 select string_agg(f.text, ' ' order by f.started_at) as text
@@ -295,10 +297,11 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
               and (cast(@media as text) is null or (@media = 'hide' and m.share < @mediaShareLimit)
                     or (@media = 'only' and m.share >= @mediaShareLimit))
               and (cast(@noise as text) is null or (@noise = 'hide' and not nz.noise) or (@noise = 'only' and nz.noise))
+              and {Sensitivity.Visible("c")}
             order by c.started_at desc, c.id desc
             limit @limit
             """,
-            new { before, since, limit, tag, media, noise, mediaShareLimit = SpeechKinds.MediaShareLimit }, cancellationToken: ct));
+            new { before, since, limit, tag, media, noise, mediaShareLimit = SpeechKinds.MediaShareLimit, hidden = hidden ?? [] }, cancellationToken: ct));
         var items = rows.ToList();
         var tags = await TagStore.OfConversationsAsync(connection, null, items.Select(c => c.Id).ToList(), ct);
         return items.Select(c => tags.TryGetValue(c.Id, out var names) ? c with { Tags = names } : c).ToList();
@@ -313,7 +316,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                    coalesce(title, ai_title) as Title, title is not null as TitleEdited, ai_summary as Summary,
                    ai_status as AiStatus, ai_message as AiMessage, ai_updated_at as AiUpdatedAt,
                    ai_through_segment_id as AiThroughSegmentId, source as Source, transcript_tier as TranscriptTier,
-                   auto_route as AutoRoute, ai_template as SummaryTemplate
+                   auto_route as AutoRoute, ai_template as SummaryTemplate, sensitivity as Sensitivity
             from conversations where id = @id
             """,
             new { id }, cancellationToken: ct));
@@ -420,7 +423,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
     /// </summary>
     public async Task<EnrichmentStore> StoreEnrichmentAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? title, string? summary,
-        long? throughSegmentId, int segmentCount, string? template, DateTimeOffset now, CancellationToken ct, bool again = false)
+        long? throughSegmentId, int segmentCount, string? template, DateTimeOffset now, CancellationToken ct, bool again = false,
+        string? sensitivity = null)
     {
         var current = await LockForEnrichmentAsync(connection, transaction, id, ct);
         if (current is null)
@@ -443,10 +447,11 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
             """
             update conversations
             set ai_title = @title, ai_summary = @summary, ai_status = 'done', ai_message = null,
-                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0, ai_template = @template
+                ai_updated_at = @now, ai_through_segment_id = @throughSegmentId, ai_failures = 0, ai_template = @template,
+                sensitivity = coalesce(@sensitivity, sensitivity)
             where id = @id
             """,
-            new { id, title, summary, throughSegmentId, template, now }, transaction, cancellationToken: ct));
+            new { id, title, summary, throughSegmentId, template, now, sensitivity }, transaction, cancellationToken: ct));
         return EnrichmentStore.Stored;
     }
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Nytka.Server.Privacy;
 using Nytka.Server.Settings;
 using Nytka.Storage;
 
@@ -40,9 +41,10 @@ public static class ExportEndpoints
         public string Type => "end";
     }
 
-    private static IResult Export(ExportStore export, SettingsService settings, TimeProvider time, HttpContext http)
+    private static IResult Export(ExportStore export, SettingsService settings, TimeProvider time, SensitivityScope sensitivity, HttpContext http)
     {
         var now = time.GetUtcNow();
+        var hidden = sensitivity.ExportHidden;
         return Results.Stream(async stream =>
         {
             var ct = http.RequestAborted;
@@ -61,7 +63,7 @@ public static class ExportEndpoints
                 await Write("setting", setting);
             }
 
-            await foreach (var line in export.ReadAsync(ct))
+            await foreach (var line in export.ReadAsync(ct, hidden))
             {
                 await Write(line.Type, line);
             }

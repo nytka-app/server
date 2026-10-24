@@ -57,8 +57,10 @@ public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
 
     private sealed record TaskRow(Guid ConversationId, string Text, bool Done);
 
-    public async IAsyncEnumerable<ObsidianEntry> ReadAsync([EnumeratorCancellation] CancellationToken ct)
+    /// <remarks>Conversations and tasks whose sensitivity <paramref name="hidden"/> names are left out, and so are links to such conversations.</remarks>
+    public async IAsyncEnumerable<ObsidianEntry> ReadAsync([EnumeratorCancellation] CancellationToken ct, string[]? hidden = null)
     {
+        hidden ??= [];
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         await connection.ExecuteAsync(new CommandDefinition("set transaction read only", transaction: transaction, cancellationToken: ct));
@@ -78,10 +80,10 @@ public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
             $"""
             select distinct {SpeakerLabel.PersonId} as PersonId, c.id as Id, coalesce(c.title, c.ai_title) as Title, c.started_at as StartedAt
             from segments s join conversations c on c.id = s.conversation_id {SpeakerLabel.Joins}
-            where {SpeakerLabel.PersonId} = any(@personIds) and {SpeakerLabel.IsUser} is not true
+            where {SpeakerLabel.PersonId} = any(@personIds) and {SpeakerLabel.IsUser} is not true and {Sensitivity.Visible("c")}
             order by c.started_at desc, c.id desc
             """,
-            new { personIds }, transaction, cancellationToken: ct))).ToLookup(c => c.PersonId);
+            new { personIds, hidden }, transaction, cancellationToken: ct))).ToLookup(c => c.PersonId);
         foreach (var person in people)
         {
             yield return new ObsidianPersonEntry(new ObsidianPerson(
@@ -94,14 +96,15 @@ public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
         while (true)
         {
             var page = (await connection.QueryAsync<ConversationRow>(new CommandDefinition(
-                """
+                $"""
                 select id as Id, started_at as StartedAt, ended_at as EndedAt, coalesce(title, ai_title) as Title, ai_summary as Summary
                 from conversations
-                where cast(@afterAt as timestamptz) is null or (started_at, id) > (cast(@afterAt as timestamptz), cast(@afterId as uuid))
+                where (cast(@afterAt as timestamptz) is null or (started_at, id) > (cast(@afterAt as timestamptz), cast(@afterId as uuid)))
+                  and {Sensitivity.Visible("conversations")}
                 order by started_at, id
                 limit @PageSize
                 """,
-                new { afterAt, afterId, PageSize }, transaction, cancellationToken: ct))).ToList();
+                new { afterAt, afterId, PageSize, hidden }, transaction, cancellationToken: ct))).ToList();
             if (page.Count == 0)
             {
                 break;
@@ -119,12 +122,12 @@ public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
                 """,
                 new { ids }, transaction, cancellationToken: ct))).ToLookup(s => s.ConversationId);
             var tasks = (await connection.QueryAsync<TaskRow>(new CommandDefinition(
-                """
+                $"""
                 select conversation_id as ConversationId, text as Text, done as Done
-                from tasks where deleted_at is null and conversation_id = any(@ids)
+                from tasks t where deleted_at is null and conversation_id = any(@ids) and {Sensitivity.Visible("t")}
                 order by created_at, id
                 """,
-                new { ids }, transaction, cancellationToken: ct))).ToLookup(t => t.ConversationId);
+                new { ids, hidden }, transaction, cancellationToken: ct))).ToLookup(t => t.ConversationId);
             foreach (var c in page)
             {
                 var people2 = segments[c.Id].Select(s => s.Person).Where(p => p is not null).Select(p => p!).Distinct().Order().ToList();
@@ -138,13 +141,13 @@ public sealed class ObsidianExportStore(NpgsqlDataSource dataSource)
         }
 
         var standaloneTasks = (await connection.QueryAsync<ObsidianStandaloneTask>(new CommandDefinition(
-            """
+            $"""
             select t.text as Text, t.done as Done, t.due_at as Due, t.person_id as PersonId, p.name as PersonName
             from tasks t left join people p on p.id = t.person_id
-            where t.deleted_at is null and t.conversation_id is null
+            where t.deleted_at is null and t.conversation_id is null and {Sensitivity.Visible("t")}
             order by t.created_at, t.id
             """,
-            transaction: transaction, cancellationToken: ct))).ToList();
+            new { hidden }, transaction, cancellationToken: ct))).ToList();
         if (standaloneTasks.Count > 0)
         {
             yield return new ObsidianTasksEntry(standaloneTasks);

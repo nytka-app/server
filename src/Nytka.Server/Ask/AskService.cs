@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
+using Nytka.Server.Privacy;
 using Nytka.Server.Search;
 using Nytka.Server.Settings;
 using Nytka.Storage;
@@ -28,6 +29,7 @@ public sealed partial class AskService(
     ConversationStore conversations,
     TaskStore tasks,
     MemoryStore memories,
+    SensitivityScope sensitivity,
     TimeProvider time)
 {
     public const int MaxQuestionLength = 500;
@@ -125,14 +127,14 @@ public sealed partial class AskService(
                 return [];
             }
 
-            var recent = await conversations.ListAsync(to, from, MaxConversations, null, null, ct);
+            var recent = await conversations.ListAsync(to, from, MaxConversations, null, null, ct, hidden: sensitivity.Hidden);
             return recent.Select(c => new Candidate(SearchStore.Conversation, c.Id, 0, c.StartedAt, null, null)).ToList();
         }
 
         var merged = new Dictionary<Guid, Candidate>();
         foreach (var terms in queries)
         {
-            foreach (var row in await search.SearchAsync(terms, true, true, HitsPerQuery, 0, ct, from, to, anyTerm: true))
+            foreach (var row in await search.SearchAsync(terms, true, true, HitsPerQuery, 0, ct, from, to, anyTerm: true, hidden: sensitivity.Hidden))
             {
                 if (!merged.TryGetValue(row.Id, out var known) || known.Score < row.Score)
                 {

@@ -1,5 +1,6 @@
 using Nytka.Server.Auth;
 using Nytka.Server.Calendar;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -21,11 +22,12 @@ public static class CalendarEndpoints
         return api;
     }
 
-    private static async Task<IResult> GetAsync(CalendarStore calendar, TaskStore tasks, TimeProvider time, HttpRequest http, CancellationToken ct)
+    private static async Task<IResult> GetAsync(
+        CalendarStore calendar, TaskStore tasks, SensitivityScope sensitivity, TimeProvider time, HttpRequest http, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         var events = await calendar.FeedAsync(now, ct);
-        var todos = await tasks.OpenWithDueAsync(ct);
+        var todos = await tasks.OpenWithDueAsync(ct, sensitivity.Hidden);
         var ics = IcsWriter.Write(
             events.Select(e => new IcsEvent($"{e.Uid}-{e.StartsAt:yyyyMMddTHHmmss}@nytka.local", e.Title, e.StartsAt, e.EndsAt)).ToList(),
             todos.Select(t => new IcsTodo($"task-{t.Id}@nytka.local", t.Text, t.Due)).ToList(),
