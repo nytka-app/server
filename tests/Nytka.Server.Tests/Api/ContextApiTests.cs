@@ -79,7 +79,8 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var counts = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(["accepted", "skipped"], counts.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["accepted", "skipped", "rejected"], counts.EnumerateObject().Select(p => p.Name));
+        Assert.Empty(counts.GetProperty("rejected").EnumerateArray());
         Assert.Equal(2, counts.GetProperty("accepted").GetInt32());
         Assert.Equal(0, counts.GetProperty("skipped").GetInt32());
         Assert.Equal(
@@ -216,101 +217,97 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime
 
     private static readonly string First = Item(FirstId, startedAt: "2026-09-29T08:00:03Z", endedAt: "2026-09-29T08:05:03Z");
 
-    /// <summary>The second item of a batch, the field its error must name, and a value of it that no answer may repeat.</summary>
+    /// <summary>The second item of a batch, the reason it is refused with, and a value of it that no answer may repeat.</summary>
     public static TheoryData<string, string, string> BadRanges => new()
     {
-        { Item(id: "cafe-not-a-uuid"), "id", "cafe-not-a-uuid" },
-        { Item(kind: "podcast"), "kind", "podcast" },
-        { Item(route: "television"), "route", "television" },
-        { Item(startedAt: "2026-09-29T09:10:07Z", endedAt: "2026-09-29T09:05:07Z"), "endedAt", "09:10:07" },
-        { Item(startedAt: "2026-09-29T09:00:07Z", endedAt: "2026-09-29T22:00:07Z"), "endedAt", "22:00:07" },
-        { Item(startedAt: "2026-09-29T09:00:07Z", endedAt: "2026-09-29T21:00:08Z"), "endedAt", "21:00:08" },
-        { Item(startedAt: "2026-10-01T10:00:07Z", endedAt: "2026-10-01T10:05:07Z"), "startedAt", "10-01T10:00:07" },
-        { Item(startedAt: "2026-09-30T10:00:08Z", endedAt: "2026-09-30T10:05:07Z"), "startedAt", "09-30T10:00:08" },
-        { Item(startedAt: "2026-09-29T09:00:07", endedAt: "2026-09-29T09:05:07Z"), "startedAt", "T09:00:07" },
-        { Item(endedAt: "soon-ish"), "endedAt", "soon-ish" },
-        { Item(startedAt: "2026-09-29"), "startedAt", "2026-09-29" },
-        { Item(startedAt: "0001-01-01T00:00:00Z", endedAt: "0001-01-01T05:00:00Z"), "startedAt", "0001-01-01" },
-        { Item(startedAt: "1969-12-31T23:59:59Z", endedAt: "1970-01-01T00:00:30Z"), "startedAt", "1969-12-31" },
+        { Item(kind: "podcast"), "unknown-kind", "podcast" },
+        { Item(kind: "Media"), "unknown-kind", "Media" },
+        { Item(route: "television"), "bad-route", "television" },
+        { Item(route: "SPEAKER"), "bad-route", "SPEAKER" },
+        { Item(startedAt: "2026-09-29T09:10:07Z", endedAt: "2026-09-29T09:05:07Z"), "bad-times", "09:10:07" },
+        { Item(startedAt: "2026-09-29T09:00:07Z", endedAt: "2026-09-29T22:00:07Z"), "bad-times", "22:00:07" },
+        { Item(startedAt: "2026-09-29T09:00:07Z", endedAt: "2026-09-29T21:00:08Z"), "bad-times", "21:00:08" },
+        { Item(startedAt: "2026-10-01T10:00:07Z", endedAt: "2026-10-01T10:05:07Z"), "bad-times", "10-01T10:00:07" },
+        { Item(startedAt: "2026-09-30T10:00:08Z", endedAt: "2026-09-30T10:05:07Z"), "bad-times", "09-30T10:00:08" },
+        { Item(startedAt: "2026-09-29T09:00:07", endedAt: "2026-09-29T09:05:07Z"), "bad-times", "T09:00:07" },
+        { Item(endedAt: "soon-ish"), "bad-times", "soon-ish" },
+        { Item(startedAt: "2026-09-29"), "bad-times", "2026-09-29" },
+        { Item(startedAt: "0001-01-01T00:00:00Z", endedAt: "0001-01-01T05:00:00Z"), "bad-times", "0001-01-01" },
+        { Item(startedAt: "1969-12-31T23:59:59Z", endedAt: "1970-01-01T00:00:30Z"), "bad-times", "1969-12-31" },
     };
 
     [Theory]
     [MemberData(nameof(BadRanges))]
-    public async Task Post_rejects_a_bad_range_naming_its_field_and_index_and_never_repeating_a_value(string bad, string field, string value)
+    public async Task A_bad_range_is_refused_on_its_own_with_a_reason_and_never_repeats_a_value(string bad, string reason, string value)
     {
         var response = await PostRaw($$"""{"items":[{{First}},{{bad}}]}""");
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var text = await response.Content.ReadAsStringAsync();
-        Assert.Equal([$"items[1].{field}"], ErrorKeys(text));
-        // Neither the bad value nor anything of the valid item that came before it.
+        var body = JsonDocument.Parse(text).RootElement;
+        Assert.Equal((1, 0), (body.GetProperty("accepted").GetInt32(), body.GetProperty("skipped").GetInt32()));
+        var rejected = Assert.Single(body.GetProperty("rejected").EnumerateArray());
+        Assert.Equal(Guid.Parse("018f0000-0000-7000-8000-0000000000aa"), rejected.GetProperty("id").GetGuid());
+        Assert.Equal(reason, rejected.GetProperty("reason").GetString());
         Assert.DoesNotContain(value, text, StringComparison.Ordinal);
-        Assert.DoesNotContain(FirstId, text, StringComparison.Ordinal);
-        Assert.DoesNotContain("08:00:03", text, StringComparison.Ordinal);
-        // All or nothing: the valid first item is not stored.
-        Assert.Equal(0, await Count());
+        Assert.Equal(1, await Count());
     }
 
     [Fact]
-    public async Task Post_names_every_bad_field_of_every_bad_item()
+    public async Task An_item_that_is_no_object_or_has_no_uuid_makes_the_whole_upload_a_400()
     {
-        var response = await PostRaw(
-            $$"""{"items":[{{Item(kind: "x", route: "y")}},{{First}},{{Item(id: "z", endedAt: "2026-09-29T09:00:06Z")}},7]}""");
+        var response = await PostRaw($$"""{"items":[{{First}},{{Item(id: "cafe-not-a-uuid")}},7,{{Item(kind: "x")}}]}""");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(["items[0].kind", "items[0].route", "items[2].id", "items[2].endedAt", "items[3]"], await ErrorKeys(response));
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.Equal(["items[1].id", "items[2]"], ErrorKeys(text));
+        Assert.DoesNotContain("cafe-not-a-uuid", text, StringComparison.Ordinal);
+        Assert.Equal(0, await Count());
     }
 
     [Fact]
     public async Task The_400_says_what_is_wrong_in_fixed_words()
     {
-        var response = await PostRaw(
-            $$"""
-            {"items":[
-              {{Item(kind: "x", route: "y", startedAt: "2026-09-29T09:00:07Z", endedAt: "2026-09-29T22:00:07Z")}},
-              {{Item(startedAt: "2026-10-01T10:00:07Z", endedAt: "2026-10-01T09:00:07Z")}},
-              {{Item(startedAt: "2026-09-29T09:00:07Z", endedAt: "2026-09-29T09:00:06Z")}},
-              {{Item(startedAt: "1969-12-31T23:59:59Z", endedAt: "1970-01-01T00:00:30Z")}},
-              {{Item(startedAt: "yesterday", id: "z")}}
-            ]}
-            """);
+        var response = await PostRaw("""{"items":[{"id":5,"kind":["media"],"route":null,"startedAt":1790000000,"endedAt":true},[]]}""");
 
         var errors = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").EnumerateObject()
             .ToDictionary(p => p.Name, p => Assert.Single(p.Value.EnumerateArray()).GetString());
         Assert.Equal(
-            new Dictionary<string, string?>
-            {
-                ["items[0].kind"] = "Must be media or call.",
-                ["items[0].route"] = "Must be speaker, earpiece, headset, bluetooth or other.",
-                ["items[0].endedAt"] = "Must be at most 12 hours after startedAt.",
-                ["items[1].startedAt"] = "Must be at most 24 hours ahead of the server's clock.",
-                ["items[1].endedAt"] = "Must not be before startedAt.",
-                ["items[2].endedAt"] = "Must not be before startedAt.",
-                ["items[3].startedAt"] = "Must not be before 1970.",
-                ["items[4].id"] = "Must be a UUID.",
-                ["items[4].startedAt"] = "Must be an ISO 8601 time with an offset.",
-            },
+            new Dictionary<string, string?> { ["items[0].id"] = "Must be a UUID.", ["items[1]"] = "Must be an object." },
             errors);
     }
 
-    [Fact]
-    public async Task Post_rejects_a_kind_or_route_that_is_spelled_otherwise()
+    [Theory]
+    [InlineData("screen", "other", null)]
+    [InlineData("headphones", "bluetooth", null)]
+    [InlineData("activity", "other", "walking")]
+    [InlineData("now-playing", "headset", "podcast")]
+    [InlineData("gain", "other", "6")]
+    public async Task Each_new_kind_is_stored_with_its_detail(string kind, string route, string? detail)
     {
-        var response = await PostRaw($$"""{"items":[{{Item(kind: "Media", route: "SPEAKER")}}]}""");
+        var response = await Post(new { id = Id(9), kind, route, startedAt = Now.AddHours(-1), endedAt = Now.AddMinutes(-50), detail });
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(["items[0].kind", "items[0].route"], await ErrorKeys(response));
+        Assert.Equal(1, (await Counts(response)).Accepted);
+        var item = Assert.Single(await List());
+        Assert.Equal((kind, route), (item.GetProperty("kind").GetString(), item.GetProperty("route").GetString()));
+        Assert.Equal(detail, item.GetProperty("detail").GetString());
     }
 
-    [Fact]
-    public async Task Post_rejects_a_field_of_the_wrong_type()
+    [Theory]
+    [InlineData("gain", "other", "9", "bad-detail")]
+    [InlineData("gain", "other", null, "bad-detail")]
+    [InlineData("activity", "other", "dancing", "bad-detail")]
+    [InlineData("screen", "other", "on", "bad-detail")]
+    [InlineData("media", "speaker", "music", "bad-detail")]
+    [InlineData("headphones", "speaker", null, "bad-route")]
+    [InlineData("gain", "speaker", "4", "bad-route")]
+    public async Task A_detail_or_route_the_kind_does_not_take_is_refused(string kind, string route, string? detail, string reason)
     {
-        var response = await PostRaw(
-            """{"items":[{"id":5,"kind":["media"],"route":null,"startedAt":1790000000,"endedAt":true}]}""");
+        var response = await Post(new { id = Id(9), kind, route, startedAt = Now.AddHours(-1), endedAt = Now.AddMinutes(-50), detail });
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(["items[0].id", "items[0].kind", "items[0].route", "items[0].startedAt", "items[0].endedAt"], await ErrorKeys(response));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(reason, Assert.Single(body.GetProperty("rejected").EnumerateArray()).GetProperty("reason").GetString());
+        Assert.Equal(0, await Count());
     }
 
     [Theory]
@@ -335,7 +332,7 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
-            ["id", "kind", "route", "started_at", "ended_at", "received_at"],
+            ["id", "kind", "route", "started_at", "ended_at", "received_at", "detail"],
             await db.QueryAsync<string>("select column_name from information_schema.columns where table_name = 'context_ranges' order by ordinal_position"));
         Assert.DoesNotContain("example", await db.ScalarAsync<string>("select t::text from context_ranges t"), StringComparison.Ordinal);
     }
@@ -374,7 +371,7 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal([Id(2), Id(3)], window.Select(i => i.GetProperty("id").GetGuid()));
         Assert.Equal([Id(3), Id(4)], from.Select(i => i.GetProperty("id").GetGuid()));
         Assert.Equal([Id(5), Id(1)], before.Select(i => i.GetProperty("id").GetGuid()));
-        Assert.Equal(["id", "kind", "route", "startedAt", "endedAt"], window[0].EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "kind", "route", "startedAt", "endedAt", "detail"], window[0].EnumerateObject().Select(p => p.Name));
         Assert.Equal("call", window[0].GetProperty("kind").GetString());
         Assert.Equal("speaker", window[0].GetProperty("route").GetString());
         Assert.Equal("2026-09-29T04:00:00Z", window[0].GetProperty("startedAt").GetString());

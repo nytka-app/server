@@ -28,6 +28,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<NoteStore>();
         services.AddSingleton<MemoryStore>();
         services.AddSingleton<SearchStore>();
+        services.AddSingleton<EmbeddingStore>();
         services.AddSingleton<WebhookStore>();
         services.AddSingleton<PeopleStore>();
         services.AddSingleton<PersonFactStore>();

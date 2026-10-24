@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.35.0](https://github.com/nytka-app/server/compare/v0.34.0...v0.35.0) (2026-10-24)
+
+
+### Features
+
+* **search:** vector search for Ask and search with pgvector and hybrid ranking (NYTKA-66) ([#178](https://github.com/nytka-app/server/issues/178)) ([0ec4ddf](https://github.com/nytka-app/server/commit/0ec4ddf804f57e55218d25b88152a0be5dc2f9fd))
+
+## [0.34.0](https://github.com/nytka-app/server/compare/v0.33.0...v0.34.0) (2026-10-24)
+
+
+### Features
+
+* **ai:** backfill routes answered by the owner's model, memory re-check ([#186](https://github.com/nytka-app/server/issues/186)) ([b329eff](https://github.com/nytka-app/server/commit/b329effa418849b196b551b7ea4035372b8705b7))
+* **ai:** Unknown speaker label, cited lines on memories and tasks, unconfirmed ungrounded memories ([#184](https://github.com/nytka-app/server/issues/184)) ([0af36d4](https://github.com/nytka-app/server/commit/0af36d40e7488783d006b02d410ac75ab563e270))
+* **api:** segments carry voice, the label readers see for a raw provider label ([#188](https://github.com/nytka-app/server/issues/188)) ([443a8db](https://github.com/nytka-app/server/commit/443a8db9aa5ed394f698792059c2380068b7e494))
+* **context:** screen, headphones, activity, now-playing and gain ranges with detail; rows refused on their own ([#189](https://github.com/nytka-app/server/issues/189)) ([c7da604](https://github.com/nytka-app/server/commit/c7da60461dd23e675f991c8341f89b33a9e86f28))
+* **quality:** nightly quality metrics per local day, GET /api/v1/quality and get_quality ([#187](https://github.com/nytka-app/server/issues/187)) ([cd1883d](https://github.com/nytka-app/server/commit/cd1883de43219f1d2b3c2b2d418fe21cbbedbbfd))
+* **webhooks:** omi payload format for webhooks ([#177](https://github.com/nytka-app/server/issues/177)) ([70e3aa6](https://github.com/nytka-app/server/commit/70e3aa6c367619f53eb35655f3f3a9474b1e7096))
+
 ## [0.33.0](https://github.com/nytka-app/server/compare/v0.32.0...v0.33.0) (2026-10-23)
 
 
