@@ -23,6 +23,7 @@ public static class JobKinds
     public const string SyncCalendar = "sync-calendar";
     public const string MakeBrief = "make-brief";
     public const string TidyTags = "tidy-tags";
+    public const string MeasureQuality = "measure-quality";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech and one nobody
@@ -37,6 +38,7 @@ public static class JobKinds
         [ExtractPersonFacts] = JobLane.Ai,
         [MakeBrief] = JobLane.Ai,
         [TidyTags] = JobLane.Ai,
+        [MeasureQuality] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };
@@ -59,6 +61,9 @@ public static class JobKinds
     public static string TidyTagsKey(string localDate) => $"{TidyTags}:{localDate}";
 
     public static string MakeBriefKey(string uid, DateTimeOffset startsAt) => $"{MakeBrief}:{uid}:{startsAt.ToUnixTimeSeconds()}";
+
+    /// <summary>One measurement per local date at a time.</summary>
+    public static string MeasureQualityKey(string localDate) => $"{MeasureQuality}:{localDate}";
 
     public static string DeliverWebhookKey(Guid delivery) => $"{DeliverWebhook}:{delivery}";
 

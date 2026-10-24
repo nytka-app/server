@@ -49,6 +49,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<SpeechStore>();
         services.AddSingleton<ContextRangeStore>();
         services.AddSingleton<UsageStore>();
+        services.AddSingleton<QualityStore>();
 
         return services;
     }

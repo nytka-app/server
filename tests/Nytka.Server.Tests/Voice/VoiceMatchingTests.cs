@@ -207,6 +207,18 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_api_shows_a_raw_provider_label_as_the_voice_readers_see()
+    {
+        await Transcribe((0, 1.5, null));
+
+        var id = await db.ScalarAsync<Guid>("select id from conversations");
+        var segment = (await _server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>($"/api/v1/conversations/{id}"))
+            .GetProperty("segments")[0];
+
+        Assert.Equal(("SPEAKER_0", "Voice 1"), (segment.GetProperty("speaker").GetString(), segment.GetProperty("voice").GetString()));
+    }
+
+    [Fact]
     public async Task The_api_shows_how_sure_the_rule_is_that_a_line_is_the_wearers()
     {
         await Enroll();
