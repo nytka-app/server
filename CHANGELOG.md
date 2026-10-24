@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/nytka-app/server/compare/v0.34.0...v0.35.0) (2026-10-24)
+
+
+### Features
+
+* **search:** vector search for Ask and search with pgvector and hybrid ranking (NYTKA-66) ([#178](https://github.com/nytka-app/server/issues/178)) ([0ec4ddf](https://github.com/nytka-app/server/commit/0ec4ddf804f57e55218d25b88152a0be5dc2f9fd))
+
 ## [0.34.0](https://github.com/nytka-app/server/compare/v0.33.0...v0.34.0) (2026-10-24)
 
 
