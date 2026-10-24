@@ -36,7 +36,7 @@ public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
         var tools = await client.ListToolsAsync();
 
         Assert.Equal(
-            ["ask", "get_conversation", "get_ledger", "get_person", "list_bookmarks", "list_conversations", "list_digests", "list_memories", "list_notes", "list_people", "list_tags", "list_tasks", "search"],
+            ["ask", "get_conversation", "get_ledger", "get_person", "get_quality", "list_bookmarks", "list_conversations", "list_digests", "list_memories", "list_notes", "list_people", "list_tags", "list_tasks", "search"],
             tools.Select(t => t.Name).Order().ToArray());
         Assert.All(tools, t => Assert.True(t.ProtocolTool.Annotations?.ReadOnlyHint));
     }

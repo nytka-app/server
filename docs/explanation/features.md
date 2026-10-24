@@ -691,6 +691,29 @@ needs the language model.
 - **When it fails.** A run makes three attempts; after the third it is tried again an hour later while
   the date is today or yesterday. Logs and errors say only what failed, never the digest or its input.
 
+## Quality metrics
+
+Every night the server measures how well it understood the day, from stored rows only (no model call),
+so a regression shows up the next morning. One row per local day in `Nytka__User__TimeZone` goes to
+`quality_days`; the definitions are those of the redesign baseline of 2026-10-23.
+
+- **When.** Today once `Nytka__Digest__Hour` has come, yesterday again once it has ended (late audio and
+  the evening), and every earlier day since the first conversation that has no row, 31 a tick: the
+  backfill after an upgrade or an outage. The `measure-quality` job runs on the `Ai` lane, one per date.
+- **What a day counts.** Conversations by their start; a fragment is one shorter than 60 s; untitled has
+  neither `title` nor `aiTitle`; empty has no line with text. Lines are segments with text: the wearer's
+  ([which label wins](#your-voice)), voice-scored (a `voice_similarity`), unknown (neither the wearer's nor
+  a person's), raw-label (a provider `SPEAKER_n` label as a reader would see it, which must stay 0, and as
+  stored). Media is the classifier's `speech_guess`: a conversation is mostly media from 80% of its
+  speech time, and counted again when any line is media. Tagged has a tag. Items are the live tasks,
+  memories and notes created that day by salience (`vital`, `ordinary`, `noise`, or unrated), plus the
+  unconfirmed memories. Voice groups and the singleton share are a snapshot when the row was measured,
+  null on a backfilled day, since the table keeps no history.
+- **Read it.** `GET /api/v1/quality?from=&to=` (admin) and the `get_quality` MCP tool (any token: counts
+  and rates, never text). Rates run from 0 to 1, four decimals, null when their base is 0.
+- **Graph it.** There is no `/metrics` endpoint; point a Grafana Postgres data source at
+  `quality_days` with a read-only role.
+
 ## Calendar briefs
 
 Before a meeting with someone you named, the server writes a short brief: who they are to you, what to

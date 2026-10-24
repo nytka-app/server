@@ -808,8 +808,9 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
         Assert.True(audio >= 1);
         Assert.Equal(2, await Db.ScalarAsync<long>("select count(*) from segments where text in ('hello', 'there')"));
 
+        // The enrichment, then the measure-quality of yesterday the same tick queued on the lane.
         release.SetResult(FakeLlm.DefaultAnswer);
-        Assert.Equal(1, await ai.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(2, await ai.WaitAsync(TimeSpan.FromSeconds(30)));
     }
 
     [Fact]
