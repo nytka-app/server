@@ -34,10 +34,11 @@ public sealed record RelatedLink(
 
     /// <summary>
     /// The links of a conversation, task, memory or note (<paramref name="kind"/> one of <see cref="RelatedKinds"/>), best first.
-    /// An item's links are its conversation's, each at the line nearest the item; without vectors an item has none.
+    /// An item's links are its conversation's, each at the line nearest the item; without vectors an item has none. Nothing of a
+    /// sensitivity class in <paramref name="hidden"/> is on either end.
     /// </summary>
     public static async Task<IReadOnlyList<RelatedLink>> ForAsync(
-        RelatedStore related, EmbeddingState embeddings, string kind, Guid id, int limit, CancellationToken ct)
+        RelatedStore related, EmbeddingState embeddings, string kind, Guid id, string[] hidden, int limit, CancellationToken ct)
     {
         if (kind != RelatedKinds.Conversation && !embeddings.IsReady)
         {
@@ -46,10 +47,10 @@ public sealed record RelatedLink(
 
         var rows = kind switch
         {
-            RelatedKinds.Conversation => await related.ForConversationAsync(id, limit, ct),
-            RelatedKinds.Task => await related.ForTaskAsync(id, limit, ct),
-            RelatedKinds.Memory => await related.ForMemoryAsync(id, limit, ct),
-            RelatedKinds.Note => await related.ForNoteAsync(id, limit, ct),
+            RelatedKinds.Conversation => await related.ForConversationAsync(id, hidden, limit, ct),
+            RelatedKinds.Task => await related.ForTaskAsync(id, hidden, limit, ct),
+            RelatedKinds.Memory => await related.ForMemoryAsync(id, hidden, limit, ct),
+            RelatedKinds.Note => await related.ForNoteAsync(id, hidden, limit, ct),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
         return [.. rows.Select(From)];

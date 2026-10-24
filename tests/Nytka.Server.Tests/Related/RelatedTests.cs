@@ -185,6 +185,24 @@ public sealed class RelatedTests(VectorPostgresFixture db) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_sensitive_earlier_conversation_is_linked_for_admin_and_never_shown_to_a_read_token()
+    {
+        var earlier = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0, null, "Trip plans", "The flight and the vacation.", TripLine);
+        var later = await SearchSeed.ConversationAsync(db.DataSource, SearchSeed.T0.AddDays(2), null, "The trip again", "The flight for the vacation.", TripLine);
+        await TagAsync(earlier, "mountains");
+        await TagAsync(later, "mountains");
+        await db.ExecuteAsync("update conversations set sensitivity = 'therapy' where id = @earlier", new { earlier });
+
+        await RelateAsync();
+
+        Assert.Single(await RelatedAsync($"conversationId={later}"));
+        var reader = await _server.CreateClientWithScope("read").GetFromJsonAsync<JsonElement>($"/api/v1/related?conversationId={later}");
+        Assert.Empty(reader.GetProperty("items").EnumerateArray());
+        var detail = await _server.CreateClientWithScope("read").GetFromJsonAsync<JsonElement>($"/api/v1/conversations/{later}");
+        Assert.Empty(detail.GetProperty("related").EnumerateArray());
+    }
+
+    [Fact]
     public async Task Related_takes_exactly_one_id()
     {
         var response = await _server.CreateAuthorizedClient().GetAsync($"/api/v1/related?conversationId={Guid.NewGuid()}&taskId={Guid.NewGuid()}");

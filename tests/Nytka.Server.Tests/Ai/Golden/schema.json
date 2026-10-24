@@ -1,12 +1,14 @@
-{ "type": "object", "additionalProperties": false, "required": ["title", "summary", "items", "tags"],
+{ "type": "object", "additionalProperties": false, "required": ["title", "summary", "items", "tags", "sensitivity"],
   "properties": { "title": { "type": "string" }, "summary": { "type": "string" },
                   "tags": { "type": "array", "items": { "type": "string" } },
+                  "sensitivity": { "type": "string", "enum": ["none", "health", "therapy", "intimate", "money"] },
                   "items": { "type": "array", "items": {
-                    "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds"],
+                    "type": "object", "additionalProperties": false, "required": ["text", "kind", "owner", "person", "topic", "due", "salience", "segmentIds", "sensitivity"],
                     "properties": { "text": { "type": "string" },
                                     "kind": { "type": "string", "enum": ["commitment", "idea", "advice", "noise"] },
                                     "owner": { "type": "string", "enum": ["wearer", "other"] },
                                     "person": { "type": ["string", "null"] }, "topic": { "type": ["string", "null"] },
                                     "due": { "type": ["string", "null"] },
                                     "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
-                                    "segmentIds": { "type": "array", "items": { "type": "integer" } } } } } } }
+                                    "segmentIds": { "type": "array", "items": { "type": "integer" } },
+                                    "sensitivity": { "type": "string", "enum": ["none", "health", "therapy", "intimate", "money"] } } } } } }

@@ -163,18 +163,21 @@ public sealed class RelatedStore(NpgsqlDataSource dataSource)
         await transaction.CommitAsync(ct);
     }
 
-    /// <summary>The conversation's links, best first; people by name, the wearer never among them.</summary>
-    public async Task<IReadOnlyList<RelatedRow>> ForConversationAsync(Guid conversationId, int limit, CancellationToken ct)
+    /// <summary>
+    /// The conversation's links, best first; people by name, the wearer never among them. Neither end may be of a sensitivity class in
+    /// <paramref name="hidden"/> (<see cref="Sensitivity.Visible"/>).
+    /// </summary>
+    public async Task<IReadOnlyList<RelatedRow>> ForConversationAsync(Guid conversationId, string[] hidden, int limit, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return (await connection.QueryAsync<RelatedRow>(new CommandDefinition(
             $"""
             {SelectRelated}
-            where r.conversation_id = @conversationId
+            where r.conversation_id = @conversationId and {Sensitivity.Visible("src")} and {Sensitivity.Visible("o")}
             order by r.score desc, r.earlier_id
             limit @limit
             """,
-            new { conversationId, limit, quoteLength = QuoteLength }, cancellationToken: ct))).ToList();
+            new { conversationId, hidden, limit, quoteLength = QuoteLength }, cancellationToken: ct))).ToList();
     }
 
     /// <summary>
@@ -192,6 +195,7 @@ public sealed class RelatedStore(NpgsqlDataSource dataSource)
                    left(coalesce(moment.text, s.text), @quoteLength) as Quote, r.score as Score, r.similarity as Similarity, r.tags as Tags,
                    coalesce((select array_agg(p.name order by p.name) from people p where p.id = any(r.person_ids)), array[]::text[]) as People
             from related_moments r
+            join conversations src on src.id = r.conversation_id
             join conversations o on o.id = r.earlier_id
             left join segments s on s.id = r.segment_id
             left join lateral (
@@ -200,33 +204,36 @@ public sealed class RelatedStore(NpgsqlDataSource dataSource)
                 order by ge.embedding <=> (select embedding from item)
                 limit 1
             ) moment on true
-            where r.conversation_id = ({conversationSql})
+            where r.conversation_id = ({conversationSql}) and {Sensitivity.Visible("src")} and {Sensitivity.Visible("o")}
             order by r.score desc, r.earlier_id
             limit @limit
             """,
             args, cancellationToken: ct))).ToList();
     }
 
-    /// <summary>A memory's links: its own vector picks the moment. Empty for a deleted or unconfirmed memory, which no reader sees.</summary>
-    public Task<IReadOnlyList<RelatedRow>> ForMemoryAsync(Guid memoryId, int limit, CancellationToken ct) =>
+    /// <summary>
+    /// A memory's links: its own vector picks the moment. Empty for a deleted or unconfirmed memory, which no reader sees, and for one
+    /// whose sensitivity is in <paramref name="hidden"/>.
+    /// </summary>
+    public Task<IReadOnlyList<RelatedRow>> ForMemoryAsync(Guid memoryId, string[] hidden, int limit, CancellationToken ct) =>
         ForItemAsync(
-            "select conversation_id from memories where id = @memoryId and deleted_at is null and confirmed",
+            $"select m.conversation_id from memories m where m.id = @memoryId and m.deleted_at is null and m.confirmed and {Sensitivity.Visible("m")}",
             "select embedding from memory_embeddings where memory_id = @memoryId",
-            new { memoryId, limit, quoteLength = QuoteLength }, limit, ct);
+            new { memoryId, hidden, limit, quoteLength = QuoteLength }, limit, ct);
 
     /// <summary>A task's links: the mean of the vectors of the lines it cites picks the moment.</summary>
-    public Task<IReadOnlyList<RelatedRow>> ForTaskAsync(Guid taskId, int limit, CancellationToken ct) =>
+    public Task<IReadOnlyList<RelatedRow>> ForTaskAsync(Guid taskId, string[] hidden, int limit, CancellationToken ct) =>
         ForItemAsync(
-            "select conversation_id from tasks where id = @taskId and deleted_at is null",
+            $"select t.conversation_id from tasks t where t.id = @taskId and t.deleted_at is null and {Sensitivity.Visible("t")}",
             "select avg(se.embedding) as embedding from task_sources ts join segment_embeddings se on se.segment_id = ts.segment_id where ts.task_id = @taskId having count(*) > 0",
-            new { taskId, limit, quoteLength = QuoteLength }, limit, ct);
+            new { taskId, hidden, limit, quoteLength = QuoteLength }, limit, ct);
 
     /// <summary>A note's links are its conversation's: a note cites no lines.</summary>
-    public Task<IReadOnlyList<RelatedRow>> ForNoteAsync(Guid noteId, int limit, CancellationToken ct) =>
+    public Task<IReadOnlyList<RelatedRow>> ForNoteAsync(Guid noteId, string[] hidden, int limit, CancellationToken ct) =>
         ForItemAsync(
-            "select conversation_id from notes where id = @noteId",
+            $"select n.conversation_id from notes n where n.id = @noteId and {Sensitivity.Visible("n")}",
             "select null::vector as embedding where false",
-            new { noteId, limit, quoteLength = QuoteLength }, limit, ct);
+            new { noteId, hidden, limit, quoteLength = QuoteLength }, limit, ct);
 
     private const string SelectRelated =
         """
@@ -235,6 +242,7 @@ public sealed class RelatedStore(NpgsqlDataSource dataSource)
                r.tags as Tags,
                coalesce((select array_agg(p.name order by p.name) from people p where p.id = any(r.person_ids)), array[]::text[]) as People
         from related_moments r
+        join conversations src on src.id = r.conversation_id
         join conversations o on o.id = r.earlier_id
         left join segments s on s.id = r.segment_id
         """;

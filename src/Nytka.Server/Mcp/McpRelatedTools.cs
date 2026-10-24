@@ -3,6 +3,7 @@ using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Nytka.Server.Privacy;
 using Nytka.Server.Related;
 using Nytka.Server.Search;
 using Nytka.Storage;
@@ -13,7 +14,7 @@ public sealed record McpRelatedList(IReadOnlyList<RelatedLink> Items);
 
 /// <summary>The <c>get_related</c> tool: the "Earlier" links of <c>GET /api/v1/related</c>.</summary>
 [McpServerToolType]
-public sealed class McpRelatedTools(RelatedStore related, EmbeddingState embeddings)
+public sealed class McpRelatedTools(RelatedStore related, EmbeddingState embeddings, SensitivityScope sensitivity)
 {
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
     {
@@ -34,7 +35,7 @@ public sealed class McpRelatedTools(RelatedStore related, EmbeddingState embeddi
         }
 
         var parsed = Guid.TryParse(id, out var guid) ? guid : throw new McpProtocolException("id must be a UUID.", McpErrorCode.InvalidParams);
-        var items = await RelatedLink.ForAsync(related, embeddings, kind, parsed, Math.Clamp(limit, 1, 20), ct);
+        var items = await RelatedLink.ForAsync(related, embeddings, kind, parsed, sensitivity.Hidden, Math.Clamp(limit, 1, 20), ct);
         var element = JsonSerializer.SerializeToElement(new McpRelatedList(items), Json);
         return new CallToolResult { Content = [new TextContentBlock { Text = element.GetRawText() }], StructuredContent = element };
     }

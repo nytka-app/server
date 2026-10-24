@@ -1,4 +1,5 @@
 using Nytka.Server.Auth;
+using Nytka.Server.Privacy;
 using Nytka.Server.Related;
 using Nytka.Server.Search;
 using Nytka.Storage;
@@ -21,7 +22,7 @@ public static class RelatedEndpoints
     /// <summary>Exactly one of <c>conversationId</c>, <c>taskId</c>, <c>memoryId</c> and <c>noteId</c>; <c>limit</c> 1 to <see cref="MaxLimit"/>, default 5.</summary>
     private static async Task<IResult> GetAsync(
         Guid? conversationId, Guid? taskId, Guid? memoryId, Guid? noteId, int? limit, RelatedStore related, EmbeddingState embeddings,
-        CancellationToken ct)
+        SensitivityScope sensitivity, CancellationToken ct)
     {
         (string Kind, Guid? Id)[] given =
         [
@@ -37,6 +38,6 @@ public static class RelatedEndpoints
         }
 
         var take = Math.Clamp(limit ?? RelatedRule.MaxLinks, 1, MaxLimit);
-        return Results.Ok(new RelatedPage(await RelatedLink.ForAsync(related, embeddings, set[0].Kind, set[0].Id!.Value, take, ct)));
+        return Results.Ok(new RelatedPage(await RelatedLink.ForAsync(related, embeddings, set[0].Kind, set[0].Id!.Value, sensitivity.Hidden, take, ct)));
     }
 }

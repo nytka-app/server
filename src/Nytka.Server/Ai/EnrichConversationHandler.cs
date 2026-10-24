@@ -248,7 +248,7 @@ public sealed class EnrichConversationHandler(
 
         var stored = await conversations.StoreEnrichmentAsync(
             connection, transaction, conversationId, title.Length == 0 ? null : title, summary.Length == 0 ? null : summary,
-            through, segmentCount, summaryTemplate, now, ct, again);
+            through, segmentCount, summaryTemplate, now, ct, again, Sensitivity.Parse(answer.Sensitivity));
         if (stored != EnrichmentStore.Stored)
         {
             return stored; // no event: the conversation is gone, changed since the read, or was summarized already

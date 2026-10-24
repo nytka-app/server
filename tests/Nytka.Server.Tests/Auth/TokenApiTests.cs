@@ -152,7 +152,7 @@ public sealed class TokenApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal("older", items[1].GetProperty("name").GetString());
         Assert.Equal("2026-09-29T10:05:00Z", items[1].GetProperty("revokedAt").GetString());
         Assert.Equal(
-            ["id", "name", "scope", "hint", "createdAt", "lastUsedAt", "revokedAt"],
+            ["id", "name", "scope", "hint", "createdAt", "lastUsedAt", "revokedAt", "sensitive"],
             items[0].EnumerateObject().Select(p => p.Name));
     }
 

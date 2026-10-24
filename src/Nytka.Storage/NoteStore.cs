@@ -25,7 +25,7 @@ public sealed class NoteRow
 }
 
 /// <summary>A note the model's advice made: <paramref name="Topic"/> is a normalized name, <paramref name="Points"/> the tips.</summary>
-public sealed record AiNote(string Topic, IReadOnlyList<string> Points, string? Salience = null);
+public sealed record AiNote(string Topic, IReadOnlyList<string> Points, string? Salience = null, string? Sensitivity = null);
 
 /// <summary>An item of the model's answer the server did not keep (<c>dropped_candidates</c>).</summary>
 public sealed record DroppedCandidate(string Kind, string Owner, string Text);
@@ -37,11 +37,12 @@ public sealed record DroppedCandidate(string Kind, string Owner, string Text);
 public sealed class NoteStore(NpgsqlDataSource dataSource)
 {
     /// <summary>Newest first, by id. <paramref name="topic"/> is normalized; <paramref name="before"/> is a note id.</summary>
-    public async Task<IReadOnlyList<NoteRow>> ListAsync(string? topic, Guid? conversationId, Guid? before, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<NoteRow>> ListAsync(
+        string? topic, Guid? conversationId, Guid? before, int limit, CancellationToken ct, string[]? hidden = null)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var rows = await connection.QueryAsync<NoteRow>(new CommandDefinition(
-            """
+            $"""
             select n.id as Id, n.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                    c.started_at as ConversationStartedAt, n.topic as Topic, n.points as Points, n.created_at as CreatedAt
             from notes n
@@ -49,10 +50,11 @@ public sealed class NoteStore(NpgsqlDataSource dataSource)
             where (cast(@topic as text) is null or n.topic = @topic)
               and (cast(@conversationId as uuid) is null or n.conversation_id = @conversationId)
               and (cast(@before as uuid) is null or n.id < @before)
+              and {Sensitivity.Visible("n")} and {Sensitivity.Visible("c")}
             order by n.id desc
             limit @limit
             """,
-            new { topic, conversationId, before, limit }, cancellationToken: ct));
+            new { topic, conversationId, before, limit, hidden = hidden ?? [] }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -74,12 +76,12 @@ public sealed class NoteStore(NpgsqlDataSource dataSource)
             // A millisecond apart, so ids keep the order the model gave the topics in.
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into notes (id, conversation_id, topic, points, salience, created_at, updated_at)
-                values (@id, @conversationId, @Topic, @points, @Salience, @now, @now)
+                insert into notes (id, conversation_id, topic, points, salience, sensitivity, created_at, updated_at)
+                values (@id, @conversationId, @Topic, @points, @Salience, @Sensitivity, @now, @now)
                 on conflict (conversation_id, topic) do update
-                set points = excluded.points, salience = excluded.salience, updated_at = excluded.updated_at
+                set points = excluded.points, salience = excluded.salience, sensitivity = excluded.sensitivity, updated_at = excluded.updated_at
                 """,
-                new { id = Guid.CreateVersion7(now.AddMilliseconds(i)), conversationId, notes[i].Topic, points = notes[i].Points.ToArray(), notes[i].Salience, now },
+                new { id = Guid.CreateVersion7(now.AddMilliseconds(i)), conversationId, notes[i].Topic, points = notes[i].Points.ToArray(), notes[i].Salience, notes[i].Sensitivity, now },
                 transaction, cancellationToken: ct));
         }
     }

@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -20,9 +21,10 @@ public static class ObsidianExportEndpoints
         return api;
     }
 
-    private static IResult Export(ObsidianExportStore export, TimeProvider time, HttpContext http)
+    private static IResult Export(ObsidianExportStore export, TimeProvider time, SensitivityScope sensitivity, HttpContext http)
     {
         var now = time.GetUtcNow();
+        var hidden = sensitivity.ExportHidden;
         return Results.Stream(async stream =>
         {
             var ct = http.RequestAborted;
@@ -36,7 +38,7 @@ public static class ObsidianExportEndpoints
 
             using var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
 
-            await foreach (var entry in export.ReadAsync(ct))
+            await foreach (var entry in export.ReadAsync(ct, hidden))
             {
                 var (name, content) = entry switch
                 {
