@@ -5,6 +5,8 @@ using Npgsql;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Privacy;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Webhooks;
@@ -14,7 +16,8 @@ namespace Nytka.Server.Webhooks;
 /// <c>deliver-webhook</c> job, all in the event's transaction: a delivery exists exactly when the
 /// change committed. Payloads never carry a transcript, except those of a webhook whose format is <c>omi</c>.
 /// </summary>
-public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore webhooks, JobQueue jobs, TimeProvider time) : IEventSubscriber
+public sealed class WebhookRecorder(
+    NpgsqlDataSource dataSource, WebhookStore webhooks, JobQueue jobs, TimeProvider time, SettingsService settings) : IEventSubscriber
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -41,6 +44,16 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         if (targets.Count == 0)
         {
             return;
+        }
+
+        // A subject whose sensitivity privacy.hide names goes only to webhooks the owner trusted with it.
+        if (await IsHiddenAsync(nytkaEvent, PrivacySettings.Hidden(settings), connection, transaction, ct))
+        {
+            targets = targets.Where(t => t.Sensitive).ToList();
+            if (targets.Count == 0)
+            {
+                return;
+            }
         }
 
         // An omi webhook gets Omi's memory payload for a conversation and nothing else.
@@ -117,6 +130,28 @@ public sealed class WebhookRecorder(NpgsqlDataSource dataSource, WebhookStore we
         }
 
         return id;
+    }
+
+    /// <summary>Whether the event's conversation, task or memory, or the conversation it came from, has a sensitivity <paramref name="hidden"/> names.</summary>
+    private static async Task<bool> IsHiddenAsync(
+        NytkaEvent e, string[] hidden, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
+    {
+        var sql = e.Type switch
+        {
+            NytkaEvent.ConversationReady => "select array_remove(array[sensitivity], null) from conversations where id = @id",
+            NytkaEvent.TaskCreated or NytkaEvent.TaskCompleted =>
+                "select array_remove(array[t.sensitivity, c.sensitivity], null) from tasks t left join conversations c on c.id = t.conversation_id where t.id = @id",
+            NytkaEvent.MemoryCreated =>
+                "select array_remove(array[m.sensitivity, c.sensitivity], null) from memories m left join conversations c on c.id = m.conversation_id where m.id = @id",
+            _ => null,
+        };
+        if (sql is null || hidden.Length == 0)
+        {
+            return false;
+        }
+
+        var classes = await connection.ExecuteScalarAsync<string[]?>(new CommandDefinition(sql, new { id = e.SubjectId }, transaction, cancellationToken: ct));
+        return classes is not null && classes.Any(hidden.Contains);
     }
 
     private static string Envelope(Guid id, string type, DateTimeOffset createdAt, object data) =>

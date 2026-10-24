@@ -6,6 +6,7 @@ using ModelContextProtocol.Server;
 using Npgsql;
 using Nytka.Server.Events;
 using Nytka.Server.Memories;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Memories;
@@ -19,7 +20,9 @@ public sealed class MemoryToolTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static Guid Id(int n) => Guid.Parse($"018f0000-0000-7000-8000-0000000000{n:x2}");
 
-    private MemoryTools Tools => new(Server.Get<MemoryStore>(), Server.Get<NpgsqlDataSource>(), Server.Get<IEventPublisher>(), Server.Get<TimeProvider>());
+    private MemoryTools Tools => new(
+        Server.Get<MemoryStore>(), Server.Get<NpgsqlDataSource>(), Server.Get<IEventPublisher>(), Server.Get<TimeProvider>(),
+        new SensitivityScope(new Microsoft.AspNetCore.Http.HttpContextAccessor(), Server.Get<Nytka.Server.Settings.SettingsService>()));
 
     private async Task SeedAsync()
     {

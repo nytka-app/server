@@ -4,6 +4,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Nytka.Server.Api;
+using Nytka.Server.Privacy;
 using Nytka.Storage;
 
 namespace Nytka.Server.Search;
@@ -12,7 +13,7 @@ public sealed record McpHitList(IReadOnlyList<SearchEndpoints.Hit> Items);
 
 /// <summary>The <c>search</c> MCP tool (docs/specs/v0.4.md, MCP): what <c>GET /api/v1/search</c> returns.</summary>
 [McpServerToolType]
-public sealed class SearchTools(SearchStore search, SemanticSearch semantic)
+public sealed class SearchTools(SearchStore search, SemanticSearch semantic, SensitivityScope sensitivity)
 {
     /// <summary>Like REST, every field is written, null ones too.</summary>
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
@@ -34,7 +35,7 @@ public sealed class SearchTools(SearchStore search, SemanticSearch semantic)
             throw new McpProtocolException(error!, McpErrorCode.InvalidParams);
         }
 
-        var page = await SearchEndpoints.RunAsync(search, parsed, Math.Clamp(limit, 1, 30), 0, ct, await semantic.QueryAsync(query, ct));
+        var page = await SearchEndpoints.RunAsync(search, parsed, Math.Clamp(limit, 1, 30), 0, ct, sensitivity.Hidden, await semantic.QueryAsync(query, ct));
         var element = JsonSerializer.SerializeToElement(new McpHitList(page.Items), Json);
         return new CallToolResult
         {

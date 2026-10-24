@@ -592,6 +592,27 @@ about you stay memories.
 - A failed extraction is tried three times, then again an hour later, three rounds at most.
 - Facts are in [search](#search) but not in Ask or the daily digest, and no webhook payload carries a transcript.
 
+## Sensitive content
+
+The summary marks each conversation, and each task, note and memory, with a **sensitivity**: `none`, `health` (illness,
+symptoms, a doctor), `therapy` (a therapy or counselling session), `intimate` (sex, the private side of a relationship) or
+`money` (debts, salary, account details). It is one more field in the summary and memory answers, so it costs no extra call;
+conversations summarized before it have none until they are summarized again.
+
+Readers you did not trust leave out the classes `Nytka__Privacy__Hide` names (by default all four; `none` hides nothing):
+
+| Reader | Sees hidden classes |
+|---|---|
+| The app and any admin token through the REST API | yes |
+| MCP, with any token | only with a token made `sensitive` |
+| Read tokens (REST, the calendar feed) | only when made `sensitive`; a hidden conversation is a `404` |
+| Search and Ask | as the token above: admin REST yes, MCP and read tokens no |
+| Webhooks, the Omi format included | only one made with `"sensitive": true` |
+| Daily digests | never: a digest goes to MCP and webhooks |
+| Exports (JSON and Obsidian) | only with the environment's admin token or a `sensitive` token; a full backup needs one |
+
+`sensitive` is set when a token or a webhook is made, never later. The conversation list and detail carry `sensitivity`.
+
 ## Export
 
 `GET /api/v1/export` (admin token) streams everything Nytka holds for you as NDJSON, one JSON object
