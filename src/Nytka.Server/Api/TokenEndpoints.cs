@@ -60,7 +60,7 @@ public static class TokenEndpoints
 
         if (!NytkaScopes.IsValid(request?.Scope))
         {
-            errors["scope"] = [$"Must be {NytkaScopes.Admin} or {NytkaScopes.Read}."];
+            errors["scope"] = [$"Must be {NytkaScopes.Admin}, {NytkaScopes.Read} or {NytkaScopes.Labeling}."];
         }
 
         if (errors.Count > 0)

@@ -706,6 +706,36 @@ so a regression shows up the next morning. One row per local day in `Nytka__User
 - **Graph it.** There is no `/metrics` endpoint; point a Grafana Postgres data source at
   `quality_days` with a read-only role.
 
+## Labelling
+
+A labeller app (the web app `nytka-app/labeler` behind your SSO, or `nytka-app/labeler-android` with a token of scope
+`labeling`) plays a short clip and you say what kind of audio it is: who or what made the voice, whether the text is
+right, how many voices talk at once. The labels are training and evaluation data for Nytka's models, and they correct
+Nytka's own marks. Routes: [Labelling](../reference/api.md#labelling).
+
+- **Tasks.** `device` asks the source of a stretch of other voices (consecutive lines with gaps under 4 s, at most 10 s,
+  the unit of the [speech kind](#speech-kind)), the least sure ones those whose classifier score is nearest
+  `Nytka__Speech__MediaThreshold`. `voice` asks the source of a line with a voice similarity, nearest
+  `Nytka__Voice__UserThreshold`. `transcript` asks whether the text is right, the least sure ones the lines of a
+  [paid pass](#paid-transcript-pass) whose draft said other words. `overlap` asks how many voices talk at once over two
+  lines of different voices that overlap by half a second or more. `quiet` has no items yet: it waits for a per-line level.
+- **Picking.** The `pick-labeling` job (Audio lane, hourly) samples 200 conversations that still hold audio and tops each
+  task up to 150 open items from stored scores only: 60% the models' least sure, 20% at random (so prevalence estimates
+  stay honest), 10% where two signals disagree, 5% repeats of labels at least 14 days old (your agreement with yourself)
+  and 5% the highest scores (a precision check). A line is asked once per task, apart from a repeat. `GET /next` leases a
+  session of up to 50 for 30 minutes, at most 3 per conversation.
+- **Labels are the truth, marks a derived copy.** A single source writes through to the lines' marks: `me` and `not_me`
+  set your own wearer mark, `live`, `device` and `call` the speech kind (`device` as `media` until a device kind exists).
+  Two sources, `none` and `cant_tell` set nothing. Each mark records the label that set it: superseding or deleting the
+  label clears it or brings back the earlier label's, unless you changed the mark since. Imports never set a mark.
+- **Your voiceprint learns only what you confirm.** A wrong `me` tap would move the voiceprint for good, so a `me` label
+  marks the line and teaches nothing until you confirm a batch (`POST /api/v1/labeling/voice/confirm`).
+- **Score the model, not the rule.** Once a label is a mark, the rule repeats it; `GET /labels` therefore carries each
+  line's own verdicts (`voice_is_user`, `speech_guess`), and evaluations read those.
+- **Clips.** The clip route cuts the item from speech audio. With `Nytka__Labeling__KeepClips` on, each labelled clip is
+  kept beside its label past `Nytka__Audio__RetentionDays`, until you delete the label; off (the default), it goes with
+  its audio and retention drops any kept before.
+
 ## Calendar briefs
 
 Before a meeting with someone you named, the server writes a short brief: who they are to you, what to

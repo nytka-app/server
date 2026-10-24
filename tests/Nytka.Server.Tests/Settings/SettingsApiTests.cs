@@ -68,6 +68,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
                 "calendar.icsUrl", "calendar.briefMinutes",
                 "speech.mode", "speech.mediaThreshold",
                 "stt.prices", "stt.monthlyBudgetUsd", "stt.budgetWarningPercent", "stt.budgetModel",
+                "labeling.keepClips",
                 "stt.batch.minSeconds", "stt.batch.maxSeconds", "stt.batch.hardMaxSeconds", "stt.batch.longSilenceSeconds",
             ],
             items.EnumerateArray().Select(i => i.GetProperty("key").GetString()));

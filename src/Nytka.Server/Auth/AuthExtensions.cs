@@ -50,6 +50,10 @@ public static class AuthExtensions
     public static T AllowRead<T>(this T builder, bool anyMethod = false)
         where T : IEndpointConventionBuilder => builder.WithMetadata(anyMethod ? AllowReadMetadata.Any : AllowReadMetadata.Safe);
 
+    /// <summary>Also admits tokens of scope <c>labeling</c>, on every method, to a route that <see cref="RequireNytkaAuth{T}"/> guards.</summary>
+    public static T AllowLabeling<T>(this T builder)
+        where T : IEndpointConventionBuilder => builder.WithMetadata(AllowLabelingMetadata.Instance);
+
     /// <summary>
     /// Also admits the bearer token as a <c>?token=</c> query parameter on this route, for a client that cannot set
     /// headers (see <see cref="AllowQueryTokenMetadata"/> for the risk this trades for that). The header still wins

@@ -61,6 +61,7 @@ services:
       Nytka__Stt__Batch__LongSilenceSeconds: "${Nytka__Stt__Batch__LongSilenceSeconds:-}"
       Nytka__Conversations__Gap: "${Nytka__Conversations__Gap:-}"
       Nytka__Audio__RetentionDays: "${Nytka__Audio__RetentionDays:-}"
+      Nytka__Labeling__KeepClips: "${Nytka__Labeling__KeepClips:-}"
       Nytka__Mute__Windows: "${Nytka__Mute__Windows:-}"
       Nytka__User__TimeZone: "${Nytka__User__TimeZone:-}"
       Nytka__Llm__BaseUrl: "${Nytka__Llm__BaseUrl:-}"
