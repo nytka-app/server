@@ -35,7 +35,7 @@ public sealed class SchedulerTests(PostgresFixture db) : IAsyncLifetime
 
         var keys = await db.QueryAsync<string>("select dedupe_key from jobs order by dedupe_key");
         Assert.Equal(
-            ["close-conversations", $"process-session:{_session}", "retention"],
+            ["close-conversations", "pick-labeling", $"process-session:{_session}", "retention"],
             keys);
     }
 
