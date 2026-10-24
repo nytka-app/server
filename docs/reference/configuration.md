@@ -64,6 +64,14 @@ you copy without thinking would lock its setting.
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](../explanation/features.md#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](../explanation/features.md#ukrainian-search-optional) |
+| `Nytka__Embeddings__BaseUrl` | no | | editable | Base URL of an OpenAI-compatible embeddings endpoint, without a query or fragment; the server calls `<base URL>/embeddings`. Unset, search and Ask stay full-text only: [vector search](#vector-search) |
+| `Nytka__Embeddings__ApiKey` | no | | env only | Sent as a bearer token; leave it out for a local server |
+| `Nytka__Embeddings__Model` | no | | editable | Sent as `model`; changing it embeds the archive again |
+| `Nytka__Embeddings__Dimensions` | no | | editable | 1 to 2000; sent as `dimensions` when set, for a model that can shorten its vectors. Unset, the model's own size, learned from one request |
+| `Nytka__Embeddings__QueryPrefix` | no | empty | env only | Text put before a question, never before stored text; Qwen3-Embedding wants an instruction there. `\n` in it is a line break |
+| `Nytka__Embeddings__MaxDistance` | no | `0.5` | env only | Largest cosine distance, above 0 and at most 2, at which a passage still counts as close to the question |
+| `Nytka__Embeddings__TimeoutSeconds` | no | `30` | env only | Seconds to wait for one embeddings request |
+| `Nytka__Embeddings__BatchSize` | no | `16` | env only | Texts per indexing request, 1 to 512 |
 | `Nytka__Voice__Enabled` | no | `true` | editable | Once a voice is enrolled, fingerprint new segments and label the ones that match it as the wearer's; `false` checks nothing new and keeps stored verdicts |
 | `Nytka__Voice__UserThreshold` | no | `0.38` | editable | Similarity, 0.1 to 0.95, at or above which a segment is the wearer's; a change re-labels the stored segments |
 | `Nytka__Voice__LearnThreshold` | no | `0.5` | editable | Similarity, 0.1 to 0.95, at or above which a segment of 2 s or longer updates the voiceprint; never below `Nytka__Voice__UserThreshold`: the app's change is refused with `400`, and a lower value from the environment counts as that threshold |
@@ -87,10 +95,11 @@ Model names take up to 128 characters. Values travel as strings, as an environme
 them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`, its `source` (`env`,
 `db` or `default`) and `locked`.
 
-- **Environment only.** The admin token, the transcription URL, the API keys and the four
-  `Nytka__Llm__` tuning values cannot be changed from the app or the API; the calendar feed's address is one too. `GET /api/v1/settings`
+- **Environment only.** The admin token, the transcription URL, the API keys, the four
+  `Nytka__Llm__` tuning values and the four `Nytka__Embeddings__` ones (`QueryPrefix`, `MaxDistance`,
+  `TimeoutSeconds`, `BatchSize`) cannot be changed from the app or the API; the calendar feed's address is one too. `GET /api/v1/settings`
   shows the URL without any `user:password@`, and shows an API key as `isSet: true` or `false`,
-  never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
+  never its value; a `PATCH` naming `stt.url` or an API key gets `409`, and one naming the admin token or a `Nytka__Llm__` or `Nytka__Embeddings__` tuning value gets `400` ("Unknown setting."). No key reaches the database.
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
   `Nytka__Memories__Enabled` and `Nytka__Search__Dictionary` are checked at start too.
@@ -266,3 +275,96 @@ deleted are neither duplicated nor brought back.
 `Nytka__Tags__Suggest` on, so do up to 100 of your [tag names](../explanation/features.md#tags), with each summary; turn it off to keep them home. Point
 `Nytka__Llm__BaseUrl` at a local server, such as Ollama, to keep it on your network. Logs and errors
 never hold transcript text or a response body.
+
+## Vector search
+
+With an embeddings endpoint, search and Ask find what you said by meaning and not only by its words:
+"when do I clean the fish tank" finds the conversation where you said "треба помити акваріум". It is
+optional and off by default; without it nothing changes.
+
+**What it needs.** Two things: [pgvector](https://github.com/pgvector/pgvector) 0.8 or later in
+Postgres, and an OpenAI-compatible `/embeddings` endpoint.
+
+- The stock `postgres:17-alpine` image in `docker-compose.yml` has no pgvector, and Alpine's
+  `postgresql-pgvector` package is built for Alpine's own Postgres, not the official image's. Use
+  `pgvector/pgvector:0.8.7-pg17` (Debian), or `-pg18` for Postgres 18, in place of the Postgres image.
+  The extension is not trusted, so the database user must be a superuser, as `POSTGRES_USER` is in
+  the official images, or someone must run `create extension vector;` once by hand. Moving an existing
+  database from an Alpine image to a Debian one changes the C library that sorts text, so run
+  `REINDEX DATABASE nytka;` once after the switch.
+- Any OpenAI-compatible embeddings endpoint works: OpenAI, Ollama (`http://<host>:11434/v1`), LiteLLM,
+  or [Text Embeddings Inference](https://github.com/huggingface/text-embeddings-inference) (TEI) on
+  your own machine. The speech is mixed Ukrainian, Russian and English, so pick a multilingual
+  model. Two that run on a CPU:
+
+| Model | Vectors | TEI container memory | Settings |
+|---|---|---|---|
+| `BAAI/bge-m3` | 1024 | 2.5 GB steady, 3.6 GB peak while loading | `Nytka__Embeddings__Model=BAAI/bge-m3` |
+| `Qwen/Qwen3-Embedding-0.6B` | 1024 (32 to 1024 with `Dimensions`) | 2.5 GB steady, 4.5 GB peak while loading | `Nytka__Embeddings__Model=Qwen/Qwen3-Embedding-0.6B`, `Nytka__Embeddings__QueryPrefix=Instruct: Given a question, retrieve conversation passages that answer it\nQuery: ` |
+
+  Memory as measured with TEI 1.9.4 on a CPU, `--max-batch-tokens 2048`, after embedding batches of 32
+  lines; the peak is the container's high-water mark, file cache included. With TEI's default warm-up
+  (`--max-batch-tokens 16384`) bge-m3 ran out of memory in a 7.8 GB Docker VM, so pass a smaller value
+  for short lines like ours. Neither model card lists Ukrainian among tested languages; both are trained
+  on over 100 languages.
+  Measure them on your own questions with the [evaluation tool](#measure-it) before you pick.
+
+  ```yaml
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4
+    command: ["--model-id", "BAAI/bge-m3", "--max-batch-tokens", "2048"]
+    volumes: [embeddings-data:/data]
+  ```
+
+  Then `Nytka__Embeddings__BaseUrl=http://embeddings/v1` and the model's name.
+
+**What runs.** A background indexer, never a request, embeds every transcript line of 12 characters or
+more, each conversation's title with its summary, and each memory, a batch per request, oldest first.
+Each row carries a mark that says it is done, so a restart or a failed request goes on where it stopped,
+and an edited title, summary or memory is embedded again. The first time it asks the model for one
+vector to learn its size, then runs the SQL function `nytka_embeddings_setup(<model>, <size>)`, which
+creates the extension and three tables with HNSW indexes (pgvector's approximate nearest-neighbour
+index). Another model or size drops the vectors and embeds the archive again. On a CPU expect a few
+lines a second (about 4 for bge-m3 and 2 for Qwen3-Embedding-0.6B on a laptop's Docker VM), so 10,000
+lines take an hour or more the first time; search uses what is ready meanwhile.
+`GET /api/v1/info` lists `semantic-search` once the tables are ready.
+
+**How a search ranks.** Each search also embeds its words (Ask embeds the question) and asks for the
+nearest lines, conversations and memories, under the same kinds, dates and tag as the words. A
+passage further than `Nytka__Embeddings__MaxDistance` from the question is left out. The right value
+depends on the model: with bge-m3, passages on the question's topic were 0.22 to 0.47 away and
+unrelated ones 0.51 to 0.61 in a small synthetic test, hence the default 0.5. Check it with the
+[evaluation tool](#measure-it) on your own questions. The two lists
+merge by reciprocal-rank fusion: a hit scores 1/(60 + its rank in the full-text list) plus 1/(60 +
+its rank in the vector list), so a hit in both comes first and a hit by meaning alone can appear.
+`score` then holds that sum. People have no vectors and rank by words alone. When the endpoint fails
+or times out, the search answers by words alone and logs one fixed sentence.
+
+**Fallback.** Migration 0040 applies with or without pgvector. Without it, the server logs that
+pgvector is not available and search stays full-text. Unset the base URL or the model and the server
+stops using the vectors at once; the tables stay until a model is set again.
+
+**Privacy.** Every transcript line, title, summary and memory goes to the embeddings endpoint, and so
+does every search and Ask question. Point it at a server on your network to keep them home. Logs and
+errors never hold the text or a key.
+
+### Measure it
+
+`tools/Nytka.SearchEval` reports recall at 5 and 10 (the share of the expected conversations among the
+first 5 or 10) for full-text search and for hybrid search, over questions you write. Keep the file out
+of the repository: it holds your conversations' ids. One JSON object per line:
+
+```json
+{"question": "коли я мию акваріум?", "expected": ["0199..."], "terms": "акваріум"}
+```
+
+`terms` is optional; without it the question's own words are the full-text query, any of them
+matching, as Ask runs a query. Run it against the database the server has embedded:
+
+```bash
+ConnectionStrings__Postgres="Host=...;Database=nytka;Username=nytka;Password=..." \
+Nytka__Embeddings__BaseUrl=http://127.0.0.1:8081/v1 Nytka__Embeddings__Model=BAAI/bge-m3 \
+dotnet run --project tools/Nytka.SearchEval -- --file ~/nytka-questions.jsonl --max-distance 0.5
+```
+
+It prints one row per question, by number, and the averages; never text from the archive.

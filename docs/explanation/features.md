@@ -673,6 +673,14 @@ loudspeaker (`kind` `media`) or was in a call (`call`). A range the app sends ho
 `earpiece`, `headset`, `bluetooth` or `other`) and two times, and nothing else: never an app name, a title or a number.
 Android does not tell the app which app plays, and the app does not ask.
 
+Newer apps send more of what the phone knows, each kind behind its own `/api/v1/info` feature: the screen was on
+(`screen`, feature `context-device`), sound went to headphones and not into the room (`headphones`, `context-device`), what
+you were doing (`activity`: still, walking, running, cycling or in a vehicle, `context-activity`), a category of what played
+(`now-playing`: video, music, podcast, messenger, browser or other, mapped on the phone; never the app or the title,
+`context-now-playing`), and the pendant's microphone gain step in effect (`gain`, "0" to "8", `context-gain`). The category,
+activity or step is the range's `detail`. A range of a kind the server does not know, or with a route or detail its kind does
+not take, is refused on its own and listed in the answer's `rejected`, so a newer app never loses a whole batch.
+
 The app sends ranges to `POST /api/v1/context/ranges` in batches of up to 500, each with an id it made, so a batch it
 retries changes nothing. It sends them while `/api/v1/info` lists `context-ranges` and its "Phone context" switch is on.
 `GET /api/v1/context/ranges` lists them. Nothing else reads them yet; they are the context for telling a person near you
@@ -799,6 +807,9 @@ people by name or by [fact](#facts-about-people), in Ukrainian and English toget
   written. After the upgrade that adds search or people in search, or when
   you change the dictionary, the server indexes the archive in the background, so older rows appear
   over the next minutes; a row not yet indexed is simply not found.
+- With [vector search](../reference/configuration.md#vector-search) on, a hit may also match by
+  meaning, in any of the three languages, without sharing a word with `q`; the filters apply to it the
+  same way, and `score` becomes the fused rank (1/(60 + full-text rank) + 1/(60 + vector rank)).
 
 ### Ukrainian search (optional)
 
@@ -887,7 +898,10 @@ answer within `llm.timeoutSeconds`; `502` when it fails otherwise).
 The server makes two model calls. The first turns the question into up to three short keyword
 queries and, when the question names a period, a range of local days (in `user.timeZone`). The queries
 run through the search (any word of a query may match), limited to that range; a question about a
-period only takes the conversations of those days, newest first. At most 8 conversations and 10
+period only takes the conversations of those days, newest first. With
+[vector search](../reference/configuration.md#vector-search) on, each query also brings the passages
+closest in meaning to the question itself, so a conversation can be found that shares no word with
+it. At most 8 conversations and 10
 memories go to the second call, best first. A conversation brings its title, summary, tasks and the
 lines of its transcript around the best-matching one, cut so that everything fits
 `llm.maxInputChars`. The model answers with `[n]` markers; the server drops a marker that names no

@@ -13,7 +13,7 @@ public sealed record McpHitList(IReadOnlyList<SearchEndpoints.Hit> Items);
 
 /// <summary>The <c>search</c> MCP tool (docs/specs/v0.4.md, MCP): what <c>GET /api/v1/search</c> returns.</summary>
 [McpServerToolType]
-public sealed class SearchTools(SearchStore search, SensitivityScope sensitivity)
+public sealed class SearchTools(SearchStore search, SemanticSearch semantic, SensitivityScope sensitivity)
 {
     /// <summary>Like REST, every field is written, null ones too.</summary>
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
@@ -22,7 +22,7 @@ public sealed class SearchTools(SearchStore search, SensitivityScope sensitivity
     };
 
     [McpServerTool(Name = "search", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(McpHitList))]
-    [Description("Searches transcripts, titles, summaries, memories, and people by name or fact, in Ukrainian and English. Every word must match, as a prefix. One hit per conversation, memory or person, best first; snippets mark matches with <mark>.")]
+    [Description("Searches transcripts, titles, summaries, memories, and people by name or fact, in Ukrainian and English. Every word must match, as a prefix; when vector search is on, hits close in meaning count too. One hit per conversation, memory or person, best first; snippets mark matches with <mark>.")]
     public async Task<CallToolResult> SearchAsync(
         [Description("The words to find.")] string query,
         [Description("conversation, memory, person, or any of them (all three by default).")] string[]? kinds = null,
@@ -35,7 +35,7 @@ public sealed class SearchTools(SearchStore search, SensitivityScope sensitivity
             throw new McpProtocolException(error!, McpErrorCode.InvalidParams);
         }
 
-        var page = await SearchEndpoints.RunAsync(search, parsed, Math.Clamp(limit, 1, 30), 0, ct, sensitivity.Hidden);
+        var page = await SearchEndpoints.RunAsync(search, parsed, Math.Clamp(limit, 1, 30), 0, ct, sensitivity.Hidden, await semantic.QueryAsync(query, ct));
         var element = JsonSerializer.SerializeToElement(new McpHitList(page.Items), Json);
         return new CallToolResult
         {

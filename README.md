@@ -62,6 +62,8 @@ docs do not say.
 - **People and your own voice.** It learns your voice, groups other voices, keeps facts about the people you talk to,
   and keeps the TV and phone calls out of them.
 - **Search and Ask** over everything, in Ukrainian and English, plus a daily digest and briefs before calendar events.
+  With an embeddings model and pgvector they also find by meaning, not only by the words you said
+  ([vector search](docs/reference/configuration.md#vector-search)).
 - **Webhooks and MCP.** Your other tools hear about new conversations, tasks and memories; AI agents read it all over
   MCP (Model Context Protocol, how AI tools read data) with 14 read tools and 3 that write.
 - **Usage and a budget.** Each transcription request is priced by a table you can edit, `GET /api/v1/usage` shows

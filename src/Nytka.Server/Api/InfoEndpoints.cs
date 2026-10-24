@@ -4,8 +4,10 @@ using System.Security.Claims;
 using Nytka.Audio.Frames;
 using Nytka.Server.Auth;
 using Nytka.Server.People;
+using Nytka.Server.Search;
 using Nytka.Server.Settings;
 using Nytka.Server.Voice;
+using Nytka.Storage;
 
 namespace Nytka.Server.Api;
 
@@ -31,6 +33,8 @@ public static class InfoEndpoints
     /// "speech-kind": a line has a speech kind and the owner marks it (docs/specs/speech-kind.md): <c>speechKind</c> on <c>PATCH /api/v1/segments/{id}</c>,
     /// <c>POST /api/v1/conversations/{id}/speech</c>, <c>mediaShare</c> and <c>media=</c> on the conversation list.
     /// "context-ranges": the app may send <c>POST /api/v1/context/ranges</c> (docs/specs/speech-kind.md, Context from the phone).
+    /// "context-device", "context-activity", "context-now-playing", "context-gain": the app may send the kinds <c>screen</c> and
+    /// <c>headphones</c>, <c>activity</c>, <c>now-playing</c> and <c>gain</c>; a row of a kind the server does not know is rejected on its own.
     /// "task-kinds": a task has a <c>kind</c> (<c>commitment</c> or <c>idea</c>), <c>GET /api/v1/tasks</c> takes <c>kind=</c>, and <c>GET /api/v1/notes</c> exists (docs/specs/task-kinds.md).
     /// "waiting-on": a task may have the kind <c>waiting_on</c> (what another person promised the wearer), <c>kind=waiting_on</c> lists them and the person page has <c>waitingOn</c> (docs/specs/task-kinds.md, Waiting on).
     /// "ledger": <c>GET /api/v1/people/{id}/ledger</c> and the MCP tool <c>get_ledger</c> exist (docs/specs/promise-ledger.md).
@@ -42,8 +46,9 @@ public static class InfoEndpoints
     /// "usage": <c>GET /api/v1/usage</c> exists, with the <c>stt.prices</c> and <c>stt.monthlyBudgetUsd</c> settings (docs/specs/usage.md).
     /// "summary-templates": <c>/api/v1/summary-templates</c> exists, a conversation has <c>summaryTemplate</c>, and the <c>summary.templates.*</c> settings (NYTKA-82).
     /// "quality": <c>GET /api/v1/quality</c> exists, the nightly quality metrics.
+    /// "semantic-search": an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning (NYTKA-66).
     /// </summary>
-    public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings)
+    public static IReadOnlyList<string> Features(SpeakerModel voice, SettingsService settings, EmbeddingState? embeddings = null)
     {
         var features = voice.Available ? new List<string> { "offline-sync", "voice", "people", "review", "briefs" } : ["offline-sync", "people", "review", "briefs"];
         if (voice.Available && PeopleSettings.VoiceMatching(settings) && int.Parse(settings.Get("audio.retentionDays")!, CultureInfo.InvariantCulture) >= 1)
@@ -56,6 +61,7 @@ public static class InfoEndpoints
         features.Add("roles");
         features.Add("speech-kind");
         features.Add("context-ranges");
+        features.AddRange(ContextRangeStore.Features);
         features.Add("task-kinds");
         features.Add("waiting-on");
         features.Add("task-create");
@@ -67,6 +73,10 @@ public static class InfoEndpoints
         features.Add("transcript-upgrade");
         features.Add("summary-templates");
         features.Add("quality");
+        if (embeddings?.IsReady == true)
+        {
+            features.Add("semantic-search");
+        }
 
         return features;
     }
@@ -74,8 +84,8 @@ public static class InfoEndpoints
     public static RouteGroupBuilder MapInfo(this RouteGroupBuilder api)
     {
         // The app reads scope to refuse a read token; a server without it counts as admin.
-        api.MapGet("/info", (ClaimsPrincipal user, SpeakerModel voice, SettingsService settings) => Results.Ok(new InfoResponse(
-            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice, settings), ChunkFormat.AcceptedCodecs)))
+        api.MapGet("/info", (ClaimsPrincipal user, SpeakerModel voice, SettingsService settings, EmbeddingState embeddings) => Results.Ok(new InfoResponse(
+            ServerVersion, ApiVersion, user.FindFirstValue(NytkaAuthenticationHandler.ScopeClaim) ?? NytkaScopes.Read, Features(voice, settings, embeddings), ChunkFormat.AcceptedCodecs)))
             .AllowRead();
         return api;
     }
