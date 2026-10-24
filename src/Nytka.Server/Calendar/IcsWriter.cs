@@ -3,8 +3,11 @@ using System.Text;
 
 namespace Nytka.Server.Calendar;
 
-/// <summary>One occurrence to publish as a <c>VEVENT</c>.</summary>
-public sealed record IcsEvent(string Uid, string Summary, DateTime StartsAt, DateTime EndsAt);
+/// <summary>
+/// One occurrence to publish as a <c>VEVENT</c>. An <see cref="AllDay"/> one is written as dates (<c>VALUE=DATE</c>), its
+/// <see cref="EndsAt"/> the day after its last; <see cref="Description"/> is left out when null.
+/// </summary>
+public sealed record IcsEvent(string Uid, string Summary, DateTime StartsAt, DateTime EndsAt, bool AllDay = false, string? Description = null);
 
 /// <summary>One open task to publish as a <c>VTODO</c>; <see cref="Due"/> is null for a task with no due date.</summary>
 public sealed record IcsTodo(string Uid, string Summary, DateTime? Due);
@@ -32,9 +35,14 @@ public static class IcsWriter
             Line(sb, "BEGIN:VEVENT");
             Line(sb, $"UID:{Escape(e.Uid)}");
             Line(sb, $"DTSTAMP:{Stamp(now)}");
-            Line(sb, $"DTSTART:{Stamp(e.StartsAt)}");
-            Line(sb, $"DTEND:{Stamp(e.EndsAt)}");
+            Line(sb, e.AllDay ? $"DTSTART;VALUE=DATE:{Date(e.StartsAt)}" : $"DTSTART:{Stamp(e.StartsAt)}");
+            Line(sb, e.AllDay ? $"DTEND;VALUE=DATE:{Date(e.EndsAt)}" : $"DTEND:{Stamp(e.EndsAt)}");
             Line(sb, $"SUMMARY:{Escape(e.Summary)}");
+            if (e.Description is { } description)
+            {
+                Line(sb, $"DESCRIPTION:{Escape(description)}");
+            }
+
             Line(sb, "END:VEVENT");
         }
 
@@ -56,6 +64,8 @@ public static class IcsWriter
         Line(sb, "END:VCALENDAR");
         return sb.ToString();
     }
+
+    private static string Date(DateTime day) => day.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
     private static string Stamp(DateTime at) => at.ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
 
