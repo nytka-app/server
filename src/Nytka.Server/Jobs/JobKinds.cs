@@ -24,6 +24,7 @@ public static class JobKinds
     public const string MakeBrief = "make-brief";
     public const string TidyTags = "tidy-tags";
     public const string MeasureQuality = "measure-quality";
+    public const string FoldTopic = "fold-topic";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech and one nobody
@@ -39,6 +40,7 @@ public static class JobKinds
         [MakeBrief] = JobLane.Ai,
         [TidyTags] = JobLane.Ai,
         [MeasureQuality] = JobLane.Ai,
+        [FoldTopic] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };
@@ -57,6 +59,8 @@ public static class JobKinds
 
     public static string SuggestNamesKey(Guid conversation) => $"{SuggestNames}:{conversation}";
     public static string ExtractPersonFactsKey(Guid conversation) => $"{ExtractPersonFacts}:{conversation}";
+
+    public static string FoldTopicKey(Guid topic) => $"{FoldTopic}:{topic}";
 
     public static string TidyTagsKey(string localDate) => $"{TidyTags}:{localDate}";
 

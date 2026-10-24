@@ -33,12 +33,16 @@ public static class ConversationEndpoints
         return api;
     }
 
+    /// <summary>The most topic pages a conversation names.</summary>
+    public const int MaxTopics = 3;
+
     public sealed record ConversationPage(IReadOnlyList<ConversationSummary> Items, DateTime? NextBefore);
 
     public sealed record ConversationDetail(
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
-        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript);
+        IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript,
+        IReadOnlyList<TopicRef> Topics);
 
     /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
     public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
@@ -59,7 +63,7 @@ public static class ConversationEndpoints
     /// <summary><c>media</c> is <c>hide</c> (leave out conversations that are mostly media) or <c>only</c> (keep just those), else <c>400</c>.</summary>
     private static async Task<IResult> ListAsync(
         DateTimeOffset? before, DateTimeOffset? since, int? limit, string? tag, string? media, string? noise, ConversationStore conversations,
-        CancellationToken ct)
+        TopicStore topics, CancellationToken ct)
     {
         var normalized = TagName.Normalize(tag);
         if (tag is not null && normalized is null)
@@ -82,17 +86,19 @@ public static class ConversationEndpoints
         var items = (await conversations.ListAsync(before?.ToUniversalTime(), since?.ToUniversalTime(), take, normalized, media, ct, noise))
             .Select(c => c.Preview.Length > PreviewLength ? c with { Preview = c.Preview[..(char.IsHighSurrogate(c.Preview[PreviewLength - 1]) ? PreviewLength - 1 : PreviewLength)] } : c)
             .ToList();
+        var topicsOf = await topics.ForConversationsAsync([.. items.Select(c => c.Id)], MaxTopics, ct);
+        items = [.. items.Select(c => topicsOf.TryGetValue(c.Id, out var on) ? c with { Topics = on } : c)];
         return Results.Ok(new ConversationPage(items, items.Count == take ? items[^1].StartedAt : null));
     }
 
     private static async Task<IResult> GetAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        IOptions<NytkaOptions> options, CancellationToken ct) =>
-        await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, options, ct);
+        TopicStore topics, IOptions<NytkaOptions> options, CancellationToken ct) =>
+        await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, options, ct);
 
     private static async Task<IResult> DetailAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        IOptions<NytkaOptions> options, CancellationToken ct)
+        TopicStore topics, IOptions<NytkaOptions> options, CancellationToken ct)
     {
         if (await conversations.GetAsync(id, ct) is not { } conversation)
         {
@@ -107,13 +113,14 @@ public static class ConversationEndpoints
             await bookmarks.ForConversationAsync(id, ct), conversation.Source, await tags.OfConversationAsync(id, ct), conversation.SummaryTemplate,
             new TranscriptView(
                 conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
-                TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0)));
+                TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0),
+            (await topics.ForConversationsAsync([id], MaxTopics, ct)).GetValueOrDefault(id) ?? []));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
     private static async Task<IResult> PatchAsync(
         Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags,
-        TranscriptPassStore passes, IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
+        TranscriptPassStore passes, TopicStore topics, IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
     {
         string? title = null;
         if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("title", out var value))
@@ -135,7 +142,7 @@ public static class ConversationEndpoints
         }
 
         return await conversations.SetTitleAsync(id, title, time.GetUtcNow(), ct)
-            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, options, ct)
+            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, options, ct)
             : NotFound();
     }
 

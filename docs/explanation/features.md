@@ -762,6 +762,28 @@ as the ICS address in `Nytka__Calendar__IcsUrl`. The response carries `Cache-Con
 `Referrer-Policy: no-referrer`, so a cache does not keep the token-bearing URL and a browser never sends it
 onward in a `Referer` header.
 
+## Topic pages
+
+A topic page is one evolving view of something that keeps coming up, the way Memoket keeps one view per client:
+every [tag](#tags) on 3 or more conversations (after the nightly synonym merge, so `therapy` and `терапія` are
+one page) and every named person heard in 3 or more. `GET /api/v1/topics` lists them, most recently on first,
+and `GET /api/v1/topics/{id}` gives the page: a running summary, the timeline of its conversations newest
+first (for a person, at the first line they speak), and its open commitments. Each conversation names up to
+3 of the pages it is on as `topics`. The MCP tools `list_topics` and `get_topic` return the same.
+
+**Built incrementally.** Which conversations belong is read live; only the summary is stored, with the
+conversations already folded into it. When a summarized conversation joins a topic, the `fold-topic` job
+(Ai lane) sends the model the page as it stands and the new conversations' summaries, at most 10 per call,
+and stores the rewritten page; transcripts are never read, so a new conversation costs one call whatever
+the topic's size. The first run of a topic folds its earlier conversations 10 at a time. A conversation that
+leaves the topic (a tag removed) stays folded: the page is a running account, and a later fold may say what
+changed. After 3 failed folds in a row a topic waits until one succeeds.
+
+**Off by default.** `topics.enabled` (`Nytka__Topics__Enabled`) is `false`, since turning it on spends
+model calls: on the owner's data about 20 pages, roughly 11 folds a day (about 1,400 tokens in and 400 out
+each), so about $0.26 a week at Claude Haiku 4.5's $1 / $5 per million tokens, and about $0.13 for the first
+run over the existing conversations.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries, memories, and
