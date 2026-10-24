@@ -17,6 +17,7 @@ public class JobKindsTests
     [InlineData(JobKinds.SuggestNames, JobLane.Ai)]
     [InlineData(JobKinds.MeasureQuality, JobLane.Ai)]
     [InlineData(JobKinds.FoldTopic, JobLane.Ai)]
+    [InlineData(JobKinds.MakeRollup, JobLane.Ai)]
     [InlineData(JobKinds.DeliverWebhook, JobLane.Hooks)]
     [InlineData("nobody-handles-this", JobLane.Audio)]
     public void A_kind_runs_in_its_lane_and_an_unclaimed_kind_in_audio(string kind, JobLane lane) =>
@@ -52,12 +53,12 @@ public class JobKindsTests
         var audio = JobKinds.FilterOf(JobLane.Audio);
 
         Assert.False(ai.Exclude);
-        Assert.Equal(["enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "measure-quality", "suggest-names", "tidy-tags"], ai.Kinds.Order());
+        Assert.Equal(["enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "make-rollup", "measure-quality", "suggest-names", "tidy-tags"], ai.Kinds.Order());
         Assert.False(hooks.Exclude);
         Assert.Equal(["deliver-webhook", "sync-calendar"], hooks.Kinds.Order());
         Assert.True(audio.Exclude);
         Assert.Equal(
-            ["deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "measure-quality", "suggest-names", "sync-calendar", "tidy-tags"],
+            ["deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "make-rollup", "measure-quality", "suggest-names", "sync-calendar", "tidy-tags"],
             audio.Kinds.Order());
     }
 }

@@ -81,6 +81,7 @@ services:
       Nytka__Tags__Suggest: "${Nytka__Tags__Suggest:-}"
       Nytka__Tags__Auto: "${Nytka__Tags__Auto:-}"
       Nytka__Topics__Enabled: "${Nytka__Topics__Enabled:-}"
+      Nytka__Rollups__Enabled: "${Nytka__Rollups__Enabled:-}"
       Nytka__Summary__Templates__Enabled: "${Nytka__Summary__Templates__Enabled:-}"
       Nytka__Summary__Templates__Default: "${Nytka__Summary__Templates__Default:-}"
       Nytka__Summary__Templates__Meeting: "${Nytka__Summary__Templates__Meeting:-}"
