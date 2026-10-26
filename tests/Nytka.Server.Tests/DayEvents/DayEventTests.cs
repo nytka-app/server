@@ -11,7 +11,6 @@ namespace Nytka.Server.Tests.DayEvents;
 /// Day events (docs/explanation/features.md#day-events): a fixture day's exact list, recompute idempotency and
 /// sensitivity-class hiding.
 /// </summary>
-[Collection(PostgresCollection.Name)]
 public sealed class DayEventTests(PostgresFixture db) : Ai.AiTestBase(db)
 {
     private static readonly Guid ConversationA = Guid.Parse("018f0000-0000-7000-8000-00000000000a");

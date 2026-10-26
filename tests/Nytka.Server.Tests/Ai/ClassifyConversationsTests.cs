@@ -6,7 +6,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>Conversations enrichment skips as too short still get a sensitivity from their text (readers treat none as visible).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class ClassifyConversationsTests(PostgresFixture db) : AiTestBase(db)
 {
     private static readonly TimeSpan Later = TimeSpan.FromMinutes(6);
