@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
-/// <summary>The derived day-event kinds (<c>events</c>, migration 0057): docs/explanation/features.md#day-events.</summary>
+/// <summary>The derived day-event kinds (<c>events</c>, migration 0059): docs/explanation/features.md#day-events.</summary>
 public static class DayEventKinds
 {
     public const string PersonJoined = "person_joined";
@@ -32,7 +32,7 @@ public sealed record DayEventRow(
     Guid Id, string Kind, DateTime At, Guid? ConversationId, Guid? PersonId, string? VoiceLabel, string Detail, string Source, string? Sensitivity);
 
 /// <summary>
-/// Day events (<c>events</c>, migration 0057): who joined and left, media, calls, silence and being alone, derived from
+/// Day events (<c>events</c>, migration 0059): who joined and left, media, calls, silence and being alone, derived from
 /// segments and context ranges, never from new input. A day's rows are replaced in one transaction, so a recompute is
 /// idempotent and a reader never sees half a day.
 /// </summary>

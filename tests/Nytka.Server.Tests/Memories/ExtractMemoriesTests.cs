@@ -11,7 +11,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
 {
     private static Guid Id(int n) => Guid.Parse($"018f0000-0000-7000-8000-0000000000{n:x2}");
 
-    private Task<long> Jobs() => Db.ScalarAsync<long>("select count(*) from jobs");
+    private Task<long> Jobs() => Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'");
 
     private Task Seed(int n, string text, string? fingerprint = null, string source = "ai", bool edited = false, bool deleted = false, Guid? conversation = null) =>
         Db.ExecuteAsync(
@@ -47,7 +47,7 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
         await PublishReadyAsync(Conversation);
 
         Assert.Equal(1, await Jobs());
-        Assert.Equal("extract-memories:" + Conversation, await Db.ScalarAsync<string>("select dedupe_key from jobs"));
+        Assert.Equal("extract-memories:" + Conversation, await Db.ScalarAsync<string>("select dedupe_key from jobs where kind <> 'recompute-events'"));
         Assert.Equal("pending", await Db.ScalarAsync<string>("select status from memory_runs"));
         Assert.Empty(Llm.Requests);
     }

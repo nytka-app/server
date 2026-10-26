@@ -87,8 +87,8 @@ public sealed class DayEventTests(PostgresFixture db) : Ai.AiTestBase(db)
                 (DayEventKinds.MediaStopped, Day.AddHours(10).AddMinutes(10), (Guid?)null, (Guid?)null, (string?)null, "context"),
             ],
             rows.Select(r => (r.Kind, r.At, r.ConversationId, r.PersonId, r.VoiceLabel, r.Source)));
-        Assert.Equal("""{"minutes":30}""", rows.Single(r => r.Kind == DayEventKinds.Silence).Detail);
-        Assert.Equal("""{"category":"video"}""", rows.Single(r => r.Kind == DayEventKinds.MediaStarted).Detail);
+        Assert.Equal("""{"minutes": 30}""", rows.Single(r => r.Kind == DayEventKinds.Silence).Detail);
+        Assert.Equal("""{"category": "video"}""", rows.Single(r => r.Kind == DayEventKinds.MediaStarted).Detail);
 
         var response = await Admin.GetFromJsonAsync<JsonElement>("/api/v1/events?date=2026-09-29");
         Assert.Equal("2026-09-29", response.GetProperty("date").GetString());

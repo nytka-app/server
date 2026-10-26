@@ -315,7 +315,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         await Suggest(id);
 
         Assert.Single(Llm.Requests, r => r.SchemaName == "name_suggestions");
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
 
         await AddSegment(id, "One more thing.", Now.AddMinutes(-1), "SPEAKER_4", "4");
         await Suggest(id);
@@ -330,7 +330,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
 
         await PublishReady(id);
 
-        Assert.Equal("suggest-names:" + id, await Db.ScalarAsync<string>("select dedupe_key from jobs"));
+        Assert.Equal("suggest-names:" + id, await Db.ScalarAsync<string>("select dedupe_key from jobs where kind <> 'recompute-events'"));
         Assert.Equal("pending", await Db.ScalarAsync<string>("select status from people_runs where kind = 'names'"));
         Assert.Empty(Llm.Requests);
     }
@@ -345,29 +345,29 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
             "insert into person_voices (speaker_id, person_id, created_at) select '4', id, now() from people");
         await Db.ExecuteAsync("update segments set person_id = (select id from people) where speaker = 'SPEAKER_9'");
         await PublishReady(named.Id);
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
 
         // A short conversation.
         var brief = await Seed("Hi, I'm Olena.");
         await Db.ExecuteAsync("update segments set speaker = 'SPEAKER_7', speaker_id = '7' where conversation_id = @brief", new { brief });
         await PublishReady(brief);
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
 
         // No label and no voice id: nothing to name.
         var bare = await Seed(Talk);
         await PublishReady(bare);
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
 
         var voiced = await Talked();
         Llm.IsConfigured = false;
         await PublishReady(voiced.Id);
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
 
         Llm.IsConfigured = true;
         await Db.ExecuteAsync("insert into settings (key, value, updated_at) values ('people.suggestNames', 'false', now())");
         await Server.Get<Nytka.Server.Settings.SettingsService>().ReloadAsync(default);
         await PublishReady(voiced.Id);
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
         Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from people_runs"));
     }
 
@@ -382,7 +382,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         await Server.RunJobsAsync();
 
         Assert.Empty(Llm.Requests);
-        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
         Assert.Equal(0, await Db.ScalarAsync<long>("select count(*) from people_runs"));
     }
 
@@ -398,7 +398,7 @@ public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal("failed", await Db.ScalarAsync<string>("select status from people_runs where kind = 'names'"));
         Assert.Equal("HTTP 500", await Db.ScalarAsync<string>("select message from people_runs where kind = 'names'"));
         Assert.Equal(1, await Db.ScalarAsync<int>("select failures from people_runs where kind = 'names'"));
-        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from jobs"));
+        Assert.Equal(1, await Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'"));
 
         Llm.Respond = _ => Answer(("Voice A", "Olena", voice, 0.9));
         Server.Time.Advance(TimeSpan.FromHours(1));
