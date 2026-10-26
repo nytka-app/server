@@ -14,8 +14,16 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  # The server tests are four shards, run side by side: each starts its own Postgres through Testcontainers, so the
+  # wall time is the longest shard rather than the sum. scripts/ci-shard.sh says which namespaces go where; shard 4 is
+  # everything the others do not list, so a new test folder runs without a change here.
+  test:
+    name: test (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -32,11 +40,27 @@ jobs:
       # a missing file fail them instead of skipping them.
       - run: scripts/fetch-uk-dictionary.sh --accept-licence
       # Storage tests start Postgres through Testcontainers; the hosted runner has Docker.
-      - run: dotnet test --no-build -c Release
+      - name: Server tests
+        run: dotnet test tests/Nytka.Server.Tests --no-build -c Release --filter "$(scripts/ci-shard.sh ${{ matrix.shard }})"
         env:
           NYTKA_REQUIRE_DICTIONARY: "1"
           NYTKA_REQUIRE_SPEAKER_MODEL: "1"
           NYTKA_REQUIRE_AUDIO_TAGGER: "1"
+      # The audio tests need no Docker and take seconds: one shard runs them.
+      - name: Audio tests
+        if: matrix.shard == 4
+        run: dotnet test tests/Nytka.Audio.Tests --no-build -c Release
+        env:
+          NYTKA_REQUIRE_SPEAKER_MODEL: "1"
+          NYTKA_REQUIRE_AUDIO_TAGGER: "1"
+
+  # The one check the repository requires, under its old name: green when every shard is.
+  build:
+    needs: test
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.test.result }}" = success
 
   secrets:
     runs-on: ubuntu-latest
