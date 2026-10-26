@@ -8,8 +8,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Insights;
 
 /// <summary>The app's Over time tab: <c>measure-insights</c>, its backfill, and <c>GET /api/v1/insights</c>.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class InsightsTests(PostgresFixture db) : IAsyncLifetime
+public sealed class InsightsTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 
