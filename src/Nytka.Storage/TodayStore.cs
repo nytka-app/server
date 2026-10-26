@@ -86,20 +86,37 @@ public static class TodayPick
             && (c.TaskKind == TaskKinds.WaitingOn || c.PersonId is not null || c.Due is not null);
     }
 
-    /// <summary>Higher shows first: due today or overdue 3, vital 2, owed to the wearer 1, with a named person 1.</summary>
-    public static int Rank(DayCandidate c, DateTime dayEnd) =>
-        (c.Due is { } due && due < dayEnd ? 3 : 0)
-        + (c.Salience == Salience.Vital ? 2 : 0)
+    /// <summary>Whether the candidate is due by the end of the day: due today, or overdue.</summary>
+    public static bool IsDue(DayCandidate c, DateTime dayEnd) => c.Due is { } due && due < dayEnd;
+
+    /// <summary>The weight after the due date: vital 2, owed to the wearer 1, with a named person 1.</summary>
+    public static int Rank(DayCandidate c) =>
+        (c.Salience == Salience.Vital ? 2 : 0)
         + (c.TaskKind == TaskKinds.WaitingOn ? 1 : 0)
         + (c.PersonId is not null ? 1 : 0);
 
-    /// <summary>The eligible candidates, the <see cref="Max"/> best by rank (then the newest), in the order they were said.</summary>
-    public static IReadOnlyList<DayCandidate> Choose(IReadOnlyList<DayCandidate> candidates, DateTime dayEnd) =>
+    /// <summary>
+    /// When the candidate sits in the day: when it was said if that was the day, else the due time if it falls in it, else the
+    /// start of the day, which is where what was said earlier and is still open comes first.
+    /// </summary>
+    public static DateTime SittingAt(DayCandidate c, DateTime dayStart, DateTime dayEnd) =>
+        c.At >= dayStart && c.At < dayEnd ? c.At : c.Due is { } due && due >= dayStart && due < dayEnd ? due : dayStart;
+
+    /// <summary>
+    /// The eligible candidates, the <see cref="Max"/> best, in the order they sit in the day (those due first among equals, the
+    /// earliest due date first). Best is: due by the end of the day first, the earliest due date first; then by <see cref="Rank"/>,
+    /// then the most recently said.
+    /// </summary>
+    public static IReadOnlyList<DayCandidate> Choose(IReadOnlyList<DayCandidate> candidates, DateTime dayStart, DateTime dayEnd) =>
         [.. candidates
             .Where(Eligible)
-            .OrderByDescending(c => Rank(c, dayEnd)).ThenByDescending(c => c.At).ThenBy(c => c.Id)
+            .OrderByDescending(c => IsDue(c, dayEnd))
+            .ThenBy(c => IsDue(c, dayEnd) ? c.Due : null)
+            .ThenByDescending(Rank).ThenByDescending(c => c.At).ThenBy(c => c.Id)
             .Take(Max)
-            .OrderBy(c => c.At).ThenBy(c => c.Id)];
+            .OrderBy(c => SittingAt(c, dayStart, dayEnd))
+            .ThenByDescending(c => IsDue(c, dayEnd)).ThenBy(c => IsDue(c, dayEnd) ? c.Due : null)
+            .ThenBy(c => c.At).ThenBy(c => c.Id)];
 }
 
 /// <summary>Reads the day views (docs/reference/api.md, Today and Timeline): the picked items of a day, and its conversations as scenes.</summary>
@@ -151,7 +168,8 @@ public sealed class TodayStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// What Today shows for the day <paramref name="from"/> to <paramref name="to"/> (UTC instants of the owner's local day): items
-    /// said that day, and open tasks due by its end. Items with a sensitivity (or in a conversation with one) never show, whoever asks.
+    /// said that day, and every open commitment or thing owed to the wearer however long ago it was said, until it is done. Items with
+    /// a sensitivity (or in a conversation with one) never show, whoever asks.
     /// </summary>
     public async Task<IReadOnlyList<DayItem>> TodayAsync(DateTime from, DateTime to, DateTimeOffset now, CancellationToken ct)
     {
@@ -159,13 +177,13 @@ public sealed class TodayStore(NpgsqlDataSource dataSource)
         var sql = Items(
             taskWhere: $"""
                 not t.done and {Plain("t")} and (c.id is null or {Plain("c")})
-                  and ((coalesce(src.at, c.started_at, t.created_at) >= @from and coalesce(src.at, c.started_at, t.created_at) < @to)
-                       or (t.due_at is not null and t.due_at < @to and t.kind in ('commitment', 'waiting_on')))
+                  and coalesce(src.at, c.started_at, t.created_at) < @to
+                  and (t.kind in ('commitment', 'waiting_on') or coalesce(src.at, c.started_at, t.created_at) >= @from)
                 """,
             memoryWhere: $"{Plain("m")} and (c.id is null or {Plain("c")}) and coalesce(src.at, c.started_at, m.created_at) >= @from and coalesce(src.at, c.started_at, m.created_at) < @to",
             noteWhere: $"{Plain("n")} and {Plain("c")} and coalesce(src.at, c.started_at, n.created_at) >= @from and coalesce(src.at, c.started_at, n.created_at) < @to");
         var candidates = (await connection.QueryAsync<DayCandidate>(new CommandDefinition(sql, new { from, to, now }, cancellationToken: ct))).ToList();
-        return await WithEvidenceAsync(connection, TodayPick.Choose(candidates, to), ct);
+        return await WithEvidenceAsync(connection, TodayPick.Choose(candidates, from, to), ct);
     }
 
     /// <summary>

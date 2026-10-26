@@ -9,6 +9,7 @@ namespace Nytka.Server.Tests.Memories;
 
 public sealed class TodayPickTests
 {
+    private static readonly DateTime DayStart = new(2026, 9, 29, 0, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime DayEnd = new(2026, 9, 30, 0, 0, 0, DateTimeKind.Utc);
 
     private static DayCandidate Task(
@@ -49,22 +50,40 @@ public sealed class TodayPickTests
     }
 
     [Fact]
-    public void At_most_seven_are_shown_the_best_ranked_first_and_listed_in_the_order_they_were_said()
+    public void At_most_seven_are_shown_the_best_first_and_listed_in_the_order_they_sit_in_the_day()
     {
         var overdue = Task(due: DayEnd.AddDays(-3), minute: 5, text: "overdue");
         var vital = Task(TaskKinds.Idea, "vital", minute: 1, text: "vital");
         var owed = Task(TaskKinds.WaitingOn, person: Guid.NewGuid(), minute: 2, text: "owed");
         var filler = Enumerable.Range(10, 8).Select(m => Task(person: Guid.NewGuid(), minute: m, text: $"p{m}")).ToList();
 
-        var picked = TodayPick.Choose([.. filler, overdue, vital, owed], DayEnd);
+        var picked = TodayPick.Choose([.. filler, overdue, vital, owed], DayStart, DayEnd);
 
         Assert.Equal(TodayPick.Max, picked.Count);
         Assert.Contains(overdue, picked);
         Assert.Contains(vital, picked);
         Assert.Contains(owed, picked);
-        Assert.Equal(picked.OrderBy(c => c.At).Select(c => c.Id), picked.Select(c => c.Id));
+        Assert.Equal(picked.OrderBy(c => TodayPick.SittingAt(c, DayStart, DayEnd)).ThenBy(c => c.At).Select(c => c.Id), picked.Select(c => c.Id));
         // The four with the weakest rank and the oldest time are the ones left out.
         Assert.DoesNotContain(filler[0], picked);
+    }
+
+    [Fact]
+    public void When_there_are_too_many_what_is_due_is_kept_before_what_is_only_vital()
+    {
+        var due = Task(due: DayEnd.AddDays(-9), minute: 0, text: "due");
+        var late = Task(due: DayEnd.AddDays(-1), minute: 0, text: "late");
+        var vitals = Enumerable.Range(1, 7).Select(m => Task(TaskKinds.Idea, "vital", minute: m, text: $"v{m}")).ToList();
+
+        var picked = TodayPick.Choose([.. vitals, late, due], DayStart, DayEnd);
+
+        Assert.Equal(TodayPick.Max, picked.Count);
+        Assert.Contains(due, picked);
+        Assert.Contains(late, picked);
+        // Of the vital ones the most recently said stay; the two oldest make room.
+        Assert.DoesNotContain(vitals[0], picked);
+        Assert.DoesNotContain(vitals[1], picked);
+        Assert.Equal([due, late], picked.Take(2)); // the same minute as the first vital one: due first, the older due date first
     }
 
     [Theory]
@@ -82,7 +101,7 @@ public sealed class TodayPickTests
     }
 
     [Fact]
-    public void A_task_said_earlier_but_due_today_takes_its_part_from_the_due_time_or_is_day_without_one()
+    public void A_task_said_earlier_but_due_today_takes_its_part_from_the_due_time_or_is_morning_without_one()
     {
         var zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Kyiv");
         var from = new DateTime(2026, 9, 28, 21, 0, 0, DateTimeKind.Utc);
@@ -90,8 +109,8 @@ public sealed class TodayPickTests
         DayItem Said(DateTime due) => new("task", Guid.NewGuid(), "t", null, false, null, from.AddDays(-3), null, null, null, due, false, []);
 
         Assert.Equal("evening", TodayEndpoints.Part(Said(new DateTime(2026, 9, 29, 16, 30, 0, DateTimeKind.Utc)), from, to, zone));
-        Assert.Equal("day", TodayEndpoints.Part(Said(new DateTime(2026, 9, 29, 0, 0, 0, DateTimeKind.Utc)), from, to, zone));
-        Assert.Equal("day", TodayEndpoints.Part(Said(from.AddDays(-1)), from, to, zone));
+        Assert.Equal("morning", TodayEndpoints.Part(Said(new DateTime(2026, 9, 29, 0, 0, 0, DateTimeKind.Utc)), from, to, zone));
+        Assert.Equal("morning", TodayEndpoints.Part(Said(from.AddDays(-1)), from, to, zone));
     }
 }
 
@@ -278,9 +297,33 @@ public sealed class TodayApiTests(PostgresFixture db) : MemoryTestBase(db)
     }
 
     [Fact]
+    public async Task Open_loops_carry_over_to_a_day_with_no_new_conversation()
+    {
+        await Db.ExecuteAsync("insert into people (id, name, created_at) values (@id, 'Olena', now())", new { id = Olena });
+        await Task(1, "Send the lease draft", person: Olena);                                           // said before: carried over
+        await Task(2, "Waiting for the invoice", "waiting_on");                                         // owed to the wearer: carried over
+        await Task(3, "Think about a name for the dog");                                               // a bare commitment: no
+        await Task(4, "Try the new bakery", "idea", "vital");                                          // an idea said before: no
+        await Task(5, "Pay the rent", due: new DateTime(2026, 9, 25, 0, 0, 0, DateTimeKind.Utc));       // overdue: first
+        await Task(6, "Already done", person: Olena, done: true);
+        await Task(7, "Noise with a person", salience: "noise", person: Olena);
+        await Task(8, "Call the doctor", "commitment", "vital", sensitivity: "health");
+        await Memory(9, "You run every morning.");                                                     // a memory said before: no
+        Time.SetUtcNow(new DateTimeOffset(2026, 9, 30, 6, 0, 0, TimeSpan.Zero));                       // 09:00 in Kyiv; nothing was said today
+
+        var today = await Admin.GetFromJsonAsync<JsonElement>("/api/v1/today?tz=Europe/Kyiv");
+
+        Assert.Equal("2026-09-30", today.GetProperty("date").GetString());
+        var items = today.GetProperty("items").EnumerateArray().ToList();
+        Assert.Equal(3, items.Count);
+        Assert.Equal([Id(1), Id(2), Id(5)], items.Select(i => i.GetProperty("id").GetGuid()).Order());
+        Assert.Equal(Id(5), items[0].GetProperty("id").GetGuid());
+    }
+
+    [Fact]
     public async Task The_day_is_the_owners_local_day()
     {
-        await Task(1, "Send the lease draft", "commitment", "vital");
+        await Task(1, "Send the lease draft", "idea", "vital"); // an idea is not carried over: only the day it was said
         Time.SetUtcNow(new DateTimeOffset(2026, 9, 29, 22, 30, 0, TimeSpan.Zero)); // 01:30 on the 30th in Kyiv
 
         var kyiv = await Admin.GetFromJsonAsync<JsonElement>("/api/v1/today?tz=Europe/Kyiv");
