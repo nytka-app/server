@@ -24,10 +24,11 @@ public static class JobKinds
     public const string MakeBrief = "make-brief";
     public const string TidyTags = "tidy-tags";
     public const string MeasureQuality = "measure-quality";
+    public const string PickLabeling = "pick-labeling";
     public const string RelateConversation = "relate-conversation";
 
     /// <summary>
-    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech and one nobody
+    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling and one nobody
     /// handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()

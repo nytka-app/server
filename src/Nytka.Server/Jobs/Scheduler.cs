@@ -20,7 +20,8 @@ namespace Nytka.Server.Jobs;
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
 /// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs, the
-/// quality metrics, the speech kinds' follow-up of their settings and the "Earlier" links of conversations whose vector or tags changed. Dedupe keys make every call safe to repeat.
+/// labelling candidates, the quality metrics, the speech kinds' follow-up of their settings and the "Earlier" links of conversations
+/// whose vector or tags changed. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
@@ -44,6 +45,7 @@ public sealed class Scheduler(
         var now = time.GetUtcNow();
         await queue.EnqueueAsync(JobKinds.CloseConversations, new { }, JobKinds.CloseConversations, now, ct);
         await queue.EnqueueAsync(JobKinds.Retention, new { }, JobKinds.Retention, now, ct);
+        await queue.EnqueueAsync(JobKinds.PickLabeling, new { }, JobKinds.PickLabeling, now, ct);
 
         foreach (var session in await chunks.PendingSessionsAsync(ct))
         {

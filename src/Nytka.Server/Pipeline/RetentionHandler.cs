@@ -1,12 +1,14 @@
 using Microsoft.Extensions.Options;
 using Nytka.Server.Jobs;
+using Nytka.Server.Labeling;
+using Nytka.Server.Settings;
 using Nytka.Storage;
 
 namespace Nytka.Server.Pipeline;
 
 public sealed class RetentionHandler(
-    BatchStore batches, ChunkStore chunks, DiagnosticsStore diagnostics, ContextRangeStore contextRanges,
-    IOptions<NytkaOptions> options, TimeProvider time, ILogger<RetentionHandler> logger)
+    BatchStore batches, ChunkStore chunks, DiagnosticsStore diagnostics, ContextRangeStore contextRanges, LabelStore labels,
+    SettingsService settings, IOptions<NytkaOptions> options, TimeProvider time, ILogger<RetentionHandler> logger)
     : IJobHandler
 {
     public static readonly TimeSpan Every = TimeSpan.FromDays(1);
@@ -34,9 +36,12 @@ public sealed class RetentionHandler(
         var rows = await chunks.DeleteProcessedReceivedBeforeAsync(now - ChunkRowsKept, ct);
         var samples = await diagnostics.DeleteAtBeforeAsync(now - DiagnosticsKept, ct);
 
+        // With labeling.keepClips off a labelled clip lives only as long as its speech audio, which the clip route cuts from.
+        var clips = LabelingSettings.KeepClips(settings) ? 0 : await labels.DropClipBodiesAsync(ct);
+
         logger.LogInformation(
-            "Retention deleted {SpeechAudio} speech audio row(s), {ContextRanges} context range(s), {ChunkRows} chunk row(s) and {Samples} diagnostics sample(s).",
-            audio, ranges, rows, samples);
+            "Retention deleted {SpeechAudio} speech audio row(s), {ContextRanges} context range(s), {ChunkRows} chunk row(s), {Samples} diagnostics sample(s) and {Clips} kept clip(s).",
+            audio, ranges, rows, samples, clips);
         return JobOutcome.RunAgain(Every);
     }
 

@@ -41,7 +41,7 @@ docker compose up -d --build
 3. **Chunk rows outlive their audio.** A retried upload must find its row to answer `200`; retention
    deletes processed rows only after 7 days.
 4. **One job at a time per lane.** `JobRunner` is the only consumer of `jobs`, with one runner per
-   lane: `Audio` (v0.1's kinds, `rescore-voice`, `rematch-voice`, `group-voices`, `apply-speech` and `classify-speech`; Silero is not thread-safe and transcription requests go out one at a
+   lane: `Audio` (v0.1's kinds, `rescore-voice`, `rematch-voice`, `group-voices`, `apply-speech`, `classify-speech` and `pick-labeling`; Silero is not thread-safe and transcription requests go out one at a
    time), `Ai` (`enrich-conversation`, `extract-memories`, `make-digest`, `suggest-names`, `extract-person-facts`, `make-brief`, `tidy-tags`, `measure-quality`, `relate-conversation`) and `Hooks` (`deliver-webhook`, `sync-calendar`). A slow
    model or receiver never delays transcription. Dedupe keys keep one job per session, batch,
    conversation and delivery.
