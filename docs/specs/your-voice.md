@@ -75,11 +75,17 @@ that says which. The audio is not stored; it lives only in the request.
 current voiceprint, weighted by window count, for example to add a language later. Either way the
 server rescores the fingerprints it still holds (below).
 
-**Learning.** A matched segment of 2 s or longer with a similarity of at least
-`voice.learnThreshold` (0.5) moves the voiceprint towards itself as a running mean, as the `stt`
-service does, so the voiceprint follows the pendant's real acoustics. So does a segment of 2 s or
-longer that the wearer marks as theirs. The enrolled mean is kept separately, so
-`POST /api/v1/voice/reset` returns to it. `voice.learn` false stops learning.
+**Learning.** The wearer's voice is not one cluster: a cold or the pendant moving changes it enough
+that one running mean cannot hold both (NYTKA-159). So the voiceprint is several centroids
+(`voice_profile_prints`) instead of one, and matching takes the maximum similarity over all of them
+(Matching, below). A matched segment of 2 s or longer with a similarity of at least
+`voice.learnThreshold` (0.5) teaches the voiceprint: it moves the segment's nearest centroid towards
+itself when that centroid's similarity is at least `voice.newPrintBelow` (0.6); otherwise it opens a
+new centroid while fewer than `voice.maxPrints` (5) exist, merging the two closest centroids first
+(weighted by their line counts) once the cap is reached. So does a segment of 2 s or longer that the
+wearer marks as theirs. The enrolled mean is kept separately, so `POST /api/v1/voice/reset` returns
+to one centroid, the enrolled mean. `voice.learn` false stops learning. `mode=add` enrollment (above)
+stays simpler: it always blends into the single nearest centroid, never opening a new one.
 
 Marking segments as yours cannot create a voiceprint from nothing: Nytka fingerprints only while a
 voiceprint exists ("no voiceprint, no fingerprints", under Privacy).
@@ -114,8 +120,9 @@ log carries the exception type only.
 
 **Rescoring.** Changing `voice.userThreshold` (in the settings API or by an environment variable,
 noticed at startup) or the voiceprint (enrollment, reset) queues one `rescore-voice` job. It
-recomputes similarities for the fingerprints still held, then re-applies the threshold to every
-stored similarity, including segments whose fingerprint has expired.
+recomputes similarities for the fingerprints still held, as the maximum over all of the voiceprint's
+centroids, then re-applies the threshold to every stored similarity, including segments whose
+fingerprint has expired.
 
 ## Which label wins
 
@@ -166,6 +173,8 @@ Nytka keeps as little about them as it can.
 | `voice.learnThreshold` | `Nytka__Voice__LearnThreshold` | `0.5` | Similarity at or above which a segment of 2 s or longer updates the voiceprint; never below `userThreshold` |
 | `voice.learn` | `Nytka__Voice__Learn` | `true` | Whether matches and marks update the voiceprint |
 | `voice.minSegmentSeconds` | `Nytka__Voice__MinSegmentSeconds` | `1.0` | Shortest segment that is fingerprinted, 1.0 to 5.0 |
+| `voice.newPrintBelow` | `Nytka__Voice__NewPrintBelow` | `0.6` | Similarity, 0.1 to 0.95, at or above which a learning segment updates its nearest centroid instead of opening a new one (NYTKA-159) |
+| `voice.maxPrints` | `Nytka__Voice__MaxPrints` | `5` | How many voiceprint centroids to keep, 2 to 20, before the two closest merge, weighted by line count |
 
 The model path is an option, not a setting (`Nytka__Voice__ModelPath`, default
 `Models/nemo_en_titanet_small.onnx` beside the binaries); it is not editable from the app.
@@ -176,8 +185,16 @@ Migration `0013_voice.sql`:
 
 - `voice_profile`: one row at most (`id smallint primary key check (id = 1)`), `model text` (the
   model file's SHA-256), `enrolled bytea` and `enrolled_count int` (the enrolled mean),
-  `centroid bytea` and `centroid_count int` (with learning), `applied_threshold real`,
-  `enrolled_at`, `updated_at`. A vector is 192 little-endian `float4`s, 768 bytes.
+  `applied_threshold real`, `enrolled_at`, `updated_at`. A vector is 192 little-endian `float4`s, 768
+  bytes.
+
+Migration `0057_voice_profile_prints.sql` (NYTKA-159): `voice_profile_prints` holds the wearer's
+centroids — `id bigint generated always as identity`, `profile_id smallint references voice_profile
+on delete cascade`, `embedding bytea`, `line_count int`, `created_at`, `updated_at` — seeded from
+`voice_profile`'s former `centroid`/`centroid_count` columns (then dropped) so nothing already
+learned is lost. Matching takes the maximum similarity over all of a profile's prints; learning
+updates the nearest print, opens a new one, or merges the two closest at the `voice.maxPrints` cap
+(Learning, above).
 - `segment_fingerprints`: `segment_id bigint primary key references segments on delete cascade`,
   `batch_id bigint references transcription_batches on delete cascade`, `model text`,
   `fingerprint bytea`, `created_at`. Retention deletes rows with their batch's speech audio.
@@ -191,7 +208,7 @@ new enrollment.
 
 | Call | Scope | Effect |
 |---|---|---|
-| `GET /api/v1/voice` | admin | `{ enrolled, enrolledAt, updatedAt, enrolledSamples, learnedSegments, modelAvailable }`; never the vector |
+| `GET /api/v1/voice` | admin | `{ enrolled, enrolledAt, updatedAt, enrolledSamples, learnedSegments, voiceprints, modelAvailable }`; never the vector. `voiceprints` is how many centroids the wearer's voice is kept as (NYTKA-159) |
 | `POST /api/v1/voice/enrollment?mode=replace\|add` | admin | Body: Opus frames in the chunk format (`application/vnd.nytka.frames.v1`) or `audio/wav` (16 kHz mono 16-bit), at most 120 s. `200 { speechSeconds, samples, minAgreement }`; `422` too little speech or samples that disagree; `413` too long; `503` without the model |
 | `POST /api/v1/voice/reset` | admin | Back to the enrolled mean, then rescore. `200` as `GET`, `404` without a voiceprint |
 | `DELETE /api/v1/voice` | admin | Forget my voice (Privacy). `204`, also when none was enrolled |
