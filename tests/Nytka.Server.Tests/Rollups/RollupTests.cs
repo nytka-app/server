@@ -150,6 +150,47 @@ public sealed class RollupTests(PostgresFixture db) : Ai.AiTestBase(db)
     }
 
     [Fact]
+    public async Task A_rate_limited_rollup_waits_and_stores_nothing_then_is_made()
+    {
+        EnableRollups();
+        var limited = true;
+        Llm.Respond = r => r.SchemaName != RollupPrompt.SchemaName ? FakeLlm.DefaultAnswer
+            : limited ? throw new LlmException("The language model endpoint answered 429.", 429) : Answer("A busy week.");
+        for (var i = 0; i < 3; i++)
+        {
+            await DayAsync(LastWeek.AddDays(i), $"Day {i}.");
+        }
+
+        await TickAndRun();
+
+        Assert.Equal(0, await Db.ScalarAsync<int>("select count(*)::int from rollups where period = 'week'"));
+
+        limited = false;
+        Server.Time.Advance(MakeRollupHandler.RateLimitWait + TimeSpan.FromMinutes(1));
+        await Server.RunJobsAsync();
+
+        Assert.Equal("A busy week.", await Db.ScalarAsync<string>("select summary from rollups where period = 'week' and topic_id is null"));
+    }
+
+    [Fact]
+    public async Task No_period_that_ended_before_the_first_recording_is_queued_or_stored()
+    {
+        EnableRollups();
+        Llm.Respond = r => r.SchemaName == RollupPrompt.SchemaName ? Answer("A busy week.") : FakeLlm.DefaultAnswer;
+        for (var i = 0; i < 3; i++)
+        {
+            await DayAsync(LastWeek.AddDays(i), $"Day {i}.");
+        }
+
+        await TickAndRun();
+        await TickAndRun();
+
+        var first = LastWeek;
+        Assert.Equal(0, await Db.ScalarAsync<int>("select count(*)::int from rollups where end_date <= @first::date", new { first = DigestDay.Text(first) }));
+        Assert.Equal(0, await Db.ScalarAsync<int>("select count(*)::int from jobs where kind = 'make-rollup'"));
+    }
+
+    [Fact]
     public async Task The_backfill_is_refused_while_rollups_are_off_and_queues_every_closed_period_when_on()
     {
         await DayAsync(LastWeek.AddDays(-14), "Long ago.");

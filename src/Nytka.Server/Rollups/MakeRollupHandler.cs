@@ -24,6 +24,9 @@ public sealed class MakeRollupHandler(
     /// <summary>How long a rollup waits for the shorter ones it is made from.</summary>
     public static readonly TimeSpan WaitForParts = TimeSpan.FromMinutes(10);
 
+    /// <summary>How long a rollup waits after the model endpoint said 429, so a burst of them gives up nothing.</summary>
+    public static readonly TimeSpan RateLimitWait = TimeSpan.FromMinutes(10);
+
     public string Kind => JobKinds.MakeRollup;
 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
@@ -61,7 +64,8 @@ public sealed class MakeRollupHandler(
             input = Combine([.. parts, .. months]);
         }
         else if (!DigestDay.TryParse(payload.Start, out start) || RollupPeriod.StartOf(payload.Period, start) != start
-                 || (end = RollupPeriod.EndOf(payload.Period, start)) > today)
+                 || (end = RollupPeriod.EndOf(payload.Period, start)) > today
+                 || await EndsBeforeDataAsync(end, zoneName, ct))
         {
             return JobOutcome.Done;
         }
@@ -107,12 +111,22 @@ public sealed class MakeRollupHandler(
         var previous = payload.Period == RollupStore.All
             ? await rollups.GetAsync(RollupStore.All, startText, null, ct)
             : await rollups.GetAsync(payload.Period, RollupPeriod.Text(RollupPeriod.Previous(payload.Period, start)), payload.TopicId, ct);
-        var answer = LlmJson.Parse<RollupAnswer>(await llm.CompleteJsonAsync(
-            new LlmRequest(
-                RollupPrompt.SchemaName, RollupPrompt.Schema,
-                RollupPrompt.System(llmOptions.CurrentValue.OutputLanguage, payload.Period, topicName),
-                RollupPrompt.User(payload.Period, startText, endText, input, previous?.Summary)),
-            ct));
+        string raw;
+        try
+        {
+            raw = await llm.CompleteJsonAsync(
+                new LlmRequest(
+                    RollupPrompt.SchemaName, RollupPrompt.Schema,
+                    RollupPrompt.System(llmOptions.CurrentValue.OutputLanguage, payload.Period, topicName),
+                    RollupPrompt.User(payload.Period, startText, endText, input, previous?.Summary)),
+                ct);
+        }
+        catch (LlmException error) when (error.RateLimited)
+        {
+            return JobOutcome.RunAgain(RateLimitWait);
+        }
+
+        var answer = LlmJson.Parse<RollupAnswer>(raw);
         var summary = ConversationPrompt.Cut(answer.Summary, RollupPrompt.MaxSummary);
         if (summary.Length == 0)
         {
@@ -155,4 +169,8 @@ public sealed class MakeRollupHandler(
     /// <summary>Queues one rollup; its dedupe key keeps one job per period, start and topic.</summary>
     public static Task QueueAsync(JobQueue queue, string period, string? start, Guid? topicId, DateTimeOffset now, CancellationToken ct) =>
         queue.EnqueueAsync(JobKinds.MakeRollup, new RollupPayload(period, start, topicId), JobKinds.MakeRollupKey(period, start, topicId), now, ct);
+
+    /// <summary>Whether a period ended before the first digest or summarized conversation: it would hold nothing, so it is neither made nor stored.</summary>
+    private async Task<bool> EndsBeforeDataAsync(DateOnly end, string zone, CancellationToken ct) =>
+        await rollups.FirstDateAsync(zone, ct) is not { } first || !DigestDay.TryParse(first, out var firstDate) || end <= firstDate;
 }
