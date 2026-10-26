@@ -2,6 +2,7 @@ using System.Text.Json;
 using Nytka.Server.Ai;
 using Nytka.Server.Auth;
 using Nytka.Server.Events;
+using Nytka.Server.Jobs;
 using Nytka.Server.Privacy;
 using Nytka.Storage;
 using Npgsql;
@@ -20,6 +21,7 @@ public static class MemoryEndpoints
         var memories = api.MapGroup("/memories");
         memories.MapGet("", ListAsync).AllowRead();
         memories.MapPost("", CreateAsync);
+        memories.MapPost("/classify", ClassifyAsync);
         memories.MapPatch("/{id:guid}", PatchAsync);
         memories.MapDelete("/{id:guid}", DeleteAsync);
         return api;
@@ -35,6 +37,23 @@ public static class MemoryEndpoints
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         return Results.Ok(await memories.ListAsync(before, take, time.GetUtcNow(), ct, expired == true, sensitivity.Hidden));
     }
+
+    /// <summary>
+    /// Queues <c>classify-memories</c>, which sets the sensitivity of live memories that have none (the ones from before the class
+    /// existed, and manual ones). <c>202 { unclassified }</c>; <c>409</c> without a model.
+    /// </summary>
+    private static async Task<IResult> ClassifyAsync(MemoryStore memories, JobQueue queue, ILlmClient llm, TimeProvider time, CancellationToken ct)
+    {
+        if (!llm.IsConfigured)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "The language model is not configured.");
+        }
+
+        await queue.EnqueueAsync(JobKinds.ClassifyMemories, new { }, JobKinds.ClassifyMemories, time.GetUtcNow(), ct);
+        return Results.Accepted(value: new ClassifyResponse(await memories.CountUnclassifiedAsync(ct)));
+    }
+
+    public sealed record ClassifyResponse(int Unclassified);
 
     private static async Task<IResult> CreateAsync(
         HttpRequest http, NpgsqlDataSource dataSource, MemoryStore memories, IEventPublisher events, TimeProvider time, CancellationToken ct)

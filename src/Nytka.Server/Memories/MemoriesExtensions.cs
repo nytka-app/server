@@ -12,6 +12,7 @@ public static class MemoriesExtensions
         services.AddSingleton<ISettingsGroup, MemorySettings>();
         services.AddSingleton<IEventSubscriber, MemoryTrigger>();
         services.AddScoped<IJobHandler, ExtractMemoriesHandler>();
+        services.AddScoped<IJobHandler, ClassifyMemoriesHandler>();
         services.AddScoped<MemoryRecheck>();
         return services;
     }
