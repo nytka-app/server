@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.4](https://github.com/nytka-app/server/compare/v0.36.3...v0.36.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **privacy:** classify conversations that are too short to summarize from their text ([#217](https://github.com/nytka-app/server/issues/217)) ([3f4f164](https://github.com/nytka-app/server/commit/3f4f164695ab50b8d7a5a74649c0de53dcde571d))
+* **today:** open commitments and what is owed to the wearer carry over until done ([#215](https://github.com/nytka-app/server/issues/215)) ([8fa2363](https://github.com/nytka-app/server/commit/8fa2363ecb2875e1bc3a4400a17cab798ae4bc7c))
+
 ## [0.36.3](https://github.com/nytka-app/server/compare/v0.36.2...v0.36.3) (2026-10-26)
 
 
