@@ -139,6 +139,7 @@ api.MapPairing();
 api.MapSettings();
 api.MapTasks();
 api.MapNotes();
+api.MapToday();
 api.MapMemories();
 api.MapBackfill();
 api.MapSearch();
