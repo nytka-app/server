@@ -150,6 +150,32 @@ public sealed class TopicTests(PostgresFixture db) : Ai.AiTestBase(db)
     }
 
     [Fact]
+    public async Task A_rate_limited_fold_is_no_failure_and_waits_then_folds()
+    {
+        EnableTopics();
+        var limited = true;
+        Llm.Respond = r => r.SchemaName != TopicPrompt.SchemaName ? FakeLlm.DefaultAnswer
+            : limited ? throw new LlmException("The language model endpoint answered 429.", 429) : Page("Tennis.");
+        for (var i = 0; i < 3; i++)
+        {
+            await SummarizedAsync(Now.AddDays(-3 + i), $"Tennis {i}", $"Tennis {i}.", "tennis");
+        }
+
+        await TickAndRun();
+
+        Assert.Equal(0, await Db.ScalarAsync<int>("select failures from topics"));
+        Assert.Null(await Db.ScalarAsync<string?>("select summary from topics"));
+        Assert.Equal(1, await Db.ScalarAsync<int>("select count(*)::int from jobs where kind = 'fold-topic'"));
+
+        limited = false;
+        Server.Time.Advance(FoldTopicHandler.RateLimitWait + TimeSpan.FromMinutes(1));
+        await Server.RunJobsAsync();
+
+        Assert.Equal("Tennis.", await Db.ScalarAsync<string>("select summary from topics"));
+        Assert.Equal(0, await Db.ScalarAsync<int>("select failures from topics"));
+    }
+
+    [Fact]
     public async Task An_unknown_kind_is_refused_and_an_unknown_topic_is_404()
     {
         var client = Server.CreateAuthorizedClient();

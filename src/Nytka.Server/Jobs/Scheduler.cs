@@ -106,10 +106,18 @@ public sealed class Scheduler(
 
         var zone = UserTimeZone.Resolve(settings);
         var settled = DigestDay.Today(now, zone).AddDays(-1);
+        if (await rollups.FirstDateAsync(zone.Id, ct) is not { } firstText || !DigestDay.TryParse(firstText, out var first))
+        {
+            return;
+        }
+
         foreach (var period in new[] { RollupStore.Week, RollupStore.Month, RollupStore.Year })
         {
-            var start = RollupPeriod.Text(RollupPeriod.LastClosed(period, settled));
-            if (await rollups.GetAsync(period, start, null, ct) is null)
+            var last = RollupPeriod.LastClosed(period, settled);
+            var start = RollupPeriod.Text(last);
+
+            // A period that ended before the first recording holds nothing; the year before it would queue its months and weeks.
+            if (RollupPeriod.EndOf(period, last) > first && await rollups.GetAsync(period, start, null, ct) is null)
             {
                 await MakeRollupHandler.QueueAsync(queue, period, start, null, now, ct);
             }

@@ -23,6 +23,9 @@ public sealed class FoldTopicHandler(
 
     public const int MaxFailures = 3;
 
+    /// <summary>How long a fold waits after the model endpoint said 429. That is no failure: the page keeps its tries.</summary>
+    public static readonly TimeSpan RateLimitWait = TimeSpan.FromMinutes(10);
+
     public string Kind => JobKinds.FoldTopic;
 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
@@ -40,12 +43,22 @@ public sealed class FoldTopicHandler(
         }
 
         var zone = UserTimeZone.Resolve(settings);
-        var answer = LlmJson.Parse<TopicAnswer>(await llm.CompleteJsonAsync(
-            new LlmRequest(
-                TopicPrompt.SchemaName, TopicPrompt.Schema,
-                TopicPrompt.System(llmOptions.CurrentValue.OutputLanguage, topic.Kind, UserTimeZone.Name(zone)),
-                TopicPrompt.User(topic.Name, topic.Summary, pending, zone)),
-            ct));
+        string raw;
+        try
+        {
+            raw = await llm.CompleteJsonAsync(
+                new LlmRequest(
+                    TopicPrompt.SchemaName, TopicPrompt.Schema,
+                    TopicPrompt.System(llmOptions.CurrentValue.OutputLanguage, topic.Kind, UserTimeZone.Name(zone)),
+                    TopicPrompt.User(topic.Name, topic.Summary, pending, zone)),
+                ct);
+        }
+        catch (LlmException error) when (error.RateLimited)
+        {
+            return JobOutcome.RunAgain(RateLimitWait);
+        }
+
+        var answer = LlmJson.Parse<TopicAnswer>(raw);
         var summary = ConversationPrompt.Cut(answer.Summary, TopicPrompt.MaxSummary);
         if (summary.Length == 0)
         {
