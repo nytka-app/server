@@ -665,6 +665,14 @@ conversation stays in `GET /api/v1/bookmarks` alone (`conversationId` is then nu
 conversation keeps its bookmarks. The `bookmark.created` webhook and the `list_bookmarks` MCP tool
 carry the same fields.
 
+A bookmark also says "this matters". A line that starts or ends within 60 seconds of a bookmark is
+`marked`, and a task or memory that cites a marked line reads as `vital` whatever the model judged, with
+`markedAt` (the earliest such bookmark) and `markedSegmentId` (the cited line nearest it) as the evidence the app
+shows as "you marked this". The mark is
+worked out when an item is read, not stored, so it holds whether the tap came before the conversation was
+processed or after, and deleting the bookmark takes it back. The model's own value stays in the database
+(quality metrics count that one). Notes cite no lines, so a bookmark does not mark them.
+
 ## Context from the phone
 
 The pendant also hears what your phone plays: a video, a podcast, the far side of a call on speaker. The app can
@@ -772,6 +780,16 @@ is CRLF-terminated and folded at 75 octets per [RFC 5545 §3.1](https://www.rfc-
 every `SUMMARY` is escaped for a literal backslash, comma, semicolon and newline. Each item carries a `UID`
 (stable across fetches, one occurrence of a recurring event included) and a `DTSTAMP` of the moment the feed
 was built.
+
+**Commitments as events.** Google Calendar and most other apps that subscribe to a URL ignore `VTODO`, so
+your commitments never show there. Add `tasks=event` to the subscription URL (`tasks=both` keeps the `VTODO`s
+too, for apps that read both): each open commitment with a due date becomes a `VEVENT` titled
+`Commitment: <text>`, all day when it is due on a date, or 30 minutes from its due time. Its `DESCRIPTION` says
+which conversation it was said in and when, and links to that moment in the app,
+`nytka://conversation/<id>?at=<time>&segment=<id>`, at the first line the task cites; a task you added by hand
+says so instead. The `UID` is `commitment-<task id>@nytka.local`, apart from the `VTODO`'s, so an app that reads
+both keeps them apart. Done and deleted tasks leave the feed on the next fetch, and a commitment of a
+[sensitive](#sensitive-content) class a `read` token may not see is neither a `VTODO` nor a `VEVENT`.
 
 **The query-token risk.** A calendar app cannot set an `Authorization` header, so this one route also accepts
 the token as `?token=` in the subscription URL you give it. Only a `read` token works there (an `admin`

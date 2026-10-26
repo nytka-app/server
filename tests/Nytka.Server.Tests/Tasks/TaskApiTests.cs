@@ -53,7 +53,7 @@ public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(JsonValueKind.String, task.GetProperty("createdAt").ValueKind);
         Assert.Equal(JsonValueKind.Null, page.GetProperty("nextBefore").ValueKind);
         Assert.Equal(
-            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "text", "done", "doneAt", "createdAt", "personId", "personName", "kind", "due", "salience"],
+            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "text", "done", "doneAt", "createdAt", "personId", "personName", "kind", "due", "salience", "markedAt", "markedSegmentId"],
             task.EnumerateObject().Select(p => p.Name));
     }
 
