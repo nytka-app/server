@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.36.3](https://github.com/nytka-app/server/compare/v0.36.2...v0.36.3) (2026-10-26)
+
+
+### Features
+
+* **marks:** your salience mark on tasks, memories and notes survives every summary; notes cite their lines; "not me" re-judges memories ([#210](https://github.com/nytka-app/server/issues/210)) ([2baf8e4](https://github.com/nytka-app/server/commit/2baf8e4e5709d7377b7d6b437e8d85b0bb9f475b))
+* **today:** GET /api/v1/today and /api/v1/timeline with evidence, picked by rule ([#211](https://github.com/nytka-app/server/issues/211)) ([7e7f89b](https://github.com/nytka-app/server/commit/7e7f89bafd4be3e3db83933f49d14472b2d0cd84))
+
+
+### Bug Fixes
+
+* **topics,rollups:** a 429 from the model waits instead of counting a failure; no rollups for periods before the first data ([#212](https://github.com/nytka-app/server/issues/212)) ([5cfaf15](https://github.com/nytka-app/server/commit/5cfaf1570f854b63e78c5e93ece3b0ea4c21b5c6))
+
 ## [0.36.2](https://github.com/nytka-app/server/compare/v0.36.1...v0.36.2) (2026-10-26)
 
 
