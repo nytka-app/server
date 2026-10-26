@@ -575,6 +575,21 @@ the open tasks owed to them and, as `waitingOn`, the [open promises](#waiting-on
 never leaves the database. `404` for an unknown person. The `list_people` and `get_person` [MCP tools](../reference/api.md#mcp)
 read the same page, without the two voiceprint fields. `named` is `false` for a person known so far only by a [role](#roles).
 
+## Forget a person
+
+`POST /api/v1/people/{id}/forget` (admin) removes what Nytka holds about one person, in one transaction, and the person with it. Their
+lines lose the attribution (`segments.person_id`, the voice links) and read as an unknown voice again. Deleted with them: their
+[facts](#facts-about-people), voiceprint, voice matches, the fingerprints of their lines and every [voice group](#voice-grouping) such a
+fingerprint was in (the other fingerprints of a group are grouped again), name and tag suggestions, [tags](#tags), [topic page](#topic-pages)
+with its weekly summaries, calendar briefs that name them, and the day events about them. A memory, task or note goes only when every line it
+cites is theirs; one that also cites your line or another person's survives, and so does one that cites nothing. Conversations and everyone
+else's lines stay.
+
+The answer is `{ counts, voiceprintsForgotten }`: `counts` has one number per kind above, `lines` the lines that lost the attribution and
+`conversations` the closed conversations queued for a new summary (none without a language model); `voiceprintsForgotten` is true when the
+transcription service also dropped their voiceprints, as `DELETE /api/v1/people/{id}?forget=true` does. The person's name typed inside a
+summary, title or tag stays until the new summary replaces it; one a model wrote into a memory that also cites others stays too.
+
 ## Facts about people
 
 A fact is a short, lasting thing about one person you named: where they live, their work, family,
