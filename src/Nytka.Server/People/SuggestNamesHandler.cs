@@ -61,7 +61,7 @@ public sealed class SuggestNamesHandler(
             var candidates = covered || brief || targets.Count == 0 ? [] : await AskAsync(input, targets, ct);
             await suggestions.ApplyAsync(
                 conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, NameValidator.Version, time.GetUtcNow(),
-                ct, PeopleSettings.AutoApplyConfidence(settings));
+                ct, PeopleSettings.AutoApplyConfidence(settings), redecide: !covered);
             return JobOutcome.Done;
         }
         catch (Exception error) when (job.Attempts + 1 >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)

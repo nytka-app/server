@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.5](https://github.com/nytka-app/server/compare/v0.36.4...v0.36.5) (2026-10-26)
+
+
+### Bug Fixes
+
+* **people:** a names run re-decides its conversation's pending suggestions ([#225](https://github.com/nytka-app/server/issues/225)) ([a7ba970](https://github.com/nytka-app/server/commit/a7ba9704f52dea64996d36bf819d8c1120188a8a))
+
 ## [0.36.4](https://github.com/nytka-app/server/compare/v0.36.3...v0.36.4) (2026-10-26)
 
 
