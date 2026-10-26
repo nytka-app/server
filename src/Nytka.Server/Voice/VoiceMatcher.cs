@@ -16,7 +16,8 @@ public readonly record struct WavSpan(double Start, double End)
 public sealed record VoiceMatch(IReadOnlyList<SegmentVoice?> Segments, BatchVoice Batch);
 
 /// <summary>The thresholds of one run, read from the settings once.</summary>
-public sealed record VoiceRules(double MinSegmentSeconds, float UserThreshold, float LearnThreshold, bool Learn)
+public sealed record VoiceRules(
+    double MinSegmentSeconds, float UserThreshold, float LearnThreshold, bool Learn, float NewPrintBelow, int MaxPrints)
 {
     /// <summary>Longer segments are usually a whole batch from a provider without segments, often several voices: they are fingerprinted in windows.</summary>
     public const double MaxSegmentSeconds = 30;
@@ -40,14 +41,14 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
         try
         {
             if (spans.Count == 0 || !VoiceSettings.IsEnabled(settings) || await voices.GetProfileAsync(ct) is not { } profile
-                || model.Embedder is not { } embedder || model.Id != profile.Model)
+                || profile.Prints.Count == 0 || model.Embedder is not { } embedder || model.Id != profile.Model)
             {
                 return null;
             }
 
             var rules = new VoiceRules(
                 VoiceSettings.MinSegmentSeconds(settings), VoiceSettings.UserThreshold(settings), VoiceSettings.LearnThreshold(settings),
-                VoiceSettings.Learns(settings));
+                VoiceSettings.Learns(settings), VoiceSettings.NewPrintBelow(settings), VoiceSettings.MaxPrints(settings));
             return Match(embedder, profile, WavReader.Read(wav), spans, rules);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -98,7 +99,7 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
             }
         }
 
-        return new VoiceMatch(verdicts, new BatchVoice(profile.Model, learn));
+        return new VoiceMatch(verdicts, new BatchVoice(profile.Model, learn, rules.NewPrintBelow, rules.MaxPrints));
     }
 
     /// <summary>
@@ -131,7 +132,7 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
         }
 
         var fingerprint = embedder.Embed(samples);
-        return (fingerprint, SpeakerEmbedder.Cosine(fingerprint, profile.Centroid));
+        return (fingerprint, profile.Prints.Max(p => SpeakerEmbedder.Cosine(fingerprint, p.Embedding)));
     }
 
     [LoggerMessage(LogLevel.Warning, "Voice: matching failed ({ExceptionType}); the batch's segments stay unchecked.")]

@@ -71,7 +71,7 @@ public sealed class RecordedEvents : IEventSubscriber
 }
 
 /// <summary>A host with a scripted model and a seeded conversation, for every test of the memories track.</summary>
-public abstract class MemoryTestBase : IAsyncLifetime
+public abstract class MemoryTestBase : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     protected static readonly Guid Conversation = Guid.Parse("018f0000-0000-7000-8000-000000000001");
     protected static readonly Guid Other = Guid.Parse("018f0000-0000-7000-8000-000000000002");

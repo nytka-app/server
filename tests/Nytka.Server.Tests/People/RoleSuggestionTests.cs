@@ -11,7 +11,6 @@ using Nytka.Server.Tests.Ai;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>docs/specs/tags.md, Roles: a person known first by what they do, named when a name is said.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class RoleSuggestionTests(PostgresFixture db) : AiTestBase(db)
 {
     private readonly LogCapture _logs = new();

@@ -6,7 +6,7 @@ using Nytka.Server.Jobs;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>A test host with the fake model and a recording event subscriber, and the seeding the AI tests share.</summary>
-public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime
+public abstract class AiTestBase(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     /// <summary>64 words: past <see cref="EnrichConversationHandler.BriefWords"/>, so worth tasks and a full summary.</summary>
     protected const string Talk =

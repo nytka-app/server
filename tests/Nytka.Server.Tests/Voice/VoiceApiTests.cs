@@ -20,8 +20,7 @@ namespace Nytka.Server.Tests.Voice;
 /// The voice routes (docs/specs/your-voice.md, track S-A) with a fake model: a low tone fingerprints as the wearer's
 /// voice and a high one as its opposite, so readings of synthetic tones agree or disagree on purpose.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
     private const double Low = 440;
@@ -248,7 +247,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
     public async Task Get_shows_counts_and_times_never_the_vector()
     {
         var before = await Json(await Client.GetAsync("/api/v1/voice"));
-        Assert.Equal(["enrolled", "enrolledAt", "updatedAt", "enrolledSamples", "learnedSegments", "modelAvailable"], Keys(before));
+        Assert.Equal(["enrolled", "enrolledAt", "updatedAt", "enrolledSamples", "learnedSegments", "voiceprints", "modelAvailable"], Keys(before));
         Assert.False(before.GetProperty("enrolled").GetBoolean());
 
         await EnrollLowTone();
@@ -258,6 +257,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.True(after.GetProperty("enrolled").GetBoolean());
         Assert.Equal(3, after.GetProperty("enrolledSamples").GetInt32());
         Assert.Equal(0, after.GetProperty("learnedSegments").GetInt32());
+        Assert.Equal(1, after.GetProperty("voiceprints").GetInt32());
         Assert.True(after.GetProperty("modelAvailable").GetBoolean());
         Assert.True((await response.Content.ReadAsByteArrayAsync()).Length < 300);
     }
@@ -268,7 +268,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
         await EnrollLowTone();
         await EnrollLowTone("add");
         Assert.Equal(6, await db.ScalarAsync<int>("select enrolled_count from voice_profile"));
-        Assert.Equal(6, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(6, await db.ScalarAsync<int>("select coalesce(sum(line_count), 0)::int from voice_profile_prints where profile_id = 1"));
 
         await EnrollLowTone("replace");
         Assert.Equal(3, await db.ScalarAsync<int>("select enrolled_count from voice_profile"));
@@ -291,13 +291,17 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await Client.PostAsync("/api/v1/voice/reset", null)).StatusCode);
         await EnrollLowTone();
         await _server.RunJobsAsync();
-        await db.ExecuteAsync("update voice_profile set centroid = decode(repeat('00', 768), 'hex'), centroid_count = 7");
+        await db.ExecuteAsync(
+            "update voice_profile_prints set embedding = decode(repeat('00', 768), 'hex'), line_count = 7 where profile_id = 1");
 
         var response = await Client.PostAsync("/api/v1/voice/reset", null);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(0, (await Json(response)).GetProperty("learnedSegments").GetInt32());
-        Assert.True(await db.ScalarAsync<bool>("select centroid = enrolled and centroid_count = enrolled_count from voice_profile"));
+        Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from voice_profile_prints where profile_id = 1"));
+        Assert.True(await db.ScalarAsync<bool>(
+            "select p.embedding = v.enrolled and p.line_count = v.enrolled_count "
+            + "from voice_profile v join voice_profile_prints p on p.profile_id = v.id"));
         Assert.Equal(1, await db.ScalarAsync<long>("select count(*) from jobs where kind = 'rescore-voice'"));
     }
 
@@ -350,18 +354,18 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
         _embedder.Similarities.Enqueue(0.2f);
         _embedder.Similarities.Enqueue(0.2f);
         await Transcribe((0, 2.5, null), (3, 4.5, null));
-        var learned = await db.ScalarAsync<int>("select centroid_count from voice_profile");
+        var learned = await db.ScalarAsync<int>("select coalesce(sum(line_count), 0)::int from voice_profile_prints where profile_id = 1");
 
         var response = await Mark(await SegmentId("s0"), new { isUser = true });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var segment = await Json(response);
         Assert.Equal(("s0", true, "manual"), (segment.GetProperty("text").GetString(), segment.GetProperty("isUser").GetBoolean(), segment.GetProperty("isUserSource").GetString()));
-        Assert.Equal(learned + 1, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(learned + 1, await db.ScalarAsync<int>("select coalesce(sum(line_count), 0)::int from voice_profile_prints where profile_id = 1"));
 
         // Again: the mark is not new, so it teaches nothing. A short segment never teaches.
         await Mark(await SegmentId("s0"), new { isUser = true });
         await Mark(await SegmentId("s1"), new { isUser = true });
-        Assert.Equal(learned + 1, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(learned + 1, await db.ScalarAsync<int>("select coalesce(sum(line_count), 0)::int from voice_profile_prints where profile_id = 1"));
 
         var cleared = await Json(await Mark(await SegmentId("s0"), new { isUser = (bool?)null }));
         Assert.Equal((false, "voice"), (cleared.GetProperty("isUser").GetBoolean(), cleared.GetProperty("isUserSource").GetString()));

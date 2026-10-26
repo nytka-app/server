@@ -5,7 +5,6 @@ using Nytka.Server.Events;
 
 namespace Nytka.Server.Tests.Memories;
 
-[Collection(PostgresCollection.Name)]
 public sealed class MemoryApiTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static StringContent Body(object body) => new(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");

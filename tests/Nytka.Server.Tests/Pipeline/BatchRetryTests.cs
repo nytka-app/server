@@ -9,8 +9,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 namespace Nytka.Server.Tests.Pipeline;
 
 /// <summary>A failed batch that still holds its WAV is transcribed again: by the scheduler on a doubling wait, or by the admin route at once.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class BatchRetryTests(PostgresFixture db) : IAsyncLifetime
+public sealed class BatchRetryTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

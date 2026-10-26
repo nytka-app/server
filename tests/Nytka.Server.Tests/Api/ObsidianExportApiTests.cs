@@ -4,7 +4,6 @@ using Nytka.Server.Tests.Ai;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
 public sealed class ObsidianExportApiTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

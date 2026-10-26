@@ -5,7 +5,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>A summary keeps commitments as tasks, ideas as ideas, advice as a note per topic, and audits what it drops.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class TaskKindsTests(PostgresFixture db) : AiTestBase(db)
 {
     private Task<List<TaskKindRow>> TaskKindRows(Guid id) =>

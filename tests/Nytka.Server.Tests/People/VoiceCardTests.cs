@@ -16,8 +16,7 @@ namespace Nytka.Server.Tests.People;
 /// components. A segment starts <c>start</c> seconds after <see cref="SyntheticAudio.StartMs"/>, the capture time of the first
 /// stored frame, so its audio is the frames from there on.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceCardTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceCardTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
     private const int Size = 192;

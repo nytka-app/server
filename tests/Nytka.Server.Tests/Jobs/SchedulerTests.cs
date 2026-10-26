@@ -3,8 +3,7 @@ using Nytka.Server.Jobs;
 
 namespace Nytka.Server.Tests.Jobs;
 
-[Collection(PostgresCollection.Name)]
-public sealed class SchedulerTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SchedulerTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _factory = new(db);
     private readonly Guid _session = Guid.NewGuid();

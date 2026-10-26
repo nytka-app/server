@@ -11,7 +11,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Privacy;
 
 /// <summary>Sensitive content (docs/explanation/features.md, Sensitive content): classified with the summary, hidden from untrusted readers.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class SensitivityTests(PostgresFixture db) : AiTestBase(db)
 {
     private static string Answer(string title, string sensitivity, string taskSensitivity) => JsonSerializer.Serialize(new

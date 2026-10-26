@@ -114,7 +114,7 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
 
         if (voice is not null)
         {
-            await VoiceStore.LearnAsync(connection, transaction, voice.Model, voice.Learn, ct);
+            await VoiceStore.LearnAsync(connection, transaction, voice.Model, voice.Learn, voice.NewPrintBelow, voice.MaxPrints, ct);
         }
 
         if (deleteSpeechAudio)

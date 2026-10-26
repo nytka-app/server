@@ -5,8 +5,7 @@ using Nytka.Server.Settings;
 
 namespace Nytka.Server.Tests.Memories;
 
-[Collection(PostgresCollection.Name)]
-public sealed class MemorySettingsTests(PostgresFixture db) : IAsyncLifetime
+public sealed class MemorySettingsTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     public Task InitializeAsync() => db.ResetAsync();
 

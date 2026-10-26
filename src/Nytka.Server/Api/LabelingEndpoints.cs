@@ -319,7 +319,9 @@ public static partial class LabelingEndpoints
             return Bad("labelIds", $"1 to {MaxConfirm} label ids");
         }
 
-        return await labels.ConfirmVoiceAsync(ids, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, time.GetUtcNow(), ct) is { } learned
+        return await labels.ConfirmVoiceAsync(
+            ids, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, VoiceSettings.NewPrintBelow(settings),
+            VoiceSettings.MaxPrints(settings), time.GetUtcNow(), ct) is { } learned
             ? Results.Ok(new ConfirmResult(learned))
             : Bad("labelIds", "unknown label");
     }

@@ -7,8 +7,7 @@ using Nytka.Replay;
 
 namespace Nytka.Server.Tests.Replay;
 
-[Collection(PostgresCollection.Name)]
-public sealed class ReplayTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ReplayTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

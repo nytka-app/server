@@ -9,8 +9,7 @@ using Nytka.Server.Jobs;
 namespace Nytka.Server.Tests.Api;
 
 /// <summary>The context-range routes (docs/specs/speech-kind.md, Context from the phone), on a clock that stands at 2026-09-29 10:00 UTC.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Route = "/api/v1/context/ranges";
 

@@ -6,7 +6,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Tags;
 
 /// <summary>Automatic tags (docs/specs/tags.md, Automatic tags): applied with the summary, merged and retired nightly.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class AutoTagTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool AutoTags => true;

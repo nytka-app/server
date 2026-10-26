@@ -10,8 +10,7 @@ namespace Nytka.Server.Tests.Webhooks;
 /// URL can carry a secret in its path, and the factory's own request logging would otherwise write it at
 /// Information, as the calendar feed's client avoids for its own secret URL.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class WebhookClientLoggingTests(PostgresFixture db) : IAsyncLifetime
+public sealed class WebhookClientLoggingTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTime T0 = new(2026, 9, 29, 8, 0, 0, DateTimeKind.Utc);
 

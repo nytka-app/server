@@ -145,7 +145,9 @@ public static class ReviewEndpoints
     private static async Task<IResult> Mark(
         long segment, bool same, ReviewStore review, VoiceStore voices, SettingsService settings, CancellationToken ct) =>
         await review.LabelVerdictAsync(segment, ct) is { } verdict
-        && await voices.MarkAsync(segment, same ? verdict : !verdict, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct)
+        && await voices.MarkAsync(
+            segment, same ? verdict : !verdict, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds,
+            VoiceSettings.NewPrintBelow(settings), VoiceSettings.MaxPrints(settings), ct)
             ? Results.NoContent()
             : NotFound();
 

@@ -15,7 +15,6 @@ namespace Nytka.Server.Tests.Memories;
 /// <c>list_memories</c> called on the class the MCP host registers: its answer is REST's. The host itself
 /// (transport, auth, tool listing) is C's to test.
 /// </summary>
-[Collection(PostgresCollection.Name)]
 public sealed class MemoryToolTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static Guid Id(int n) => Guid.Parse($"018f0000-0000-7000-8000-0000000000{n:x2}");

@@ -14,8 +14,7 @@ namespace Nytka.Server.Tests.Voice;
 /// Matching in the <c>transcribe</c> job (docs/specs/your-voice.md, track S-V) with a fake model: every fingerprint
 /// is a set vector whose cosine to the voiceprint is the next queued similarity.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
 
@@ -86,6 +85,9 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
     }
 
     private Task<long> Fingerprints() => db.ScalarAsync<long>("select count(*) from segment_fingerprints");
+
+    private Task<int> LearnedLines() =>
+        db.ScalarAsync<int>("select coalesce(sum(line_count), 0)::int from voice_profile_prints where profile_id = 1");
 
     [Fact]
     public async Task Without_a_voiceprint_nothing_is_fingerprinted_and_labels_stay_the_providers()
@@ -158,7 +160,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal((true, false), (row.VoiceChecked, row.VoiceIsUser));
         Assert.Equal(0.30f, row.VoiceSimilarity!.Value, 0.001f);
         Assert.Equal(1, await Fingerprints());
-        Assert.Equal(3, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(3, await LearnedLines());
         Assert.False((await ApiIsUser())["s0"]);
     }
 
@@ -183,7 +185,7 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
         Assert.Equal((true, true), (rows[1].VoiceChecked, rows[1].VoiceIsUser));
         Assert.Equal(0.60f, rows[1].VoiceSimilarity!.Value, 0.001f);
         Assert.Equal(1, await Fingerprints());
-        Assert.Equal(3, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(3, await LearnedLines());
 
         await _server.Get<Scheduler>().TickAsync(default);
         Assert.Equal(0, await db.ScalarAsync<long>("select count(*) from jobs where kind = 'rematch-voice'"));
@@ -321,9 +323,9 @@ public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
 
         await Transcribe((0, 2.5, null), (3, 4.5, null), (5, 7.5, null));
 
-        Assert.Equal(4, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(4, await LearnedLines());
         Assert.Equal(3, await db.ScalarAsync<int>("select enrolled_count from voice_profile"));
-        var centroid = VoiceStore.Decode(await db.ScalarAsync<byte[]>("select centroid from voice_profile"));
+        var centroid = VoiceStore.Decode(await db.ScalarAsync<byte[]>("select embedding from voice_profile_prints where profile_id = 1"));
         Assert.Equal(1f, MathF.Sqrt(centroid.Sum(v => v * v)), 0.001f);
         Assert.True(centroid[1] > 0);
     }

@@ -9,7 +9,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Rollups;
 
 /// <summary>Summaries over time: a closed week from its digests, what changed, locked periods and the backfill.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class RollupTests(PostgresFixture db) : Ai.AiTestBase(db)
 {
     private static string Answer(string summary, params string[] changes) => JsonSerializer.Serialize(new { summary, changes });

@@ -11,8 +11,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Auth;
 
 /// <summary>The scope rules on the real routes: what an <c>admin</c>, a <c>read</c> and no token may call.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 
@@ -204,8 +203,7 @@ public sealed class ScopeTests(PostgresFixture db) : IAsyncLifetime
 /// The seam other tracks build on, on a host of its own: <c>RequireNytkaAuth</c> and <c>AllowRead</c> on a
 /// route and on a group, and a route that has neither.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ScopeSeamTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private WebApplication _app = null!;
 

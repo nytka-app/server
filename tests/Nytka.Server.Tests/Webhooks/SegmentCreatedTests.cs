@@ -7,8 +7,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 namespace Nytka.Server.Tests.Webhooks;
 
 /// <summary><c>segment.created</c>: one delivery per transcribed batch, ids and times only, and only to a webhook that names it.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SegmentCreatedTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SegmentCreatedTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private NytkaApiFactory _server = new(db);
 

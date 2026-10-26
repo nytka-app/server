@@ -5,8 +5,7 @@ using Dapper;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
-public sealed class ChunkUploadTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ChunkUploadTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _factory = new(db);
     private readonly Guid _session = Guid.NewGuid();

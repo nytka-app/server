@@ -10,8 +10,7 @@ namespace Nytka.Server.Tests.Storage;
 /// Switchknife.Migrations takes over a database the hand-written DbUp migrator built: it reads the same
 /// <c>schemaversions</c> journal, runs nothing again and leaves the schema as it was.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class MigratorAdoptionTests(PostgresFixture db)
+public sealed class MigratorAdoptionTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private sealed record JournalRow(int Id, string ScriptName, DateTime Applied);
 

@@ -14,8 +14,7 @@ namespace Nytka.Server.Tests.Speech;
 /// <c>classify-speech</c> (docs/specs/speech-kind.md, The guess) with a fake tagger: conversations of synthetic lines at set times,
 /// with a tone as their audio. Nothing here is a real voice.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ClassifySpeechTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ClassifySpeechTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset T0 = DateTimeOffset.FromUnixTimeMilliseconds(StartMs);
 

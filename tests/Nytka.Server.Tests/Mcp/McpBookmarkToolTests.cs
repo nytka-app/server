@@ -6,8 +6,7 @@ using ModelContextProtocol.Protocol;
 namespace Nytka.Server.Tests.Mcp;
 
 /// <summary>The v0.8 <c>list_bookmarks</c> tool through the official MCP client.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class McpBookmarkToolTests(PostgresFixture db) : IAsyncLifetime
+public sealed class McpBookmarkToolTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTime Start = new(2026, 9, 30, 9, 0, 0, DateTimeKind.Utc);
 

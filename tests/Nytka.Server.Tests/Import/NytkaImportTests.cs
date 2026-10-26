@@ -8,7 +8,6 @@ using Nytka.Server.Tests.Ai;
 
 namespace Nytka.Server.Tests.Import;
 
-[Collection(PostgresCollection.Name)]
 public sealed class NytkaImportTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

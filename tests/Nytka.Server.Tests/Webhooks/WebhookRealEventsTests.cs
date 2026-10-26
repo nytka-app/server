@@ -7,7 +7,6 @@ using Nytka.Server.Tests.Ai;
 namespace Nytka.Server.Tests.Webhooks;
 
 /// <summary>The recorder against the events the AI job and the task endpoint really publish.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class WebhookRealEventsTests(PostgresFixture db) : AiTestBase(db)
 {
     [Fact]

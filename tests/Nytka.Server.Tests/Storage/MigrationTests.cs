@@ -5,8 +5,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Storage;
 
-[Collection(PostgresCollection.Name)]
-public class MigrationTests(PostgresFixture db)
+public class MigrationTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     [Fact]
     public async Task Creates_the_schema()

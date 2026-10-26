@@ -23,13 +23,14 @@ public sealed partial class RematchVoiceHandler(VoiceStore voices, SpeakerModel 
     public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
     {
         if (!VoiceSettings.IsEnabled(settings) || await voices.GetProfileAsync(ct) is not { } profile
-            || model.Embedder is not { } embedder || model.Id != profile.Model)
+            || profile.Prints.Count == 0 || model.Embedder is not { } embedder || model.Id != profile.Model)
         {
             return JobOutcome.Done;
         }
 
         var rules = new VoiceRules(
-            VoiceSettings.MinSegmentSeconds(settings), VoiceSettings.UserThreshold(settings), VoiceSettings.LearnThreshold(settings), Learn: false);
+            VoiceSettings.MinSegmentSeconds(settings), VoiceSettings.UserThreshold(settings), VoiceSettings.LearnThreshold(settings),
+            Learn: false, VoiceSettings.NewPrintBelow(settings), VoiceSettings.MaxPrints(settings));
         var segments = await voices.UncheckedWithAudioAsync(BatchesPerRun, ct);
         foreach (var batch in segments.GroupBy(s => s.BatchId))
         {

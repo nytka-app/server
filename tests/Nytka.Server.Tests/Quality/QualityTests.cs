@@ -8,8 +8,7 @@ using Nytka.Server.Jobs;
 namespace Nytka.Server.Tests.Quality;
 
 /// <summary>The nightly quality metrics: <c>measure-quality</c>, its backfill, <c>GET /api/v1/quality</c> and <c>get_quality</c>.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class QualityTests(PostgresFixture db) : IAsyncLifetime
+public sealed class QualityTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTime Day = new(2026, 9, 28, 0, 0, 0, DateTimeKind.Utc);
 

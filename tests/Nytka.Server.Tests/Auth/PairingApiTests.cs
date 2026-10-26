@@ -5,8 +5,7 @@ using System.Text.Json;
 
 namespace Nytka.Server.Tests.Auth;
 
-[Collection(PostgresCollection.Name)]
-public sealed class PairingApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class PairingApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

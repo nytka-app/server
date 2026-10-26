@@ -11,8 +11,7 @@ namespace Nytka.Server.Tests.Search;
 /// The MCP tool list as a whole, and the <c>search</c> tool against REST. G owns the full-list test (it merges after the
 /// other tool tracks); each track's own tests name only its tools.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SearchToolTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
 
