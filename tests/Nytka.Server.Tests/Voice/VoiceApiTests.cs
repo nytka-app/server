@@ -231,7 +231,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await Enroll(Frames(Tone(30)))).StatusCode);
         var info = await Json(await Client.GetAsync("/api/v1/info"));
-        Assert.Equal(["offline-sync", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "context-device", "context-activity", "context-now-playing", "context-gain", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade", "summary-templates", "quality", "topics", "rollups"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+        Assert.Equal(["offline-sync", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "context-device", "context-activity", "context-now-playing", "context-gain", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade", "summary-templates", "quality", "labeling", "topics", "rollups"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
         Assert.False((await Json(await Client.GetAsync("/api/v1/voice"))).GetProperty("modelAvailable").GetBoolean());
         Assert.Equal(HttpStatusCode.NoContent, (await Client.DeleteAsync("/api/v1/voice")).StatusCode);
     }
@@ -241,7 +241,7 @@ public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
     {
         var info = await Json(await Client.GetAsync("/api/v1/info"));
 
-        Assert.Equal(["offline-sync", "voice", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "context-device", "context-activity", "context-now-playing", "context-gain", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade", "summary-templates", "quality", "topics", "rollups"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+        Assert.Equal(["offline-sync", "voice", "people", "review", "briefs", "tags", "tag-suggestions", "roles", "speech-kind", "context-ranges", "context-device", "context-activity", "context-now-playing", "context-gain", "task-kinds", "waiting-on", "task-create", "ledger", "calendar-feed", "auto-names", "review-clips", "usage", "transcript-upgrade", "summary-templates", "quality", "labeling", "topics", "rollups"], info.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
     }
 
     [Fact]

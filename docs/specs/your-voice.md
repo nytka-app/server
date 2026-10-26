@@ -150,6 +150,11 @@ Nytka keeps as little about them as it can.
 - **Forget my voice.** `DELETE /api/v1/voice` deletes the voiceprint and every segment fingerprint,
   clears every similarity and verdict, and queues nothing. The wearer's own marks stay: they are
   statements, not biometrics. Deleting a conversation deletes its segments' fingerprints by cascade.
+- **Labels teach only when confirmed.** A `me` label from the labelling app sets the wearer's mark but never teaches the
+  voiceprint until the wearer confirms a batch of them (`POST /api/v1/labeling/voice/confirm`); an import never does.
+- **Labelled clips.** With `labeling.keepClips` on, a labelled clip (at most 20 s of audio, other people's voices
+  included) outlives `audio.retentionDays` until its label is deleted. It holds no fingerprint; a fingerprint still never
+  outlives its batch's speech audio.
 - **README.** "What it stores" gains the voiceprint, the fingerprints and their lifetime.
 
 ## Settings

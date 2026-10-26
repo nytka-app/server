@@ -55,6 +55,24 @@ public sealed class MemoryGroundingTests(PostgresFixture db) : MemoryTestBase(db
     }
 
     [Fact]
+    public async Task A_bookmark_within_a_minute_of_a_cited_line_makes_the_fact_vital()
+    {
+        var mine = await Line("I run every morning.");
+        await Db.ExecuteAsync("update segments set is_user = true where id = @mine", new { mine });
+        var at = await Db.ScalarAsync<DateTime>("select ended_at from segments where id = @mine", new { mine });
+        Llm.Respond = _ => Answer(new { text = "You run every morning.", replaces = (string?)null, salience = "noise", expires = (string?)null, segmentIds = new[] { mine } });
+
+        await PublishReadyAsync(Conversation);
+        await Server.RunJobsAsync();
+        await Server.CreateAuthorizedClient().PostAsJsonAsync("/api/v1/bookmarks", new { id = Guid.NewGuid(), at = at.AddSeconds(59), source = "pendant" });
+
+        var memory = (await Server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>("/api/v1/memories")).GetProperty("items")[0];
+        Assert.Equal("vital", memory.GetProperty("salience").GetString());
+        Assert.Equal(at.AddSeconds(59), memory.GetProperty("markedAt").GetDateTime());
+        Assert.Equal(mine, memory.GetProperty("markedSegmentId").GetInt64());
+    }
+
+    [Fact]
     public async Task An_unconfirmed_fact_never_rewrites_a_known_memory()
     {
         await Db.ExecuteAsync(

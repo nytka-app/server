@@ -3,10 +3,13 @@ using Npgsql;
 
 namespace Nytka.Storage;
 
-/// <summary>A task with the conversation it came from, as the API shows it.</summary>
+/// <summary>
+/// A task with the conversation it came from, as the API shows it. <see cref="MarkedAt"/> is the wearer's bookmark near a line
+/// the task cites (<see cref="BookmarkStore.MarkReach"/>) and <see cref="MarkedSegmentId"/> that line; such a task is <c>vital</c> whatever the model judged.
+/// </summary>
 public sealed record TaskRow(
     Guid Id, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt, string Text,
-    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due, string? Salience = null);
+    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due, string? Salience = null, DateTime? MarkedAt = null, long? MarkedSegmentId = null);
 
 /// <summary>
 /// A task the model returned: its text as stored, the fingerprint the text had when it was created, the person it is
@@ -16,6 +19,9 @@ public sealed record TaskRow(
 public sealed record AiTask(
     string Text, string Fingerprint, Guid? PersonId = null, string Kind = TaskKinds.Commitment, DateTime? Due = null, string? Salience = null,
     IReadOnlyList<long>? SegmentIds = null, string? Sensitivity = null);
+
+/// <summary>The first line a task cites (<c>task_sources</c>): where its evidence starts.</summary>
+public sealed record TaskSource(Guid TaskId, long SegmentId, Guid ConversationId, DateTime At);
 
 /// <summary>A user's change of a task's person: <see langword="null"/> clears it.</summary>
 public sealed record PersonChange(Guid? PersonId);
@@ -40,14 +46,16 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
     private sealed record Existing(Guid Id, string Fingerprint, bool Done, bool Edited, DateTime? DeletedAt, string Kind, DateTime? Due, string? Salience);
 
     private const string Select =
-        """
+        $"""
         select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
                t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind,
-               t.due_at as Due, t.salience as Salience
+               t.due_at as Due, case when mark.at is not null then 'vital' else t.salience end as Salience,
+               mark.at as MarkedAt, mark.segment_id as MarkedSegmentId
         from tasks t
         left join conversations c on c.id = t.conversation_id
         left join people p on p.id = t.person_id
+        left join lateral ({BookmarkStore.TaskMark}) mark on true
         """;
 
     /// <summary>
@@ -117,6 +125,21 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             + $" and {Sensitivity.Visible("t")} and (c.id is null or {Sensitivity.Visible("c")}) order by t.due_at, t.id",
             new { kind = TaskKinds.Commitment, hidden = hidden ?? [] }, cancellationToken: ct));
         return rows.ToList();
+    }
+
+    /// <summary>The earliest line each of the tasks cites, for the tasks that cite any.</summary>
+    public async Task<IReadOnlyDictionary<Guid, TaskSource>> FirstSourcesAsync(IReadOnlyCollection<Guid> taskIds, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<TaskSource>(new CommandDefinition(
+            """
+            select distinct on (ts.task_id) ts.task_id as TaskId, s.id as SegmentId, s.conversation_id as ConversationId, s.started_at as At
+            from task_sources ts join segments s on s.id = ts.segment_id
+            where ts.task_id = any(@taskIds)
+            order by ts.task_id, s.started_at, s.id
+            """,
+            new { taskIds = taskIds.ToArray() }, cancellationToken: ct));
+        return rows.ToDictionary(r => r.TaskId);
     }
 
     /// <summary>A conversation's commitments in creation order, deleted ones left out.</summary>

@@ -39,6 +39,7 @@ you copy without thinking would lock its setting.
 | `Nytka__Stt__Batch__LongSilenceSeconds` | no | `30` | editable | Silence that closes a batch even when it is short, 1 to 600 seconds, and never more than `Nytka__Conversations__Gap`. At `120` a batch under `MinSeconds` waits for the next speech of its conversation instead of going out alone. A capture session also counts as ended after this much silence in its uploads, but not before 60 seconds |
 | `Nytka__Conversations__Gap` | no | `00:02:00` | editable | Silence that ends a conversation, `hh:mm:ss`, from 30 seconds to 1 hour |
 | `Nytka__Audio__RetentionDays` | no | `14` | editable | Days to keep speech audio and [context ranges](../explanation/features.md#context-from-the-phone), 0 to 3650; `0` deletes audio once transcribed and ranges a day after they end |
+| `Nytka__Labeling__KeepClips` | no | `false` | editable | Keep the clip of each line labelled in the [labelling app](../explanation/features.md#labelling) past `Nytka__Audio__RetentionDays`, until you delete the label. Off, a labelled clip goes with its audio and only the label stays |
 | `Nytka__Mute__Windows` | no | `[]` | editable | JSON list of weekly windows whose audio is dropped by capture time before transcription, at most 50, such as `[{"days":[1,2,3,4,5],"start":"09:30","end":"10:00"}]`. `days` are ISO weekdays of the start day (1 Monday to 7 Sunday), `start` and `end` are local `HH:mm`; an end at or before the start crosses midnight. Uses `Nytka__User__TimeZone` |
 | `Nytka__User__TimeZone` | no | `UTC` | editable | IANA time zone such as `Europe/Kyiv`: prompts and mute windows use it; an unknown id falls back to UTC |
 | `Nytka__Llm__BaseUrl` | no | | editable | Base URL of an OpenAI-compatible chat endpoint, without a query or fragment; the server calls `<base URL>/chat/completions` |
@@ -126,6 +127,7 @@ needs none.
 |---|---|
 | `admin` | Everything. The app needs it, and refuses a `read` token. |
 | `read` | `/mcp`, `POST /api/v1/ask`, and the `GET` endpoints marked `read` in the [API](../reference/api.md#api) table: info, conversations, tasks, memories, people, search and the [calendar feed](../explanation/features.md#calendar-feed). |
+| `labeling` | Only the [labelling routes](../reference/api.md#labelling) under `/api/v1/labeling`, for a labeller app that cannot sit behind your SSO; `403` everywhere else, `/api/v1/info` included. |
 
 A valid token with too little scope gets `403`. A missing, unknown or revoked one gets `401`. A new
 endpoint is closed to `read` until it is marked.

@@ -79,6 +79,9 @@ public sealed class SegmentRow
     /// <summary>Whether the line came from a paid pass rather than the live draft.</summary>
     public bool Final { get; init; }
 
+    /// <summary>Whether a bookmark falls within <see cref="BookmarkStore.MarkReach"/> of the line: the wearer marked it as mattering.</summary>
+    public bool Marked { get; init; }
+
     /// <summary>What a model reads as the speaker: <c>Media</c> for a media line, else the wearer, else the person's name, else the provider's label.</summary>
     public string? Label() =>
         SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? SpeakerLabel.Display(Speaker);
@@ -198,6 +201,7 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         await Run("update memories set conversation_id = @survivor where conversation_id = any(@others)");
         await TagStore.MoveConversationTagsAsync(connection, transaction, others, survivor, ct);
         await TagSuggestionStore.MoveConversationAsync(connection, transaction, others, survivor, ct);
+        await LabelStore.MoveConversationAsync(connection, transaction, others, survivor, ct);
 
         // The merged conversation reads differently: its title stays, the AI output and the memories run again.
         await Run(
@@ -331,7 +335,8 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
                {SpeakerLabel.PersonId} as PersonId, {SpeakerLabel.PersonName} as PersonName,
                {SpeakerLabel.IsUserSource} as IsUserSource, {SpeakerLabel.WearerConfidence} as WearerConfidence,
                s.speech_kind as SpeechKind, s.speech_guess as SpeechGuess, s.speech_score as SpeechScore, coalesce(s.speech_signals, array[]::text[]) as SpeechSignals,
-               s.speech_manual is not null as SpeechMarked, s.category as Category, s.pass_id is not null as Final
+               s.speech_manual is not null as SpeechMarked, s.category as Category, s.pass_id is not null as Final,
+               {BookmarkStore.SegmentMarked} as Marked
         from segments s {SpeakerLabel.Joins}
         """;
 

@@ -54,6 +54,18 @@ public sealed class IcsWriterTests
     }
 
     [Fact]
+    public void An_all_day_event_is_written_as_dates_and_a_description_is_escaped()
+    {
+        var day = new DateTime(2026, 10, 24, 0, 0, 0, DateTimeKind.Utc);
+        var ics = IcsWriter.Write([new IcsEvent("c-1", "Commitment: Pay rent", day, day.AddDays(1), AllDay: true, "Said, here.\nlink")], [], Now);
+
+        var fields = Unfold(ics);
+        Assert.Equal(["20261024"], fields["DTSTART;VALUE=DATE"]);
+        Assert.Equal(["20261025"], fields["DTEND;VALUE=DATE"]);
+        Assert.Equal(["Said\\, here.\\nlink"], fields["DESCRIPTION"]);
+    }
+
+    [Fact]
     public void A_todo_with_no_due_date_has_no_DUE_line_and_one_with_a_due_date_does()
     {
         var withDue = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);

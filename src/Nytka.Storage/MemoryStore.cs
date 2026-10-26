@@ -6,11 +6,12 @@ namespace Nytka.Storage;
 /// <summary>
 /// A live memory with the conversation it was taken from. The three <c>Conversation*</c> fields are null
 /// for a memory with no source (one added by hand). <see cref="Salience"/> and <see cref="ExpiresAt"/> are the model's, null
-/// for a memory made by hand or before they existed; an expired memory is listed only when asked for.
+/// for a memory made by hand or before they existed; an expired memory is listed only when asked for. <see cref="MarkedAt"/> is the
+/// wearer's bookmark near a line the memory cites (<see cref="BookmarkStore.MarkReach"/>) and <see cref="MarkedSegmentId"/> that line; such a memory is <c>vital</c>.
 /// </summary>
 public sealed record MemoryRow(
     Guid Id, string Text, string Source, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt,
-    DateTime CreatedAt, DateTime UpdatedAt, string? Salience = null, DateTime? ExpiresAt = null);
+    DateTime CreatedAt, DateTime UpdatedAt, string? Salience = null, DateTime? ExpiresAt = null, DateTime? MarkedAt = null, long? MarkedSegmentId = null);
 
 /// <summary>A page of memories and the id to pass as <c>before</c> for the next one, or null on the last page.</summary>
 public sealed record MemoryPage(IReadOnlyList<MemoryRow> Items, Guid? NextBefore);
@@ -343,12 +344,14 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
     public const string Live = "(m.expires_at is null or m.expires_at > @now)";
 
     private const string SelectMemory =
-        """
+        $"""
         select m.id as Id, m.text as Text, m.source as Source, m.conversation_id as ConversationId,
                coalesce(c.title, c.ai_title) as ConversationTitle, c.started_at as ConversationStartedAt,
-               m.created_at as CreatedAt, m.updated_at as UpdatedAt, m.salience as Salience, m.expires_at as ExpiresAt
+               m.created_at as CreatedAt, m.updated_at as UpdatedAt, case when mark.at is not null then 'vital' else m.salience end as Salience,
+               m.expires_at as ExpiresAt, mark.at as MarkedAt, mark.segment_id as MarkedSegmentId
         from memories m
         left join conversations c on c.id = m.conversation_id
+        left join lateral ({BookmarkStore.MemoryMark}) mark on true
         """;
 
     private sealed record Header(string? Title, DateTime StartedAt);

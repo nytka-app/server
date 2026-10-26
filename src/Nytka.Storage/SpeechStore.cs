@@ -32,19 +32,27 @@ public sealed class SpeechStore(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
+        var marked = await MarkAsync(connection, transaction, [segmentId], kind, ct);
+        await transaction.CommitAsync(ct);
+        return marked > 0;
+    }
+
+    /// <summary>Marks the segments as <see cref="MarkAsync(long, string?, CancellationToken)"/> does, inside the caller's transaction. Returns how many exist.</summary>
+    public static async Task<int> MarkAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long[] segmentIds, string? kind, CancellationToken ct)
+    {
         var rows = (await connection.QueryAsync<(Guid ConversationId, bool Changed)>(new CommandDefinition(
             $"""
-            with before as (select id, speech_kind from segments where id = @segmentId),
+            with before as (select id, speech_kind from segments where id = any(@segmentIds)),
             upd as (
-                update segments s set speech_manual = @kind, speech_kind = {MarkRule} where s.id = @segmentId
+                update segments s set speech_manual = @kind, speech_kind = {MarkRule} where s.id = any(@segmentIds)
                 returning s.id, s.conversation_id, s.speech_kind)
             select u.conversation_id as ConversationId, b.speech_kind is distinct from u.speech_kind as Changed
             from upd u join before b on b.id = u.id
             """,
-            new { segmentId, kind }, transaction, cancellationToken: ct))).ToList();
+            new { segmentIds, kind }, transaction, cancellationToken: ct))).ToList();
         await RequeueChangedAsync(connection, transaction, rows, ct);
-        await transaction.CommitAsync(ct);
-        return rows.Count > 0;
+        return rows.Count;
     }
 
     /// <summary>

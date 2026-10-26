@@ -23,9 +23,9 @@ public sealed class CalendarEndpointsTests(PostgresFixture db) : IAsyncLifetime
 
     private HttpClient Client => _server.CreateAuthorizedClient();
 
-    private async Task<string> FeedAsync()
+    private async Task<string> FeedAsync(string query = "")
     {
-        var response = await Client.GetAsync("/api/v1/calendar.ics");
+        var response = await Client.GetAsync("/api/v1/calendar.ics" + query);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync();
     }
@@ -97,5 +97,79 @@ public sealed class CalendarEndpointsTests(PostgresFixture db) : IAsyncLifetime
 
         var summaries = Regex.Matches(ics, "SUMMARY:(.+)\r").Select(m => m.Groups[1].Value).ToList();
         Assert.Equal(["Sooner", "Later"], summaries);
+    }
+
+    [Fact]
+    public async Task With_tasks_event_a_commitment_due_on_a_date_is_an_all_day_VEVENT_and_no_VTODO()
+    {
+        var created = await (await Client.PostAsJsonAsync("/api/v1/tasks", new { text = "Pay rent", due = "2026-10-24" }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var id = created.GetProperty("id").GetGuid();
+
+        var ics = (await FeedAsync("?tasks=event")).Replace("\r\n ", "");
+
+        Assert.DoesNotContain("BEGIN:VTODO", ics);
+        Assert.Contains($"UID:commitment-{id}@nytka.local", ics);
+        Assert.Contains("SUMMARY:Commitment: Pay rent", ics);
+        Assert.Contains("DTSTART;VALUE=DATE:20261024\r\n", ics);
+        Assert.Contains("DTEND;VALUE=DATE:20261025\r\n", ics);
+        Assert.Contains("DESCRIPTION:Added by hand in Nytka.", ics);
+    }
+
+    [Fact]
+    public async Task With_tasks_both_a_commitment_due_at_a_time_is_a_timed_VEVENT_linking_its_first_cited_line_and_still_a_VTODO()
+    {
+        var conversation = Guid.CreateVersion7();
+        var start = new DateTime(2026, 10, 20, 9, 0, 0, DateTimeKind.Utc);
+        await db.ExecuteAsync(
+            """
+            insert into conversations (id, started_at, ended_at, status, ai_title, created_at, updated_at)
+            values (@conversation, @start, @start + interval '10 minutes', 'closed', 'Rent talk', @start, @start);
+            insert into transcription_batches (conversation_id, started_at, ended_at, status, offset_map, response, created_at, finished_at)
+            values (@conversation, @start, @start, 'done', '{}', '{}', @start, @start);
+            insert into segments (conversation_id, batch_id, started_at, ended_at, text)
+            select @conversation, id, @start + interval '2 minutes', @start + interval '2 minutes', 'I will pay the rent on Friday at five'
+            from transcription_batches where conversation_id = @conversation;
+            """,
+            new { conversation, start });
+        var segment = await db.ScalarAsync<long>("select id from segments where conversation_id = @conversation", new { conversation });
+        var task = Guid.CreateVersion7();
+        await db.ExecuteAsync(
+            """
+            insert into tasks (id, conversation_id, text, fingerprint, kind, due_at, created_at, updated_at)
+            values (@task, @conversation, 'Pay rent', 'pay rent', 'commitment', '2026-10-24T15:00:00Z', now(), now());
+            insert into task_sources (task_id, segment_id) values (@task, @segment);
+            """,
+            new { task, conversation, segment });
+
+        var ics = (await FeedAsync("?tasks=both")).Replace("\r\n ", "");
+
+        Assert.Contains($"UID:task-{task}@nytka.local", ics);
+        Assert.Contains("DTSTART:20261024T150000Z\r\n", ics);
+        Assert.Contains("DTEND:20261024T153000Z\r\n", ics);
+        Assert.Contains(
+            $"DESCRIPTION:Said in \"Rent talk\"\\, 2026-10-20T09:02:00Z.\\nnytka://conversation/{conversation}?at=2026-10-20T09:02:00Z&segment={segment}",
+            ics);
+    }
+
+    [Fact]
+    public async Task A_sensitive_commitment_is_neither_a_VTODO_nor_a_VEVENT_for_a_read_token()
+    {
+        var created = await (await Client.PostAsJsonAsync("/api/v1/tasks", new { text = "Book the therapist", due = "2026-10-24" }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        await db.ExecuteAsync("update tasks set sensitivity = 'therapy' where id = @id", new { id = created.GetProperty("id").GetGuid() });
+
+        var response = await _server.CreateClientWithScope("read").GetAsync("/api/v1/calendar.ics?tasks=both");
+        var ics = await response.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("therapist", ics);
+    }
+
+    [Fact]
+    public async Task An_unknown_tasks_value_is_refused()
+    {
+        var response = await Client.GetAsync("/api/v1/calendar.ics?tasks=reminder");
+
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

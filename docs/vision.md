@@ -150,8 +150,8 @@ a value set by an environment variable shows as locked there. API keys come only
 environment: the app shows whether one is set, and can neither write it nor read it back.
 
 A Nytka server belongs to one person. The admin token in the environment always works, so you cannot
-lock yourself out. You can create named tokens with one of two scopes: `admin` for the app and
-`read` for MCP clients and agents. The server stores a hash of each token and shows the token once,
+lock yourself out. You can create named tokens with one of three scopes: `admin` for the app,
+`read` for MCP clients and agents, and `labeling` for a labeller app, which reaches only the labelling routes. The server stores a hash of each token and shows the token once,
 when you create it.
 
 Your data leaves the server in three ways, each to an address you choose: speech audio goes to the
