@@ -56,6 +56,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<UsageStore>();
         services.AddSingleton<QualityStore>();
         services.AddSingleton<InsightStore>();
+        services.AddSingleton<DayEventStore>();
 
         return services;
     }

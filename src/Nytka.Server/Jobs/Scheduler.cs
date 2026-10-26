@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
 using Nytka.Server.Calendar;
+using Nytka.Server.DayEvents;
 using Nytka.Server.Digests;
 using Nytka.Server.Insights;
 using Nytka.Server.People;
@@ -80,6 +81,24 @@ public sealed class Scheduler(
         await QueueRollupsAsync(now, ct);
         await QueueRelatedAsync(now, ct);
         await QueueClassifyConversationsAsync(now, ct);
+        await QueueRecomputeEventsAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Queues <c>recompute-events</c> for today and yesterday every tick: a derived computation over stored segments and
+    /// context ranges, cheap and idempotent, so queuing it again once the last run finished costs nothing (as
+    /// <see cref="JobKinds.CloseConversations"/> does). <c>conversation.ready</c> queues a conversation's own date the
+    /// moment it is ready (<see cref="RecomputeEventsTrigger"/>); this is the nightly catch-up and the backfill of today
+    /// as the day goes on.
+    /// </summary>
+    private async Task QueueRecomputeEventsAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var zone = UserTimeZone.Resolve(settings);
+        var today = DigestDay.Today(now, zone);
+        foreach (var date in new[] { DigestDay.Text(today.AddDays(-1)), DigestDay.Text(today) })
+        {
+            await queue.EnqueueAsync(JobKinds.RecomputeEvents, new DayEventsPayload(date), JobKinds.RecomputeEventsKey(date), now, ct);
+        }
     }
 
     /// <summary>

@@ -51,6 +51,7 @@ public static class InfoEndpoints
     /// "rollups": <c>GET /api/v1/rollups</c> exists; rollups are made while <c>rollups.enabled</c> is on.
     /// "related": <c>GET /api/v1/related</c> exists and a conversation has <c>related</c>, its "Earlier" links (empty until the vectors are ready).
     /// "today": <c>GET /api/v1/today</c> and <c>GET /api/v1/timeline</c> exist, items carry <c>evidence</c>, and tasks, memories and notes take your <c>salience</c> mark.
+    /// "events": <c>GET /api/v1/events</c> and the MCP tool <c>list_events</c> exist, a day's derived structure (docs/explanation/features.md#day-events).
     /// "semantic-search": an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning (NYTKA-66).
     /// "insights": <c>GET /api/v1/insights</c> exists, the "Over time" baselines and unlock progress (NYTKA-147).
     /// </summary>
@@ -84,6 +85,7 @@ public static class InfoEndpoints
         features.Add("rollups");
         features.Add("related");
         features.Add("today");
+        features.Add("events");
         features.Add("insights");
         if (embeddings?.IsReady == true)
         {

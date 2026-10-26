@@ -84,6 +84,7 @@ services:
       Nytka__Privacy__Hide: "${Nytka__Privacy__Hide:-}"
       Nytka__Topics__Enabled: "${Nytka__Topics__Enabled:-}"
       Nytka__Rollups__Enabled: "${Nytka__Rollups__Enabled:-}"
+      Nytka__Events__SilenceMinutes: "${Nytka__Events__SilenceMinutes:-}"
       Nytka__Summary__Templates__Enabled: "${Nytka__Summary__Templates__Enabled:-}"
       Nytka__Summary__Templates__Default: "${Nytka__Summary__Templates__Default:-}"
       Nytka__Summary__Templates__Meeting: "${Nytka__Summary__Templates__Meeting:-}"
