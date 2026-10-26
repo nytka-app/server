@@ -41,7 +41,8 @@ public static class VoiceEndpoints
     }
 
     public sealed record VoiceView(
-        bool Enrolled, DateTime? EnrolledAt, DateTime? UpdatedAt, int EnrolledSamples, int LearnedSegments, bool ModelAvailable);
+        bool Enrolled, DateTime? EnrolledAt, DateTime? UpdatedAt, int EnrolledSamples, int LearnedSegments, int Voiceprints,
+        bool ModelAvailable);
 
     public sealed record EnrollmentResponse(double SpeechSeconds, int Samples, float MinAgreement);
 
@@ -53,8 +54,9 @@ public static class VoiceEndpoints
     private static async Task<VoiceView> ViewAsync(VoiceStore voices, SpeakerModel model, CancellationToken ct) =>
         await voices.GetStatusAsync(ct) is { } status
             ? new VoiceView(
-                true, status.EnrolledAt, status.UpdatedAt, status.EnrolledCount, status.CentroidCount - status.EnrolledCount, model.Available)
-            : new VoiceView(false, null, null, 0, 0, model.Available);
+                true, status.EnrolledAt, status.UpdatedAt, status.EnrolledCount, status.CentroidCount - status.EnrolledCount,
+                status.PrintCount, model.Available)
+            : new VoiceView(false, null, null, 0, 0, 0, model.Available);
 
     /// <summary>
     /// Body: one or more chunks of Opus frames back to back (<c>application/vnd.nytka.frames.v1</c>) or a 16 kHz mono 16-bit
@@ -265,7 +267,9 @@ public static class VoiceEndpoints
 
         if (hasUser)
         {
-            if (!await voices.MarkAsync(id, isUser, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct))
+            if (!await voices.MarkAsync(
+                id, isUser, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, VoiceSettings.NewPrintBelow(settings),
+                VoiceSettings.MaxPrints(settings), ct))
             {
                 return NoSegment();
             }

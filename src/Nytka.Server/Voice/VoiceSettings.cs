@@ -11,6 +11,8 @@ public sealed class VoiceSettings : ISettingsGroup
     public const string LearnThresholdKey = "voice.learnThreshold";
     public const string LearnKey = "voice.learn";
     public const string MinSegmentSecondsKey = "voice.minSegmentSeconds";
+    public const string NewPrintBelowKey = "voice.newPrintBelow";
+    public const string MaxPrintsKey = "voice.maxPrints";
 
     public IReadOnlyList<SettingDefinition> Definitions { get; } =
     [
@@ -19,6 +21,8 @@ public sealed class VoiceSettings : ISettingsGroup
         new(LearnThresholdKey, SettingType.Number, "0.5", SettingValidators.Number(0.1, 0.95)),
         new(LearnKey, SettingType.Bool, "true", SettingValidators.Bool),
         new(MinSegmentSecondsKey, SettingType.Number, "1.0", SettingValidators.Number(1.0, 5.0)),
+        new(NewPrintBelowKey, SettingType.Number, "0.6", SettingValidators.Number(0.1, 0.95)),
+        new(MaxPrintsKey, SettingType.Int, "5", SettingValidators.Int(2, 20)),
     ];
 
     /// <summary>A segment that may teach the voiceprint must be one labelled the wearer's.</summary>
@@ -52,6 +56,12 @@ public sealed class VoiceSettings : ISettingsGroup
     public static bool Learns(SettingsService settings) => settings.Get(LearnKey) != "false";
 
     public static double MinSegmentSeconds(SettingsService settings) => Number(settings, MinSegmentSecondsKey);
+
+    /// <summary>A line that passes the learn rule updates its nearest centroid at or above this similarity, instead of opening a new one.</summary>
+    public static float NewPrintBelow(SettingsService settings) => Number(settings, NewPrintBelowKey);
+
+    /// <summary>How many wearer voiceprint centroids to keep before the two closest merge (NYTKA-159).</summary>
+    public static int MaxPrints(SettingsService settings) => int.Parse(settings.Get(MaxPrintsKey)!, CultureInfo.InvariantCulture);
 
     private static float Number(SettingsService settings, string key) =>
         (float)double.Parse(settings.Get(key)!, NumberStyles.Float, CultureInfo.InvariantCulture);
