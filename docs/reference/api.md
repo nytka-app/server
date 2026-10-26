@@ -1,6 +1,6 @@
 # HTTP API, webhooks and MCP
 
-The HTTP API v1, the webhooks the server sends and the MCP endpoint for AI agents (18 read tools, 3 write tools).
+The HTTP API v1, the webhooks the server sends and the MCP endpoint for AI agents (19 read tools, 3 write tools).
 
 ## API
 
@@ -111,6 +111,7 @@ so `apiVersion` stays `1` and an app from an older version keeps working.
 | GET | `/api/v1/rollups?period=&topicId=&before=&limit=` | read | `{ items, nextBefore }`, [summaries over time](../explanation/features.md#summaries-over-time) newest first; a rollup is `{ id, period, start, end, topicId, locked, progress: { have, need, unit }, summary, changes, sources: { digests, conversations }, generatedAt }`, `period` `week`, `month`, `year` or `all` (else `400`), `start` and `end` local dates (`end` exclusive), `changes` what differs from the period before; `locked` true while the period had too little (`progress`, `unit` `days`, or `conversations` for a topic) and then `summary` and `changes` are null; `topicId` lists that topic's weeks instead of everything's; `before` a date; `limit` defaults to 12, caps at 100 |
 | GET | `/api/v1/rollups/{period}/{start}` | read | One rollup of everything, as in the list; `start` is its first date (any date for `all`); `404` when there is none |
 | POST | `/api/v1/rollups/backfill` | admin | Body `{ from? }` (a date; default the first with data): queues the rollup of every closed week, month and year since, every topic's closed weeks and all time, at most one model call each; `202 { queued }`; `409` while `rollups.enabled` is off or no model is set |
+| GET | `/api/v1/events?date=&tz=` | read | `{ date, events }`, a day's [derived events](../explanation/features.md#day-events) (default today), oldest first: `{ id, kind, at, conversationId, personId, voiceLabel, detail, source }`; `kind` is `person_joined`, `person_left`, `media_started`, `media_stopped`, `call_started`, `call_ended`, `silence` or `alone`; `tz` is an IANA zone, else `user.timeZone` (`400` for an unknown one or a date that is none). An event tied to a conversation whose sensitivity class the reader may not see is left out |
 | GET | `/api/v1/related?conversationId=\|taskId=\|memoryId=\|noteId=&limit=` | read | `{ items }`, the [Earlier links](../explanation/features.md#earlier-links) of exactly one conversation, task, memory or note (else `400`), best first; an item is `{ kind, conversationId, title, at, segmentId, quote, score, reasons, people, tags }`: `kind` is `conversation`, `conversationId` the earlier conversation, `at` and `segmentId` its line nearest the asked one (`quote` that line, at most 280 characters), `score` 0 to 1, `reasons` `meaning` plus `person` and `tag` when `people` or `tags` are shared; a task's, memory's or note's links are its conversation's, at the line nearest the item; empty for a deleted or unconfirmed memory, and for items until the vectors are ready; `limit` defaults to 5, caps at 20 |
 | PUT, DELETE | `/api/v1/conversations/{id}/tags/{name}` | admin | Adds or removes one tag: `200 { tags }`, the conversation's tags sorted; removing a tag it does not have is also `200`; `400` for a name that is none, `404` for an unknown conversation, `409` when adding a 21st tag |
 | PUT, DELETE | `/api/v1/people/{id}/tags/{name}` | admin | The same for a person |
@@ -341,6 +342,7 @@ through OAuth cannot connect.
 | `get_topic` | `id` (UUID), `before?` (ISO 8601 with an offset), `limit?` (1 to 100, default 30) | the page of `GET /api/v1/topics/{id}` |
 | `get_related` | `kind` (`conversation`, `task`, `memory` or `note`), `id` (UUID), `limit?` (1 to 20, default 5) | `{ items }`, as `GET /api/v1/related`; the description tells the agent a link is no evidence that anything in one moment is true of the other |
 | `ask` | `question` (1 to 500 characters) | `{ answer, sources: [Source] }`, as `POST /api/v1/ask` (see [Ask](../explanation/features.md#ask)); a tool error when no model is set or it fails |
+| `list_events` | `date?` (`yyyy-MM-dd`, default today), `tz?` (an IANA zone, else `user.timeZone`) | `{ date, events }`, as `GET /api/v1/events` |
 
 These fourteen are read-only (`readOnlyHint`), declare an output schema and return their result as
 structured content and as JSON text. A tool returns the fields its REST endpoint returns, with the
