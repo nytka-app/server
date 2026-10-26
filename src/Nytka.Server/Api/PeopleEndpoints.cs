@@ -30,6 +30,7 @@ public static class PeopleEndpoints
         people.MapPatch("/{id:guid}", UpdateAsync);
         people.MapDelete("/{id:guid}", DeleteAsync);
         people.MapPost("/{id:guid}/merge", MergeAsync);
+        people.MapPost("/{id:guid}/forget", ForgetAsync);
         people.MapGet("/suggestions", SuggestionsAsync).AllowRead();
         people.MapPost("/backfill", BackfillAsync);
         people.MapPost("/suggestions/revalidate", RevalidateAsync);
@@ -371,6 +372,23 @@ public static class PeopleEndpoints
         var forgotten = await voiceprints.ForgetAsync(voices ?? [], ct);
         log.LogInformation("Forgot the voiceprints of {Voices} voices: {Forgotten}", voices?.Length ?? 0, forgotten);
         return Results.Ok(new { forgotten });
+    }
+
+    /// <summary>
+    /// Forgets the person completely, in one transaction (<see cref="PersonForget"/>): 200 with <c>{ counts, voiceprintsForgotten }</c>,
+    /// the last true only when the transcription service dropped every voiceprint. 404 for an unknown person.
+    /// </summary>
+    private static async Task<IResult> ForgetAsync(
+        Guid id, PersonForget forget, VoiceprintClient voiceprints, ILogger<VoiceprintClient> log, CancellationToken ct)
+    {
+        if (await forget.RunAsync(id, ct) is not { } result)
+        {
+            return NotFound();
+        }
+
+        var forgotten = await voiceprints.ForgetAsync(result.Voices, ct);
+        log.LogInformation("Forgot a person: {Voices} voices, voiceprints forgotten: {Forgotten}", result.Voices.Count, forgotten);
+        return Results.Ok(new { counts = result.Counts, voiceprintsForgotten = forgotten });
     }
 
     private static async Task<IResult> UnlinkAsync(Guid id, string speakerId, PeopleStore people, CancellationToken ct) =>
