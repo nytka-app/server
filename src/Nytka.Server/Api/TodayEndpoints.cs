@@ -104,8 +104,9 @@ public static class TodayEndpoints
     }
 
     /// <summary>
-    /// When the item was said, in the zone: before 12:00 <c>morning</c>, to 18:00 <c>day</c>, then <c>evening</c>. A task due today
-    /// that was said earlier takes its part from the due time, or <c>day</c> when the due date has no time.
+    /// When the item sits in the day, in the zone: before 12:00 <c>morning</c>, to 18:00 <c>day</c>, then <c>evening</c>. What was
+    /// said that day takes its part from when. A task said earlier takes it from its due time when it is due that day and the due date
+    /// has a time; otherwise (an open loop, or a date with no time) it is <c>morning</c>, where the day starts.
     /// </summary>
     public static string Part(DayItem item, DateTime from, DateTime to, TimeZoneInfo zone)
     {
@@ -114,7 +115,7 @@ public static class TodayEndpoints
         {
             if (item.Due is not { } due || due < from || due >= to || due.TimeOfDay == TimeSpan.Zero)
             {
-                return "day";
+                return "morning";
             }
 
             at = due;

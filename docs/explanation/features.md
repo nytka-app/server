@@ -869,16 +869,24 @@ onward in a `Referer` header.
 ## Today
 
 `GET /api/v1/today` answers "what is worth a look today" without trusting the model's `vital` label alone, which rates almost
-nothing vital. For the owner's local day it takes the items said that day, and open tasks due by the end of it, and keeps:
+nothing vital. For the owner's local day it takes:
+
+- every open commitment and everything somebody owes you (`waiting_on`), **however long ago it was said**, until it is done:
+  these are the open loops you carry into the day, so a morning with no new conversation still has them;
+- the ideas, memories and notes said that day.
+
+From these it keeps what matters:
 
 - anything rated `vital`, whether the model did it, a bookmark near a cited line did, or you did with your own mark;
 - every open commitment with a named person or a due date;
-- everything somebody owes you (`waiting_on`).
+- everything owed to you.
 
 It never shows `noise` (your mark of noise wins over everything), a task that is done, an idea, memory or note that is not
-vital, an unconfirmed memory, or anything with a [sensitivity](#sensitive-content), whoever asks. Items due today or overdue come
-first, then vital ones, then what is owed to you, then those with a person; the best 7 are listed in the order they were said.
-A task said earlier but due today sits in the part of the day of its due time, or in `day` when the due date has none.
+vital or was said another day, an unconfirmed memory, or anything with a [sensitivity](#sensitive-content), whoever asks. At most 7
+are listed. Which 7: what is due today or overdue first, the earliest due date first; then vital, then what is owed to you, then
+what has a person; then the most recently said. They are listed in the order they sit in the day: what was said that day at its
+time, a task due that day at its due time, and what was said earlier (the open loops) at the start of the day, due ones first.
+A task said earlier sits in `morning` unless its due date has a time that falls in another part of the day.
 
 `GET /api/v1/timeline` is the same day as scenes, one per conversation, with every live item in any salience, so the app can
 fold the noise. Both carry `evidence`, the lines an item cites, so the app can play the audio and let you say "not me" or "wrong
