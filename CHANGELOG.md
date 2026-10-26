@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.2](https://github.com/nytka-app/server/compare/v0.36.1...v0.36.2) (2026-10-26)
+
+
+### Features
+
+* **privacy:** classify-memories gives memories from before the class a sensitivity, POST /api/v1/memories/classify ([#207](https://github.com/nytka-app/server/issues/207)) ([01e362c](https://github.com/nytka-app/server/commit/01e362c587217acb4d2202dad91762dd2a62fe7d))
+
 ## [0.36.1](https://github.com/nytka-app/server/compare/v0.36.0...v0.36.1) (2026-10-26)
 
 
