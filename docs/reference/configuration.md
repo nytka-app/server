@@ -67,6 +67,8 @@ you copy without thinking would lock its setting.
 | `Nytka__Summary__Templates__Default`, `__Meeting`, `__Lecture`, `__Doctor`, `__Call` | no | built-in | editable | What the summary of that kind holds, at most 600 characters; empty is the built-in text. Also read and edited through `/api/v1/summary-templates` |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](../explanation/features.md#daily-digest); it needs the language model |
 | `Nytka__Digest__Hour` | no | `21` | editable | Local hour, 0 to 23, after which the day's digest is made; the day and the hour use `Nytka__User__TimeZone` |
+| `Nytka__Nudges__Enabled` | no | `true` | editable | Whether `GET /api/v1/nudges` returns [nudges](../explanation/features.md#nudges) |
+| `Nytka__Nudges__QuietFrom`, `Nytka__Nudges__QuietTo` | no | `22:00`, `08:00` | editable | Local `HH:mm` hours in which no nudge is shown; one made then is shown when they end. Equal values mean no quiet hours |
 | `Nytka__Search__Dictionary` | no | `simple` | editable | `simple` or `uk_hunspell`: [Ukrainian search](../explanation/features.md#ukrainian-search-optional) |
 | `Nytka__Embeddings__BaseUrl` | no | | editable | Base URL of an OpenAI-compatible embeddings endpoint, without a query or fragment; the server calls `<base URL>/embeddings`. Unset, search and Ask stay full-text only: [vector search](#vector-search) |
 | `Nytka__Embeddings__ApiKey` | no | | env only | Sent as a bearer token; leave it out for a local server |

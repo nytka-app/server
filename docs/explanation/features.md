@@ -801,6 +801,27 @@ so a regression shows up the next morning. One row per local day in `Nytka__User
 - **Graph it.** There is no `/metrics` endpoint; point a Grafana Postgres data source at
   `quality_days` with a read-only role.
 
+## Nudges
+
+`GET /api/v1/nudges?since=&tz=` is what the app polls (every 15 minutes) to show notifications without being asked. Each nudge is
+`{ id, kind, title, body, deepLink, at }` and is made once, by the first poll that sees its cause, then kept: a repeat poll returns the
+same `id` and text, so the app replaces a notification and never adds a second. Four kinds:
+
+- **`commitment-due`**, id `commitment-due:<task id>`: an open [commitment](#task-kinds) due within the next 24 hours. The body is the
+  task's text and its local due time; the link is `nytka://conversation/<id>`. It is dropped once the task is done, deleted or hidden.
+- **`recap`**, id `recap:<date>`: the day's [digest](#daily-digest) exists. The body is counts only (highlights, decisions, open questions);
+  the link is `nytka://today`.
+- **`insight-unlocked`**, id `insight-unlocked`: the day the last needed day with audio arrives and the [insights](#insights) unlock, once
+  ever. The link is `nytka://insights`.
+- **`deviation`**, id `deviation:<date>`: for yesterday, when one insight differs from its baseline by at least half of it and by a
+  minimum amount (10 minutes of talk, 2 people or commitments, 15 points of evening share); the one that differs most. The body is its
+  numbers-only summary; the link is `nytka://insights/<insight id>`.
+
+Text is built from item titles and numbers, never from transcript text. What `Nytka__Privacy__Hide` names never appears, for any token,
+admin too: a nudge lands on a lock screen. `Nytka__Nudges__Enabled=false` makes the list empty. The quiet hours (`Nytka__Nudges__QuietFrom`
+and `QuietTo`, 22:00 to 08:00 by default, in the request's `tz` else `Nytka__User__TimeZone`) hold a nudge back: one made inside them has
+`at` at their end and is returned by the first poll after it. `since` filters by `at`.
+
 ## Insights
 
 The app's Over time tab reads `GET /api/v1/insights`: four numbers measured nightly from stored rows only
