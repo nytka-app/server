@@ -105,6 +105,7 @@ builder.Services.AddNytkaSpeech();
 builder.Services.AddNytkaUsage();
 builder.Services.AddNytkaQuality();
 builder.Services.AddNytkaInsights();
+builder.Services.AddNytkaNudges();
 builder.Services.AddNytkaLabeling();
 builder.Services.AddNytkaBatching();
 
@@ -169,6 +170,7 @@ api.MapCalendarFeed();
 api.MapUsage();
 api.MapQuality();
 api.MapInsights();
+api.MapNudges();
 api.MapLabeling();
 api.MapSummaryTemplates();
 api.MapEvents();
