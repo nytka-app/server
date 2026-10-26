@@ -8,8 +8,7 @@ namespace Nytka.Server.Tests.Calendar;
 /// The live <c>GET /api/v1/calendar.ics</c> route: its response headers and the <c>VTODO</c>s it writes for open
 /// tasks with a due date (<see cref="Nytka.Server.Api.CalendarEndpoints"/>).
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class CalendarEndpointsTests(PostgresFixture db) : IAsyncLifetime
+public sealed class CalendarEndpointsTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

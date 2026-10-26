@@ -5,8 +5,7 @@ using Nytka.Audio.Voice;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
-public class HostTests(PostgresFixture db)
+public class HostTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     [Fact]
     public async Task Healthz_needs_no_token()

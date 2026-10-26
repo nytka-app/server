@@ -7,7 +7,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Topics;
 
 /// <summary>Topic pages: started for a recurring tag, folded in from summaries, one call per new conversation.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class TopicTests(PostgresFixture db) : Ai.AiTestBase(db)
 {
     private static string Page(string text) => JsonSerializer.Serialize(new { summary = text });

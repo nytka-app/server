@@ -11,7 +11,6 @@ using Nytka.Server.Tests.Webhooks;
 
 namespace Nytka.Server.Tests.Digests;
 
-[Collection(PostgresCollection.Name)]
 public sealed class DigestTests(PostgresFixture db) : AiTestBase(db)
 {
     private static readonly DateTimeOffset Evening = new(2026, 9, 29, 21, 30, 0, TimeSpan.Zero);

@@ -109,6 +109,8 @@ services:
       Nytka__Voice__LearnThreshold: "${Nytka__Voice__LearnThreshold:-}"
       Nytka__Voice__Learn: "${Nytka__Voice__Learn:-}"
       Nytka__Voice__MinSegmentSeconds: "${Nytka__Voice__MinSegmentSeconds:-}"
+      Nytka__Voice__NewPrintBelow: "${Nytka__Voice__NewPrintBelow:-}"
+      Nytka__Voice__MaxPrints: "${Nytka__Voice__MaxPrints:-}"
       Nytka__Voice__ModelPath: "${Nytka__Voice__ModelPath:-}"
       Nytka__People__VoiceMatching: "${Nytka__People__VoiceMatching:-}"
       Nytka__People__VoiceThreshold: "${Nytka__People__VoiceThreshold:-}"

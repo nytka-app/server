@@ -5,8 +5,11 @@ using Nytka.Audio.Voice;
 
 namespace Nytka.Storage;
 
-/// <summary>The voiceprint matching uses: the model that made it and the centroid (the enrolled mean after learning).</summary>
-public sealed record VoiceProfile(string Model, float[] Centroid, int CentroidCount, float? AppliedThreshold);
+/// <summary>One of the wearer's voiceprint centroids: its embedding and how many lines it was built from.</summary>
+public sealed record VoicePrint(long Id, float[] Embedding, int LineCount);
+
+/// <summary>The voiceprint matching uses: the model that made it and its centroids (several instead of one running mean, NYTKA-159).</summary>
+public sealed record VoiceProfile(string Model, IReadOnlyList<VoicePrint> Prints, float? AppliedThreshold);
 
 /// <summary>
 /// Nytka's look at one segment. <paramref name="Similarity"/> and <paramref name="IsUser"/> are null for a
@@ -14,8 +17,9 @@ public sealed record VoiceProfile(string Model, float[] Centroid, int CentroidCo
 /// </summary>
 public sealed record SegmentVoice(float? Similarity, bool? IsUser, float[]? Fingerprint);
 
-/// <summary>What the API may say about the voiceprint: counts and times, never the vector.</summary>
-public sealed record VoiceStatus(DateTime EnrolledAt, DateTime UpdatedAt, int EnrolledCount, int CentroidCount);
+/// <summary>What the API may say about the voiceprint: counts and times, never a vector. <paramref name="CentroidCount"/> is every
+/// centroid's line count summed (the learned total); <paramref name="PrintCount"/> is how many centroids exist.</summary>
+public sealed record VoiceStatus(DateTime EnrolledAt, DateTime UpdatedAt, int EnrolledCount, int CentroidCount, int PrintCount);
 
 /// <summary>A segment's labels side by side, for evaluating matching; no text.</summary>
 public sealed record VoiceSegment(
@@ -37,8 +41,11 @@ public enum VoiceAdd
     OtherModel,
 }
 
-/// <summary>A batch's voice work, written in its completion's transaction: fingerprints by <paramref name="Model"/>, and the vectors that teach the voiceprint.</summary>
-public sealed record BatchVoice(string Model, IReadOnlyList<float[]> Learn);
+/// <summary>
+/// A batch's voice work, written in its completion's transaction: fingerprints by <paramref name="Model"/>, the vectors that
+/// teach the voiceprint, and the learning rules (<c>voice.newPrintBelow</c>, <c>voice.maxPrints</c>) to teach it with.
+/// </summary>
+public sealed record BatchVoice(string Model, IReadOnlyList<float[]> Learn, float NewPrintBelow, int MaxPrints);
 
 /// <summary>
 /// The wearer's voiceprint (<c>voice_profile</c>) and the segment fingerprints (<c>segment_fingerprints</c>),
@@ -46,41 +53,67 @@ public sealed record BatchVoice(string Model, IReadOnlyList<float[]> Learn);
 /// </summary>
 public sealed class VoiceStore(NpgsqlDataSource dataSource)
 {
-    private sealed record ProfileRow(string Model, byte[] Centroid, int CentroidCount, float? AppliedThreshold);
+    private sealed record ProfileRow(string Model, float? AppliedThreshold);
+
+    private sealed record PrintRow(long Id, byte[] Embedding, int LineCount);
 
     private sealed record FingerprintRow(long SegmentId, byte[] Fingerprint);
 
-    private sealed record EnrolledRow(string Model, byte[] Enrolled, int EnrolledCount, byte[] Centroid, int CentroidCount);
+    private sealed record EnrolledRow(string Model, byte[] Enrolled, int EnrolledCount);
 
     private sealed record MarkRow(bool? Manual, double Seconds, string? Model, byte[]? Fingerprint);
+
+    /// <summary>A print being learned into: its row (when it is not brand new) and whether it still needs writing back.</summary>
+    private sealed class PrintState
+    {
+        public long? Id { get; init; }
+
+        public required float[] Embedding { get; set; }
+
+        public required int LineCount { get; set; }
+
+        public bool Dirty { get; set; }
+    }
 
     public async Task<VoiceProfile?> GetProfileAsync(CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var row = await connection.QuerySingleOrDefaultAsync<ProfileRow>(new CommandDefinition(
-            """
-            select model as Model, centroid as Centroid, centroid_count as CentroidCount, applied_threshold as AppliedThreshold
-            from voice_profile where id = 1
-            """,
+            "select model as Model, applied_threshold as AppliedThreshold from voice_profile where id = 1",
             cancellationToken: ct));
-        return row is null ? null : new VoiceProfile(row.Model, Decode(row.Centroid), row.CentroidCount, row.AppliedThreshold);
+        if (row is null)
+        {
+            return null;
+        }
+
+        var prints = await ReadPrintsAsync(connection, null, forUpdate: false, ct);
+        return new VoiceProfile(row.Model, [.. prints.Select(p => new VoicePrint(p.Id!.Value, p.Embedding, p.LineCount))], row.AppliedThreshold);
     }
 
-    /// <summary>Starts the voiceprint over from an enrolled mean of <paramref name="count"/> samples.</summary>
+    /// <summary>Starts the voiceprint over from an enrolled mean of <paramref name="count"/> samples: one centroid.</summary>
     public async Task ReplaceProfileAsync(string model, float[] enrolled, int count, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
         var vector = Encode(enrolled);
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into voice_profile (id, model, enrolled, enrolled_count, centroid, centroid_count, applied_threshold, enrolled_at, updated_at)
-            values (1, @model, @vector, @count, @vector, @count, null, @now, @now)
+            insert into voice_profile (id, model, enrolled, enrolled_count, applied_threshold, enrolled_at, updated_at)
+            values (1, @model, @vector, @count, null, @now, @now)
             on conflict (id) do update set
                 model = excluded.model, enrolled = excluded.enrolled, enrolled_count = excluded.enrolled_count,
-                centroid = excluded.centroid, centroid_count = excluded.centroid_count, applied_threshold = null,
-                enrolled_at = excluded.enrolled_at, updated_at = excluded.updated_at
+                applied_threshold = null, enrolled_at = excluded.enrolled_at, updated_at = excluded.updated_at
             """,
-            new { model, vector, count, now }, cancellationToken: ct));
+            new { model, vector, count, now }, transaction, cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
+            "delete from voice_profile_prints where profile_id = 1", transaction: transaction, cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into voice_profile_prints (profile_id, embedding, line_count, created_at, updated_at)
+            values (1, @vector, @count, @now, @now)
+            """,
+            new { vector, count, now }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
     }
 
     public async Task<VoiceStatus?> GetStatusAsync(CancellationToken ct)
@@ -88,26 +121,26 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<VoiceStatus>(new CommandDefinition(
             """
-            select enrolled_at as EnrolledAt, updated_at as UpdatedAt, enrolled_count as EnrolledCount, centroid_count as CentroidCount
-            from voice_profile where id = 1
+            select p.enrolled_at as EnrolledAt, p.updated_at as UpdatedAt, p.enrolled_count as EnrolledCount,
+                   coalesce(sum(r.line_count), 0)::int as CentroidCount, count(r.id)::int as PrintCount
+            from voice_profile p left join voice_profile_prints r on r.profile_id = p.id
+            where p.id = 1
+            group by p.enrolled_at, p.updated_at, p.enrolled_count
             """,
             cancellationToken: ct));
     }
 
     /// <summary>
-    /// Blends <paramref name="vectors"/> into both the enrolled mean and the voiceprint, weighted by count, so a reset keeps
-    /// them. Without a voiceprint they become one; a voiceprint of another model is left alone.
+    /// Blends <paramref name="vectors"/>' mean into the enrolled mean and its nearest centroid (a new one when none exists
+    /// yet), weighted by count, so a reset keeps them. Without a voiceprint they become one; a voiceprint of another model is
+    /// left alone. An explicit, deliberate add, unlike <see cref="LearnAsync"/>: it never opens a second centroid.
     /// </summary>
     public async Task<VoiceAdd> AddToProfileAsync(string model, IReadOnlyList<float[]> vectors, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var row = await connection.QuerySingleOrDefaultAsync<EnrolledRow>(new CommandDefinition(
-            """
-            select model as Model, enrolled as Enrolled, enrolled_count as EnrolledCount, centroid as Centroid, centroid_count as CentroidCount
-            from voice_profile where id = 1
-            for update
-            """,
+            "select model as Model, enrolled as Enrolled, enrolled_count as EnrolledCount from voice_profile where id = 1 for update",
             transaction: transaction, cancellationToken: ct));
         if (row is null)
         {
@@ -121,35 +154,76 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
             return VoiceAdd.OtherModel;
         }
 
+        var prints = await ReadPrintsAsync(connection, transaction, forUpdate: true, ct);
+        var mean = Mean(vectors);
+
         // applied_threshold null: the scheduler rescores even if the queued job was deduplicated away.
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            update voice_profile set enrolled = @enrolled, enrolled_count = enrolled_count + @count, centroid = @centroid,
-                centroid_count = centroid_count + @count, applied_threshold = null, enrolled_at = @now, updated_at = @now
+            update voice_profile set enrolled = @enrolled, enrolled_count = enrolled_count + @count, applied_threshold = null,
+                enrolled_at = @now, updated_at = @now
             where id = 1
             """,
-            new
-            {
-                enrolled = Encode(Blend(Decode(row.Enrolled), row.EnrolledCount, vectors)),
-                centroid = Encode(Blend(Decode(row.Centroid), row.CentroidCount, vectors)),
-                count = vectors.Count,
-                now,
-            },
+            new { enrolled = Encode(Blend(Decode(row.Enrolled), row.EnrolledCount, vectors)), count = vectors.Count, now },
             transaction, cancellationToken: ct));
+        if (prints.Count == 0)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                insert into voice_profile_prints (profile_id, embedding, line_count, created_at, updated_at)
+                values (1, @embedding, @count, @now, @now)
+                """,
+                new { embedding = Encode(mean), count = vectors.Count, now }, transaction, cancellationToken: ct));
+        }
+        else
+        {
+            var nearest = prints.MaxBy(p => SpeakerEmbedder.Cosine(mean, p.Embedding))!;
+            await connection.ExecuteAsync(new CommandDefinition(
+                "update voice_profile_prints set embedding = @embedding, line_count = line_count + @count, updated_at = @now where id = @id",
+                new { id = nearest.Id, embedding = Encode(Blend(nearest.Embedding, nearest.LineCount, vectors)), count = vectors.Count, now },
+                transaction, cancellationToken: ct));
+        }
+
         await transaction.CommitAsync(ct);
         return VoiceAdd.Added;
     }
 
-    /// <summary>Returns the voiceprint to the enrolled mean, forgetting what it learned. False without a voiceprint.</summary>
+    /// <summary>Returns the voiceprint to the enrolled mean, forgetting what it learned: one centroid again. False without a voiceprint.</summary>
     public async Task<bool> ResetAsync(DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        return await connection.ExecuteAsync(new CommandDefinition(
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var row = await connection.QuerySingleOrDefaultAsync<EnrolledRow>(new CommandDefinition(
+            "select model as Model, enrolled as Enrolled, enrolled_count as EnrolledCount from voice_profile where id = 1 for update",
+            transaction: transaction, cancellationToken: ct));
+        if (row is null)
+        {
+            return false;
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update voice_profile set applied_threshold = null, updated_at = @now where id = 1",
+            new { now }, transaction, cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
+            "delete from voice_profile_prints where profile_id = 1", transaction: transaction, cancellationToken: ct));
+        await connection.ExecuteAsync(new CommandDefinition(
             """
-            update voice_profile set centroid = enrolled, centroid_count = enrolled_count, applied_threshold = null, updated_at = @now
-            where id = 1
+            insert into voice_profile_prints (profile_id, embedding, line_count, created_at, updated_at)
+            values (1, @Enrolled, @EnrolledCount, @now, @now)
             """,
-            new { now }, cancellationToken: ct)) > 0;
+            new { row.Enrolled, row.EnrolledCount, now }, transaction, cancellationToken: ct));
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    /// <summary>The voiceprint's centroids, newest reads un-locked; learning and adding lock the rows with <c>for update</c>.</summary>
+    private static async Task<List<PrintState>> ReadPrintsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, bool forUpdate, CancellationToken ct)
+    {
+        var sql = "select id as Id, embedding as Embedding, line_count as LineCount from voice_profile_prints where profile_id = 1 order by id";
+        var rows = await connection.QueryAsync<PrintRow>(new CommandDefinition(
+            forUpdate ? sql + " for update" : sql, transaction: transaction, cancellationToken: ct));
+        return rows.Select(r => new PrintState { Id = r.Id, Embedding = Decode(r.Embedding), LineCount = r.LineCount }).ToList();
     }
 
     /// <summary>
@@ -157,7 +231,8 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
     /// <paramref name="learnSeconds"/> or longer whose fingerprint is still held teaches the voiceprint in the same
     /// transaction, when <paramref name="learn"/>. False when the segment does not exist.
     /// </summary>
-    public async Task<bool> MarkAsync(long segmentId, bool? isUser, bool learn, double learnSeconds, CancellationToken ct)
+    public async Task<bool> MarkAsync(
+        long segmentId, bool? isUser, bool learn, double learnSeconds, float newPrintBelow, int maxPrints, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -181,7 +256,7 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
         if (learn && isUser == true && before.Manual != true && before.Seconds >= learnSeconds
             && before is { Model: { } model, Fingerprint: { } fingerprint })
         {
-            await LearnAsync(connection, transaction, model, [Decode(fingerprint)], ct);
+            await LearnAsync(connection, transaction, model, [Decode(fingerprint)], newPrintBelow, maxPrints, ct);
         }
 
         await transaction.CommitAsync(ct);
@@ -200,7 +275,8 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
     /// fingerprint of the voiceprint's model, inside the caller's transaction. Returns how many it learned.
     /// </summary>
     public static async Task<int> LearnMarkedAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, long[] segmentIds, double learnSeconds, CancellationToken ct)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long[] segmentIds, double learnSeconds, float newPrintBelow, int maxPrints,
+        CancellationToken ct)
     {
         var rows = (await connection.QueryAsync<(string Model, byte[] Fingerprint)>(new CommandDefinition(
             """
@@ -217,7 +293,7 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
             return 0;
         }
 
-        await LearnAsync(connection, transaction, rows[0].Model, [.. rows.Select(r => Decode(r.Fingerprint))], ct);
+        await LearnAsync(connection, transaction, rows[0].Model, [.. rows.Select(r => Decode(r.Fingerprint))], newPrintBelow, maxPrints, ct);
         return rows.Count;
     }
 
@@ -323,43 +399,117 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
             new { segmentId, batchId, model, fingerprint = Encode(fingerprint) }, transaction, cancellationToken: ct));
 
     /// <summary>
-    /// Moves the voiceprint towards <paramref name="vectors"/> as a running mean, inside the caller's transaction and under
-    /// the profile's row lock. Nothing happens when the voiceprint is gone or was made by another model meanwhile.
+    /// Moves the voiceprint's centroids towards <paramref name="vectors"/>, inside the caller's transaction and under the
+    /// profile's row lock (NYTKA-159). Each vector updates its nearest centroid when that centroid's similarity is at least
+    /// <paramref name="newPrintBelow"/>; otherwise it opens a new centroid while there are fewer than <paramref name="maxPrints"/>,
+    /// merging the two closest centroids (weighted by line count) first when the cap is already reached. Nothing happens when
+    /// the voiceprint is gone or was made by another model meanwhile.
     /// </summary>
     public static async Task LearnAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, string model, IReadOnlyList<float[]> vectors, CancellationToken ct)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string model, IReadOnlyList<float[]> vectors, float newPrintBelow,
+        int maxPrints, CancellationToken ct)
     {
         if (vectors.Count == 0)
         {
             return;
         }
 
-        var row = await connection.QuerySingleOrDefaultAsync<ProfileRow>(new CommandDefinition(
-            """
-            select model as Model, centroid as Centroid, centroid_count as CentroidCount, applied_threshold as AppliedThreshold
-            from voice_profile where id = 1 and model = @model
-            for update
-            """,
-            new { model }, transaction, cancellationToken: ct));
-        if (row is null)
+        var lockedModel = await connection.QuerySingleOrDefaultAsync<string>(new CommandDefinition(
+            "select model from voice_profile where id = 1 for update", transaction: transaction, cancellationToken: ct));
+        if (lockedModel != model)
         {
             return;
         }
 
-        var centroid = Decode(row.Centroid);
-        var sum = centroid.Select(v => (double)v * row.CentroidCount).ToArray();
-        foreach (var vector in vectors.Where(v => v.Length == sum.Length))
+        var prints = await ReadPrintsAsync(connection, transaction, forUpdate: true, ct);
+        var dimension = prints.Count > 0 ? prints[0].Embedding.Length : vectors[0].Length;
+        var removed = new List<long>();
+        foreach (var vector in vectors.Where(v => v.Length == dimension))
         {
-            for (var i = 0; i < sum.Length; i++)
+            if (prints.Count == 0)
             {
-                sum[i] += vector[i];
+                prints.Add(new PrintState { Embedding = Mean([vector]), LineCount = 1, Dirty = true });
+                continue;
+            }
+
+            var nearest = prints.MaxBy(p => SpeakerEmbedder.Cosine(vector, p.Embedding))!;
+            if (SpeakerEmbedder.Cosine(vector, nearest.Embedding) >= newPrintBelow)
+            {
+                nearest.Embedding = Blend(nearest.Embedding, nearest.LineCount, [vector]);
+                nearest.LineCount++;
+                nearest.Dirty = true;
+            }
+            else if (prints.Count < maxPrints)
+            {
+                prints.Add(new PrintState { Embedding = Mean([vector]), LineCount = 1, Dirty = true });
+            }
+            else
+            {
+                MergeClosest(prints, removed);
+                prints.Add(new PrintState { Embedding = Mean([vector]), LineCount = 1, Dirty = true });
             }
         }
 
-        var learned = vectors.Count(v => v.Length == sum.Length);
+        foreach (var id in removed)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                "delete from voice_profile_prints where id = @id", new { id }, transaction, cancellationToken: ct));
+        }
+
+        foreach (var print in prints.Where(p => p.Dirty))
+        {
+            if (print.Id is { } id)
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "update voice_profile_prints set embedding = @embedding, line_count = @lineCount, updated_at = now() where id = @id",
+                    new { id, embedding = Encode(print.Embedding), print.LineCount }, transaction, cancellationToken: ct));
+            }
+            else
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    """
+                    insert into voice_profile_prints (profile_id, embedding, line_count, created_at, updated_at)
+                    values (1, @embedding, @lineCount, now(), now())
+                    """,
+                    new { embedding = Encode(print.Embedding), print.LineCount }, transaction, cancellationToken: ct));
+            }
+        }
+
         await connection.ExecuteAsync(new CommandDefinition(
-            "update voice_profile set centroid = @centroid, centroid_count = centroid_count + @learned, updated_at = now() where id = 1",
-            new { centroid = Encode(Normalize(sum)), learned }, transaction, cancellationToken: ct));
+            "update voice_profile set updated_at = now() where id = 1", transaction: transaction, cancellationToken: ct));
+    }
+
+    /// <summary>Merges the two most similar centroids into the first, weighted by line count; records the second for deletion.</summary>
+    private static void MergeClosest(List<PrintState> prints, List<long> removed)
+    {
+        var bestI = 0;
+        var bestJ = 1;
+        var best = float.NegativeInfinity;
+        for (var i = 0; i < prints.Count; i++)
+        {
+            for (var j = i + 1; j < prints.Count; j++)
+            {
+                var similarity = SpeakerEmbedder.Cosine(prints[i].Embedding, prints[j].Embedding);
+                if (similarity > best)
+                {
+                    best = similarity;
+                    bestI = i;
+                    bestJ = j;
+                }
+            }
+        }
+
+        var a = prints[bestI];
+        var b = prints[bestJ];
+        a.Embedding = Blend(a.Embedding, a.LineCount, b.Embedding, b.LineCount);
+        a.LineCount += b.LineCount;
+        a.Dirty = true;
+        if (b.Id is { } id)
+        {
+            removed.Add(id);
+        }
+
+        prints.RemoveAt(bestJ);
     }
 
     /// <summary>
@@ -372,25 +522,22 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var profile = await connection.QuerySingleOrDefaultAsync<ProfileRow>(new CommandDefinition(
-            """
-            select model as Model, centroid as Centroid, centroid_count as CentroidCount, applied_threshold as AppliedThreshold
-            from voice_profile where id = 1
-            for update
-            """,
+            "select model as Model, applied_threshold as AppliedThreshold from voice_profile where id = 1 for update",
             transaction: transaction, cancellationToken: ct));
         if (profile is null)
         {
             return;
         }
 
-        var centroid = Decode(profile.Centroid);
+        var prints = (await ReadPrintsAsync(connection, transaction, forUpdate: false, ct)).Select(p => p.Embedding).ToList();
+        var dimension = prints.Count > 0 ? prints[0].Length : 0;
         var fingerprints = await connection.QueryAsync<FingerprintRow>(new CommandDefinition(
             "select segment_id as SegmentId, fingerprint as Fingerprint from segment_fingerprints where model = @Model",
             new { profile.Model }, transaction, cancellationToken: ct));
         var scored = fingerprints
             .Select(f => (f.SegmentId, Vector: Decode(f.Fingerprint)))
-            .Where(f => f.Vector.Length == centroid.Length)
-            .Select(f => (f.SegmentId, Similarity: SpeakerEmbedder.Cosine(f.Vector, centroid)))
+            .Where(f => f.Vector.Length == dimension)
+            .Select(f => (f.SegmentId, Similarity: prints.Max(p => SpeakerEmbedder.Cosine(f.Vector, p))))
             .ToList();
 
         await connection.ExecuteAsync(new CommandDefinition(

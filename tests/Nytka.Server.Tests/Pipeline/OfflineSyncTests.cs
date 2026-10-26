@@ -8,8 +8,7 @@ namespace Nytka.Server.Tests.Pipeline;
 /// The phone uploads what the pendant stored after live speech has already arrived. Whatever the
 /// order, the conversations come out as if the audio had arrived in time.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class OfflineSyncTests(PostgresFixture db) : IAsyncLifetime
+public sealed class OfflineSyncTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

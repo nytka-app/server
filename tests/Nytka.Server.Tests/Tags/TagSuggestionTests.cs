@@ -11,7 +11,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Tags;
 
 /// <summary>Tags the model proposes with a summary (docs/specs/tags.md, Proposed tags): stored as proposals, linked only by accept.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class TagSuggestionTests(PostgresFixture db) : AiTestBase(db)
 {
     /// <summary>22 words: enough to be summarized, under <see cref="EnrichConversationHandler.BriefWords"/>.</summary>

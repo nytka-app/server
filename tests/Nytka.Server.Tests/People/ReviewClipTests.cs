@@ -11,8 +11,7 @@ namespace Nytka.Server.Tests.People;
 /// Review items carry the audio and the lines around their evidence (docs/specs/people.md, Review inbox), with synthetic tone.
 /// A line starts <c>start</c> seconds after <see cref="SyntheticAudio.StartMs"/>, where the tone starts too.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ReviewClipTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ReviewClipTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset Start = DateTimeOffset.FromUnixTimeMilliseconds(StartMs);
 

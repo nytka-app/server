@@ -5,8 +5,7 @@ using System.Text.Json;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
-public sealed class CoverageApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class CoverageApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset Start = new(2026, 9, 29, 8, 0, 0, TimeSpan.Zero);
 

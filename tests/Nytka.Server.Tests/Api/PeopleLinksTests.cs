@@ -8,7 +8,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Api;
 
 /// <summary>A person on a segment, and the note on a person (docs/specs/people.md, Which label wins).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class PeopleLinksTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

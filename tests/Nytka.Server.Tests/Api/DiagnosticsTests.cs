@@ -5,8 +5,7 @@ using System.Text.Json;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
-public sealed class DiagnosticsTests(PostgresFixture db) : IAsyncLifetime
+public sealed class DiagnosticsTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

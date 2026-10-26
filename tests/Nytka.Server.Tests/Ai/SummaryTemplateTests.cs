@@ -6,7 +6,6 @@ using Nytka.Server.Ai;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>Which template writes a summary, the admin routes and that an edit applies without a restart (NYTKA-82).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class SummaryTemplateTests(PostgresFixture db) : AiTestBase(db)
 {
     private const string KindAnswer =

@@ -7,8 +7,7 @@ using ModelContextProtocol.Protocol;
 namespace Nytka.Server.Tests.Mcp;
 
 /// <summary>The three v0.2 tools through the official MCP client, against the real host.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime
+public sealed class McpToolTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly Guid Conversation = Guid.Parse("018f0000-0000-7000-8000-000000000001");
     private static readonly Guid Other = Guid.Parse("018f0000-0000-7000-8000-000000000002");

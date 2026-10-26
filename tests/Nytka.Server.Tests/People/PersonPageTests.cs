@@ -9,8 +9,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>The person page, its MCP tools and people in search (docs/specs/people.md, Person page, MCP, Search).</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime
+public sealed class PersonPageTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
 

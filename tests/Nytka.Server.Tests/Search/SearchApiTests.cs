@@ -6,8 +6,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Search;
 
 /// <summary>The search API on the shared database, which has no dictionary files (the fallback configuration).</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     // No background indexer: the tests index by hand, so what is and is not searchable yet is deterministic.
     private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
@@ -206,8 +205,7 @@ public sealed class SearchApiTests(PostgresFixture db) : IAsyncLifetime
 }
 
 /// <summary>The background indexer, as the server runs it.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SearchIndexerTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SearchIndexerTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     public Task InitializeAsync() => db.ResetAsync();
 

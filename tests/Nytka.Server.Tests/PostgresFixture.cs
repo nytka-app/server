@@ -6,17 +6,24 @@ using Testcontainers.PostgreSql;
 
 namespace Nytka.Server.Tests;
 
-/// <summary>A real Postgres (the Compose image, without pgvector), migrated with the real scripts. Needs a running Docker daemon.</summary>
+/// <summary>
+/// A real Postgres (the Compose image, without pgvector), migrated with the real scripts. Needs a running Docker daemon.
+/// Each test class gets its own database, cloned from a template that was migrated once on one container shared by the whole
+/// run (<see cref="SharedPostgres"/>), so classes can run side by side. A fixture made with an image (pgvector) keeps its own
+/// container and one database, as before.
+/// </summary>
 public class PostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container;
+    private readonly PostgreSqlContainer? _own;
+    private string? _database;
 
     public PostgresFixture()
-        : this("postgres:17-alpine")
     {
     }
 
-    protected PostgresFixture(string image) => _container = new PostgreSqlBuilder(image)
+    protected PostgresFixture(string image) => _own = Build(image);
+
+    internal static PostgreSqlContainer Build(string image) => new PostgreSqlBuilder(image)
         .WithDatabase("nytka")
         .WithUsername("nytka")
         .WithPassword("nytka")
@@ -24,7 +31,7 @@ public class PostgresFixture : IAsyncLifetime
         .WithCommand("-c", "max_connections=600")
         .Build();
 
-    public string ConnectionString => _container.GetConnectionString();
+    public string ConnectionString { get; private set; } = null!;
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
@@ -33,15 +40,31 @@ public class PostgresFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
-        NytkaMigrations.Run(ConnectionString, NullLogger.Instance);
+        if (_own is not null)
+        {
+            await _own.StartAsync();
+            ConnectionString = _own.GetConnectionString();
+            NytkaMigrations.Run(ConnectionString, NullLogger.Instance);
+        }
+        else
+        {
+            (ConnectionString, _database) = await SharedPostgres.CloneAsync();
+        }
+
         DataSource = NpgsqlDataSource.Create(ConnectionString);
     }
 
     public async Task DisposeAsync()
     {
         await DataSource.DisposeAsync();
-        await _container.DisposeAsync();
+        if (_own is not null)
+        {
+            await _own.DisposeAsync();
+        }
+        else
+        {
+            await SharedPostgres.DropAsync(_database!);
+        }
     }
 
     /// <summary>Empties every table between tests. The migration journal stays, and <c>speech_state</c> returns to its one default row.</summary>
@@ -85,8 +108,62 @@ public class PostgresFixture : IAsyncLifetime
     }
 }
 
-[CollectionDefinition(Name)]
-public sealed class PostgresCollection : ICollectionFixture<PostgresFixture>
+/// <summary>
+/// One Postgres container for the whole test run, started by the first class that needs it. Its template database is migrated
+/// once; <see cref="CloneAsync"/> copies it for a class and <see cref="DropAsync"/> removes the copy. Testcontainers' reaper
+/// removes the container if the process dies before it is disposed.
+/// </summary>
+internal static class SharedPostgres
 {
-    public const string Name = "postgres";
+    private const string Template = "nytka_template";
+
+    private static readonly Lazy<Task<PostgreSqlContainer>> Container = new(StartAsync);
+
+    // CREATE DATABASE ... TEMPLATE needs the template to itself, so clones go one at a time.
+    private static readonly SemaphoreSlim Cloning = new(1, 1);
+
+    private static async Task<PostgreSqlContainer> StartAsync()
+    {
+        var container = PostgresFixture.Build("postgres:17-alpine");
+        await container.StartAsync();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => container.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        await using (var admin = new NpgsqlConnection(Plain(container.GetConnectionString())))
+        {
+            await admin.OpenAsync();
+            await admin.ExecuteAsync($"create database {Template}");
+        }
+
+        NytkaMigrations.Run(Plain(container.GetConnectionString(), Template), NullLogger.Instance);
+        return container;
+    }
+
+    private static string Plain(string connectionString, string? database = null) =>
+        new NpgsqlConnectionStringBuilder(connectionString) { Pooling = false, Database = database ?? new NpgsqlConnectionStringBuilder(connectionString).Database }.ConnectionString;
+
+    public static async Task<(string ConnectionString, string Database)> CloneAsync()
+    {
+        var container = await Container.Value;
+        var database = $"c_{Guid.NewGuid():N}";
+        await Cloning.WaitAsync();
+        try
+        {
+            await using var admin = new NpgsqlConnection(Plain(container.GetConnectionString()));
+            await admin.OpenAsync();
+            await admin.ExecuteAsync($"create database {database} template {Template}");
+        }
+        finally
+        {
+            Cloning.Release();
+        }
+
+        return (new NpgsqlConnectionStringBuilder(container.GetConnectionString()) { Database = database }.ConnectionString, database);
+    }
+
+    public static async Task DropAsync(string database)
+    {
+        var container = await Container.Value;
+        await using var admin = new NpgsqlConnection(Plain(container.GetConnectionString()));
+        await admin.OpenAsync();
+        await admin.ExecuteAsync($"drop database if exists {database} with (force)");
+    }
 }

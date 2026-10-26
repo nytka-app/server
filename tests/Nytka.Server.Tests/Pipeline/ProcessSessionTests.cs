@@ -5,8 +5,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 
 namespace Nytka.Server.Tests.Pipeline;
 
-[Collection(PostgresCollection.Name)]
-public sealed class ProcessSessionTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ProcessSessionTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly Guid _session = Guid.NewGuid();
     private readonly List<NytkaApiFactory> _servers = [];

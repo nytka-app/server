@@ -2,8 +2,7 @@ using Nytka.Server.Jobs;
 
 namespace Nytka.Server.Tests.Pipeline;
 
-[Collection(PostgresCollection.Name)]
-public sealed class RetentionTests(PostgresFixture db) : IAsyncLifetime
+public sealed class RetentionTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private NytkaApiFactory _server = new(db);
 

@@ -4,8 +4,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Jobs;
 
-[Collection(PostgresCollection.Name)]
-public sealed class JobRunnerTests : IAsyncLifetime
+public sealed class JobRunnerTests : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly PostgresFixture _db;
     private readonly ScriptedHandler _handler = new();

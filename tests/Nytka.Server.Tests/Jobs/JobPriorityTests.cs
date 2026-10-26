@@ -6,8 +6,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 
 namespace Nytka.Server.Tests.Jobs;
 
-[Collection(PostgresCollection.Name)]
-public sealed class JobPriorityTests(PostgresFixture db) : IAsyncLifetime
+public sealed class JobPriorityTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(5);
 

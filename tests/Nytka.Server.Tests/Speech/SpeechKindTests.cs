@@ -11,7 +11,6 @@ namespace Nytka.Server.Tests.Speech;
 /// Kinds, marks and the rule (docs/specs/speech-kind.md, S-1): no classifier exists yet, so a test sets a guess and a score on
 /// a segment itself, as the classifier will. Synthetic lines only.
 /// </summary>
-[Collection(PostgresCollection.Name)]
 public sealed class SpeechKindTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

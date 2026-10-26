@@ -696,7 +696,8 @@ public sealed class LabelStore(NpgsqlDataSource dataSource)
     /// (<c>voice.learn</c>), each <paramref name="learnSeconds"/> or longer with a fingerprint still held. Every label is marked
     /// confirmed; one confirmed before teaches nothing again. Null when a label id is unknown, with nothing changed.
     /// </summary>
-    public async Task<int?> ConfirmVoiceAsync(long[] labelIds, bool learn, double learnSeconds, DateTimeOffset now, CancellationToken ct)
+    public async Task<int?> ConfirmVoiceAsync(
+        long[] labelIds, bool learn, double learnSeconds, float newPrintBelow, int maxPrints, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -716,7 +717,9 @@ public sealed class LabelStore(NpgsqlDataSource dataSource)
             where l.id = any(@open) and l.superseded_by is null and l.source = '{me}' and not (l.flags && array['two_speakers', 'overlap'])
             """,
             new { open }, transaction, cancellationToken: ct))).ToArray();
-        var learned = learn && segments.Length > 0 ? await VoiceStore.LearnMarkedAsync(connection, transaction, segments, learnSeconds, ct) : 0;
+        var learned = learn && segments.Length > 0
+            ? await VoiceStore.LearnMarkedAsync(connection, transaction, segments, learnSeconds, newPrintBelow, maxPrints, ct)
+            : 0;
         await connection.ExecuteAsync(new CommandDefinition(
             "update labels set confirmed_at = @now where id = any(@open)", new { open, now }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);

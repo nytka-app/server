@@ -11,7 +11,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>Facts about people (docs/specs/people.md, Layer 3): extraction, the basis, the rules and the routes.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool PeopleFacts => true;

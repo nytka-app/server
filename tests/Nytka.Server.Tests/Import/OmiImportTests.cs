@@ -12,8 +12,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Import;
 
-[Collection(PostgresCollection.Name)]
-public sealed class OmiImportTests(PostgresFixture db) : IAsyncLifetime
+public sealed class OmiImportTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly RecordingSubscriber _events = new();
 
