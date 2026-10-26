@@ -28,4 +28,7 @@ public sealed class LlmException(string message, int? statusCode = null, bool ti
     public int? StatusCode { get; } = statusCode;
 
     public bool TimedOut { get; } = timedOut;
+
+    /// <summary>The endpoint asked to slow down (429): not the request's fault, so a job waits and asks again instead of counting a failure.</summary>
+    public bool RateLimited => StatusCode == 429;
 }

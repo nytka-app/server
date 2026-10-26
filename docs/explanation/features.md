@@ -747,7 +747,8 @@ makes the rollup of each week, month and year a day after it closes, so its last
 time after each month. A month waits for its weeks, a year for its months, and the `make-rollup` job
 (Ai lane) queues any part that is missing. Periods that closed before the setting was turned on are made
 only by `POST /api/v1/rollups/backfill` (admin), which queues every closed period since a date; each costs
-at most one call.
+at most one call. A period that ended before the first digest or summarized conversation is neither
+queued nor stored, and a rate limit (429) from the model endpoint makes a rollup wait 10 minutes and try again.
 
 **Cost.** On the owner's data (17 digests of about 1,600 characters, about 5 conversations a day) a week
 is about 4,000 tokens in and 700 out, its share of the month a quarter of that, and about 5 topic weeks of
@@ -898,7 +899,8 @@ conversations already folded into it. When a summarized conversation joins a top
 and stores the rewritten page; transcripts are never read, so a new conversation costs one call whatever
 the topic's size. The first run of a topic folds its earlier conversations 10 at a time. A conversation that
 leaves the topic (a tag removed) stays folded: the page is a running account, and a later fold may say what
-changed. After 3 failed folds in a row a topic waits until one succeeds.
+changed. After 3 failed folds in a row a topic waits until one succeeds. A rate limit from the model
+endpoint (HTTP 429) is no failure: the fold waits 10 minutes and tries again, with its tries intact.
 
 **Sensitive content.** A page is shown to every reader, so only conversations classified as not
 [sensitive](#sensitive-content) are folded into its summary; one not yet classified waits for the
