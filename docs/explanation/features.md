@@ -161,8 +161,13 @@ finds publish `person.fact.created` like any other, so a webhook subscribed to i
 To read old conversations again after the name checks changed, call `POST /api/v1/people/suggestions/revalidate` (admin; deletes
 the pending suggestions that fail the checks and answers `{ checked, removed, kept }`), then `POST /api/v1/people/backfill?force=true`
 until `remaining` is `0`: `force` also queues conversations whose name run was made under older checks (version 3: the
-two-word evidence line and a longer stoplist). A plain backfill queues
+two-word evidence line and a longer stoplist), and conversations that still hold pending suggestions. A plain backfill queues
 only conversations with no finished run. Accepted and rejected suggestions stay.
+
+Every names run reads the whole conversation and re-decides its pending suggestions: a name it gives again takes the new
+confidence and evidence and may [apply itself](#auto-applied-names) as a new one would; a name for a voice it gives no name (or
+only a role, as for a place) is deleted. A voice it names otherwise keeps both names pending for you. Suggestions from other
+conversations are left alone.
 
 ## Tags
 

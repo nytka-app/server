@@ -11,9 +11,9 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Mcp;
 
-/// <summary>The <c>get_insights</c> tool: the fields of <c>GET /api/v1/insights</c>, filtered the same way (<see cref="SensitivityScope.Hidden"/>).</summary>
+/// <summary>The <c>get_insights</c> tool: the fields of <c>GET /api/v1/insights</c>, computed the same way.</summary>
 [McpServerToolType]
-public sealed class McpInsightTools(InsightStore insights, SettingsService settings, SensitivityScope sensitivity, TimeProvider time)
+public sealed class McpInsightTools(InsightStore insights, SettingsService settings, TimeProvider time)
 {
     private static readonly JsonSerializerOptions Json = new(McpJsonUtilities.DefaultOptions)
     {
@@ -24,7 +24,7 @@ public sealed class McpInsightTools(InsightStore insights, SettingsService setti
     [Description("Returns Nytka's Over time insights: talk time, people heard this week, open commitments and evening share. Each is locked with its unlock progress until insights.trustedAfterDays days have had audio, then shows a numbers-only summary, its 28-day series and a baseline (the median of the last 28 days with audio).")]
     public async Task<CallToolResult> GetInsightsAsync(CancellationToken ct = default)
     {
-        var response = await InsightEndpoints.ReadAsync(insights, settings, time, sensitivity.Hidden, ct);
+        var response = await InsightEndpoints.ReadAsync(insights, settings, time, ct);
         var element = JsonSerializer.SerializeToElement(response, Json);
         return new CallToolResult { Content = [new TextContentBlock { Text = element.GetRawText() }], StructuredContent = element };
     }

@@ -10,7 +10,7 @@ public sealed record InsightProgress(int Have, int Need, string Unit);
 
 /// <summary>
 /// One "Over time" insight (nytka-app/android <c>core/.../api/TodayModels.kt</c>, <c>Insight</c>). Locked: no
-/// <paramref name="Summary"/>, <paramref name="Series"/>, <paramref name="Baseline"/> or <paramref name="UnitLabel"/>.
+/// <paramref name="Summary"/>, an empty <paramref name="Series"/> (the app's field is not nullable), no <paramref name="Baseline"/> or <paramref name="UnitLabel"/>.
 /// </summary>
 public sealed record Insight(
     string Id, string Title, string Kind, bool Unlocked, InsightProgress Progress,

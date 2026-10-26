@@ -16,6 +16,7 @@ public class JobKindsTests
     [InlineData(JobKinds.MakeDigest, JobLane.Ai)]
     [InlineData(JobKinds.SuggestNames, JobLane.Ai)]
     [InlineData(JobKinds.MeasureQuality, JobLane.Ai)]
+    [InlineData(JobKinds.MeasureInsights, JobLane.Ai)]
     [InlineData(JobKinds.FoldTopic, JobLane.Ai)]
     [InlineData(JobKinds.MakeRollup, JobLane.Ai)]
     [InlineData(JobKinds.RelateConversation, JobLane.Ai)]

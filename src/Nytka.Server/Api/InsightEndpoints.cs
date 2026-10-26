@@ -25,18 +25,19 @@ public static class InsightEndpoints
     }
 
     private static async Task<IResult> GetAsync(
-        InsightStore insights, SensitivityScope sensitivity, SettingsService settings, TimeProvider time, CancellationToken ct) =>
-        Results.Ok(await ReadAsync(insights, settings, time, sensitivity.Hidden, ct));
+        InsightStore insights, SettingsService settings, TimeProvider time, CancellationToken ct) =>
+        Results.Ok(await ReadAsync(insights, settings, time, ct));
 
     /// <summary>
-    /// Every insight locked (<paramref name="hidden"/> excluded from every computation) until
+    /// Every insight locked (what <see cref="PrivacySettings.Hidden"/> hides is left out of every computation, for every token, admin too) until
     /// <see cref="InsightSettings.TrustedAfterDaysKey"/> days have had audio; once unlocked, each gets its 28-day
     /// <c>series</c> and a <c>baseline</c>, the median of the last <see cref="BaselineWindow"/> days with audio,
     /// excluding today.
     /// </summary>
     public static async Task<InsightsResponse> ReadAsync(
-        InsightStore insights, SettingsService settings, TimeProvider time, string[] hidden, CancellationToken ct)
+        InsightStore insights, SettingsService settings, TimeProvider time, CancellationToken ct)
     {
+        var hidden = PrivacySettings.Hidden(settings);
         var zone = UserTimeZone.Resolve(settings);
         var zoneName = UserTimeZone.Name(zone);
         var today = DigestDay.Today(time.GetUtcNow(), zone);
@@ -50,7 +51,7 @@ public static class InsightEndpoints
         {
             return new InsightsResponse(
                 daysWithAudio, trustedAfterDays,
-                [.. InsightKinds.All.Select(id => new Insight(id, InsightReport.Title(id), InsightReport.Kind(id), false, progress, null, null, null, null))]);
+                [.. InsightKinds.All.Select(id => new Insight(id, InsightReport.Title(id), InsightReport.Kind(id), false, progress, null, [], null, null))]);
         }
 
         var baselineDays = await insights.DaysWithAudioBeforeAsync(DigestDay.Text(today), zoneName, hidden, BaselineWindow, ct);

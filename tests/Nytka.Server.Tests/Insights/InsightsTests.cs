@@ -58,7 +58,7 @@ public sealed class InsightsTests(PostgresFixture db) : IAsyncLifetime
             var progress = insight.GetProperty("progress");
             Assert.Equal((10, 14, "days"), (progress.GetProperty("have").GetInt32(), progress.GetProperty("need").GetInt32(), progress.GetProperty("unit").GetString()));
             Assert.Equal(JsonValueKind.Null, insight.GetProperty("summary").ValueKind);
-            Assert.Equal(JsonValueKind.Null, insight.GetProperty("series").ValueKind);
+            Assert.Empty(insight.GetProperty("series").EnumerateArray());
             Assert.Equal(JsonValueKind.Null, insight.GetProperty("baseline").ValueKind);
             Assert.Equal(JsonValueKind.Null, insight.GetProperty("unitLabel").ValueKind);
         }
@@ -101,6 +101,19 @@ public sealed class InsightsTests(PostgresFixture db) : IAsyncLifetime
             "select value from insight_days where insight_id = @id and local_date = cast(@date as date)",
             new { id = InsightKinds.TalkTime, date = "2026-08-01" });
         Assert.Equal(5.0, value);
+    }
+
+    [Fact]
+    public async Task A_hidden_day_does_not_count_toward_daysWithAudio_for_any_token()
+    {
+        await Conversation(Day(0), TimeSpan.FromMinutes(5), sensitivity: "therapy");
+        await Conversation(Day(1), TimeSpan.FromMinutes(5));
+
+        foreach (var scope in new[] { "read", "admin" })
+        {
+            var response = await _server.CreateClientWithScope(scope).GetFromJsonAsync<JsonElement>("/api/v1/insights");
+            Assert.Equal(1, response.GetProperty("daysWithAudio").GetInt32());
+        }
     }
 
     [Fact]

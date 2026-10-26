@@ -88,6 +88,25 @@ public sealed class PeopleBackfillTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task Force_also_asks_again_a_current_run_that_left_suggestions_pending_and_reads_it_whole()
+    {
+        var waiting = await Summarized(10);
+        var settled = await Summarized(20);
+        await Db.ExecuteAsync(
+            "insert into people_runs (conversation_id, kind, status, through_segment_id, validator, updated_at) select c, k, 'done', (select max(id) from segments where conversation_id = c), 1000, now() from unnest(array[@waiting, @settled]) c, unnest(array['names', 'facts']) k",
+            new { waiting, settled });
+        await Db.ExecuteAsync(
+            "insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, evidence_segment_id, confidence, created_at) select gen_random_uuid(), @waiting, 'speaker', '4', array[max(id)], 'Olena', max(id), 0.9, now() from segments where conversation_id = @waiting",
+            new { waiting });
+
+        Assert.Equal((0, 0, 0, 0), Counts(await Backfill()));
+
+        Assert.Equal((1, 0, 0, 0), Counts(await Backfill("?force=true")));
+        Assert.Equal(["suggest-names:" + waiting], await JobKeys());
+        Assert.Null(await Db.ScalarAsync<long?>("select through_segment_id from people_runs where conversation_id = @waiting and kind = 'names'", new { waiting }));
+    }
+
+    [Fact]
     public async Task A_second_call_queues_nothing_again()
     {
         await Summarized(10);

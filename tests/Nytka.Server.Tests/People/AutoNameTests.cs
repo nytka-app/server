@@ -197,6 +197,57 @@ public sealed class AutoNameTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task A_pending_name_a_later_run_gives_again_is_weighed_as_new_and_applies_when_sure()
+    {
+        var (id, voice, _) = await Talked();
+        Llm.Respond = _ => Answer(("Voice A", "Olena", voice, 0.6));
+        await Suggest(id);
+        Assert.Equal("pending", await Status("Olena"));
+        await AddSegment(id, "See you tomorrow.", Now.AddMinutes(-1), "SPEAKER_0", "0", true);
+        Llm.Respond = _ => Answer(("Voice A", "Olena", voice, 0.9));
+
+        await Suggest(id);
+
+        Assert.Equal("auto_applied", await Status("Olena"));
+        Assert.Equal(1, await Count("select count(*) from name_suggestions"));
+        Assert.Equal("Olena", await Db.ScalarAsync<string>("select p.name from person_voices v join people p on p.id = v.person_id where v.speaker_id = '4'"));
+    }
+
+    [Fact]
+    public async Task A_pending_name_a_later_run_no_longer_gives_is_dropped_and_a_rejected_one_stays()
+    {
+        var (id, voice, label) = await Talked();
+        Llm.Respond = _ => Answer(("Voice A", "Olena", voice, 0.6), ("Voice B", "Marko", label, 0.6));
+        await Suggest(id);
+        var marko = await Db.ScalarAsync<Guid>("select id from name_suggestions where name = 'Marko'");
+        Assert.Equal(HttpStatusCode.NoContent, (await Client.PostAsync($"/api/v1/people/suggestions/{marko}/reject", null)).StatusCode);
+        await AddSegment(id, "See you tomorrow.", Now.AddMinutes(-1), "SPEAKER_0", "0", true);
+        Llm.Respond = _ => JsonSerializer.Serialize(new
+        {
+            suggestions = new[] { new { voice = "Voice A", name = "Olena", role = (string?)null, segmentId = voice, confidence = 0.9, entity = "place" } },
+        });
+
+        await Suggest(id);
+
+        Assert.Equal(["rejected"], await Db.QueryAsync<string>("select status from name_suggestions"));
+        Assert.Equal(0, await Count("select count(*) from people"));
+    }
+
+    [Fact]
+    public async Task A_pending_name_in_another_conversation_is_left_alone()
+    {
+        var (first, voice, _) = await Talked();
+        Llm.Respond = _ => Answer(("Voice A", "Olena", voice, 0.6));
+        await Suggest(first);
+        var (second, _, _) = await Talked();
+        Llm.Respond = _ => Answer();
+
+        await Suggest(second);
+
+        Assert.Equal("pending", await Status("Olena"));
+    }
+
+    [Fact]
     public async Task A_name_a_person_known_by_role_has_waits_for_the_owner()
     {
         var (id, voice, _) = await Talked();
