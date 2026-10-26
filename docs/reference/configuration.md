@@ -60,6 +60,8 @@ you copy without thinking would lock its setting.
 | `Nytka__Tags__Suggest` | no | `true` | editable | `false` stops the model from [proposing tags](../explanation/features.md#tags) for conversations and people and stops sending it tag names; it needs the language model |
 | `Nytka__Tags__Auto` | no | `true` | editable | `true` applies a conversation's proposed tags at once and tidies tags nightly (synonyms merged by the model, one-off tags removed after 60 days); `false` leaves proposals for you |
 | `Nytka__Privacy__Hide` | no | `health,therapy,intimate,money` | editable | The [sensitive classes](../explanation/features.md#sensitive-content) readers you did not trust leave out (MCP, webhooks, digests, exports, read tokens), comma-separated, or `none` |
+| `Nytka__Topics__Enabled` | no | `false` | editable | `true` keeps a [topic page](../explanation/features.md#topic-pages) for each tag and named person on 3 or more conversations, one model call per new conversation on a topic (the first run reads each topic's earlier summaries); it needs the language model |
+| `Nytka__Rollups__Enabled` | no | `false` | editable | `true` makes a [summary over time](../explanation/features.md#summaries-over-time) of each week, month and year as it closes (and all time after each month), plus each topic's week, one model call each from digests and summaries; older periods need `POST /api/v1/rollups/backfill`; it needs the language model |
 | `Nytka__Summary__Templates__Enabled` | no | `false` | editable | `true` lets a tag named `meeting`, `lecture`, `doctor` or `call`, else the kind the model names, pick the [summary template](../explanation/features.md#summary-templates); `false` uses the default template for every summary; it needs the language model |
 | `Nytka__Summary__Templates__Default`, `__Meeting`, `__Lecture`, `__Doctor`, `__Call` | no | built-in | editable | What the summary of that kind holds, at most 600 characters; empty is the built-in text. Also read and edited through `/api/v1/summary-templates` |
 | `Nytka__Digest__Enabled` | no | `false` | editable | `true` makes the [daily digest](../explanation/features.md#daily-digest); it needs the language model |
@@ -104,7 +106,7 @@ them (`"14"`, `"true"`). `GET /api/v1/settings` lists every key with its `value`
 - **Bad values.** The app's `400` names the key. In `.env`, a bad transcription, conversation, audio
   or model value stops the server at start with a message that names the variable.
   `Nytka__Memories__Enabled` and `Nytka__Search__Dictionary` are checked at start too.
-  `Nytka__Memories__*` (the rest), `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Speech__*` and `Nytka__Voice__*` are checked when first used, so type them as
+  `Nytka__Memories__*` (the rest), `Nytka__People__*`, `Nytka__Tags__*`, `Nytka__Topics__*`, `Nytka__Rollups__*`, `Nytka__Digest__*`, `Nytka__Calendar__*`, `Nytka__Speech__*` and `Nytka__Voice__*` are checked when first used, so type them as
   the table shows.
 - **When a change applies.** A change in the app reaches the next job or request without a restart,
   a new `llm.model` included. A change to `.env` needs `docker compose up -d`.

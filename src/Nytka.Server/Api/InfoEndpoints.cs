@@ -47,6 +47,8 @@ public static class InfoEndpoints
     /// "summary-templates": <c>/api/v1/summary-templates</c> exists, a conversation has <c>summaryTemplate</c>, and the <c>summary.templates.*</c> settings (NYTKA-82).
     /// "quality": <c>GET /api/v1/quality</c> exists, the nightly quality metrics.
     /// "labeling": the labelling routes under <c>/api/v1/labeling</c> exist, and tokens may have the scope <c>labeling</c>.
+    /// "topics": <c>GET /api/v1/topics</c> exists and a conversation has <c>topics</c>; pages fill while <c>topics.enabled</c> is on.
+    /// "rollups": <c>GET /api/v1/rollups</c> exists; rollups are made while <c>rollups.enabled</c> is on.
     /// "related": <c>GET /api/v1/related</c> exists and a conversation has <c>related</c>, its "Earlier" links (empty until the vectors are ready).
     /// "semantic-search": an embeddings endpoint is set and its vectors are ready, so search and Ask also match by meaning (NYTKA-66).
     /// </summary>
@@ -76,6 +78,8 @@ public static class InfoEndpoints
         features.Add("summary-templates");
         features.Add("quality");
         features.Add("labeling");
+        features.Add("topics");
+        features.Add("rollups");
         features.Add("related");
         if (embeddings?.IsReady == true)
         {

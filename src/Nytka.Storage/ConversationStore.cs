@@ -17,6 +17,9 @@ public sealed record ConversationSummary(
 {
     /// <summary>Not a column: <see cref="ConversationStore.ListAsync"/> reads the tags in a second query.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
+
+    /// <summary>Not a column: the API adds the topic pages the conversation is on (<see cref="TopicStore.ForConversationsAsync"/>).</summary>
+    public IReadOnlyList<TopicRef> Topics { get; init; } = [];
 }
 
 public sealed record ConversationHeader(
