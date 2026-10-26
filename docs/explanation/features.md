@@ -544,7 +544,11 @@ person wearing the pendant.
   `GET /api/v1/memories` and the MCP `list_memories` leave it out unless asked with `expired=true`. Search still finds it.
   A date before the conversation or more than two years after it is dropped as a guess.
 - Each memory, task and note made by the model carries `salience`: `vital` (shapes your life or your day), `ordinary`,
-  or `noise` (trivia, kept but never shown first); null for items made by hand or before this field.
+  or `noise` (trivia, kept but never shown first); null for items made by hand or before this field. Your own mark wins: `PATCH`
+  a task, memory or note with `salience` and `salienceManual` turns true, and no later summary changes it; `salience: null`
+  takes the mark back. A note cites the lines of its tips the way a task does (`note_sources`). When you mark a line "not me"
+  (`PATCH /api/v1/segments/{id}` with `isUser: false`), the memories that cite it are judged again from their remaining
+  lines, with no model call: one left with no line of yours becomes unconfirmed, and "this is me" confirms it again.
 - A fact the server already holds is not added again with the same wording, even one you deleted. Extraction never rewrites
   a memory you edited or added yourself.
 - Add, edit and delete memories in the Memories tab, or with `POST`, `PATCH` and `DELETE` on

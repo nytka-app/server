@@ -76,17 +76,38 @@ public static class MemoryEndpoints
         return Results.Json(await memories.GetAsync(id, ct), statusCode: StatusCodes.Status201Created);
     }
 
+    /// <summary>Body <c>{ text?, salience? }</c>, at least one: a new text, and/or the wearer's mark on how much the memory matters.</summary>
     private static async Task<IResult> PatchAsync(Guid id, HttpRequest http, MemoryStore memories, TimeProvider time, CancellationToken ct)
     {
-        var valid = ValidateText(await TokenEndpoints.ReadBodyAsync<TextRequest>(http, ct));
-        if (valid.Problem is not null)
+        var body = await SalienceBody.ReadAsync(http, ct);
+        if (!SalienceBody.TryRead(body, out var salience))
         {
-            return valid.Problem;
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["salience"] = [SalienceBody.Bad] });
         }
 
-        return await memories.UpdateTextAsync(id, valid.Text!, time.GetUtcNow(), ct) && await memories.GetAsync(id, ct) is { } memory
-            ? Results.Ok(memory)
-            : NotFound();
+        var hasText = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("text", out _);
+        ValidText? valid = null;
+        if (hasText || salience is null)
+        {
+            valid = ValidateText(new TextRequest(hasText && body.GetProperty("text").ValueKind == JsonValueKind.String ? body.GetProperty("text").GetString() : null));
+            if (valid.Problem is not null)
+            {
+                return valid.Problem;
+            }
+        }
+
+        var now = time.GetUtcNow();
+        if (salience is not null && !await memories.SetSalienceAsync(id, salience.Salience, now, ct))
+        {
+            return NotFound();
+        }
+
+        if (valid is not null && !await memories.UpdateTextAsync(id, valid.Text!, now, ct))
+        {
+            return NotFound();
+        }
+
+        return await memories.GetAsync(id, ct) is { } memory ? Results.Ok(memory) : NotFound();
     }
 
     private static async Task<IResult> DeleteAsync(Guid id, MemoryStore memories, TimeProvider time, CancellationToken ct) =>

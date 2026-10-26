@@ -187,12 +187,18 @@ public static class TaskEndpoints
         bool? done = null;
         PersonChange? person = null;
         DueChange? dueChange = null;
+        SalienceChange? salience = null;
         if (body.ValueKind != JsonValueKind.Object)
         {
-            errors["body"] = ["Send an object with text, done, personId or due."];
+            errors["body"] = ["Send an object with text, done, personId, due or salience."];
         }
         else
         {
+            if (!SalienceBody.TryRead(body, out salience))
+            {
+                errors["salience"] = [SalienceBody.Bad];
+            }
+
             if (body.TryGetProperty("text", out var textValue) && textValue.ValueKind != JsonValueKind.Null)
             {
                 text = textValue.ValueKind == JsonValueKind.String ? textValue.GetString()!.Trim() : null;
@@ -257,6 +263,11 @@ public static class TaskEndpoints
         TaskUpdate? update;
         try
         {
+            if (salience is not null && !await TaskStore.SetSalienceAsync(connection, transaction, id, salience.Salience, time.GetUtcNow(), ct))
+            {
+                return NotFound();
+            }
+
             update = await tasks.UpdateAsync(connection, transaction, id, text, done, person, dueChange, time.GetUtcNow(), ct);
         }
         catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.ForeignKeyViolation)

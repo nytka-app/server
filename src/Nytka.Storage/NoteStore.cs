@@ -22,10 +22,16 @@ public sealed class NoteRow
     public string[] Points { get; init; } = [];
 
     public DateTime CreatedAt { get; init; }
+
+    /// <summary>The model's rating, or the wearer's while <see cref="SalienceManual"/>.</summary>
+    public string? Salience { get; init; }
+
+    public bool SalienceManual { get; init; }
 }
 
 /// <summary>A note the model's advice made: <paramref name="Topic"/> is a normalized name, <paramref name="Points"/> the tips.</summary>
-public sealed record AiNote(string Topic, IReadOnlyList<string> Points, string? Salience = null, string? Sensitivity = null);
+public sealed record AiNote(
+    string Topic, IReadOnlyList<string> Points, string? Salience = null, string? Sensitivity = null, IReadOnlyList<long>? SegmentIds = null);
 
 /// <summary>An item of the model's answer the server did not keep (<c>dropped_candidates</c>).</summary>
 public sealed record DroppedCandidate(string Kind, string Owner, string Text);
@@ -44,7 +50,8 @@ public sealed class NoteStore(NpgsqlDataSource dataSource)
         var rows = await connection.QueryAsync<NoteRow>(new CommandDefinition(
             $"""
             select n.id as Id, n.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
-                   c.started_at as ConversationStartedAt, n.topic as Topic, n.points as Points, n.created_at as CreatedAt
+                   c.started_at as ConversationStartedAt, n.topic as Topic, n.points as Points, n.created_at as CreatedAt,
+                   n.salience as Salience, n.salience_manual as SalienceManual
             from notes n
             join conversations c on c.id = n.conversation_id
             where (cast(@topic as text) is null or n.topic = @topic)
@@ -56,6 +63,33 @@ public sealed class NoteStore(NpgsqlDataSource dataSource)
             """,
             new { topic, conversationId, before, limit, hidden = hidden ?? [] }, cancellationToken: ct));
         return rows.ToList();
+    }
+
+    /// <summary>One note as the list shows it, or null when it is gone.</summary>
+    public async Task<NoteRow?> GetAsync(Guid id, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleOrDefaultAsync<NoteRow>(new CommandDefinition(
+            """
+            select n.id as Id, n.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
+                   c.started_at as ConversationStartedAt, n.topic as Topic, n.points as Points, n.created_at as CreatedAt,
+                   n.salience as Salience, n.salience_manual as SalienceManual
+            from notes n join conversations c on c.id = n.conversation_id
+            where n.id = @id
+            """,
+            new { id }, cancellationToken: ct));
+    }
+
+    /// <summary>The wearer's mark on how much a note matters, as <see cref="TaskStore.SetSalienceAsync"/> does for a task. False when it is gone.</summary>
+    public async Task<bool> SetSalienceAsync(Guid id, string? salience, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update notes set salience = coalesce(cast(@salience as text), salience), salience_manual = cast(@salience as text) is not null, updated_at = @now
+            where id = @id
+            """,
+            new { id, salience, now }, cancellationToken: ct)) > 0;
     }
 
     /// <summary>
@@ -74,15 +108,26 @@ public sealed class NoteStore(NpgsqlDataSource dataSource)
         for (var i = 0; i < notes.Count; i++)
         {
             // A millisecond apart, so ids keep the order the model gave the topics in.
-            await connection.ExecuteAsync(new CommandDefinition(
+            var noteId = await connection.ExecuteScalarAsync<Guid>(new CommandDefinition(
                 """
                 insert into notes (id, conversation_id, topic, points, salience, sensitivity, created_at, updated_at)
                 values (@id, @conversationId, @Topic, @points, @Salience, @Sensitivity, @now, @now)
                 on conflict (conversation_id, topic) do update
-                set points = excluded.points, salience = excluded.salience, sensitivity = excluded.sensitivity, updated_at = excluded.updated_at
+                set points = excluded.points, sensitivity = excluded.sensitivity, updated_at = excluded.updated_at,
+                    salience = case when notes.salience_manual then notes.salience else excluded.salience end
+                returning id
                 """,
                 new { id = Guid.CreateVersion7(now.AddMilliseconds(i)), conversationId, notes[i].Topic, points = notes[i].Points.ToArray(), notes[i].Salience, notes[i].Sensitivity, now },
                 transaction, cancellationToken: ct));
+            // Only lines of the note's own conversation, so an id the model made up is skipped.
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                delete from note_sources where note_id = @noteId;
+                insert into note_sources (note_id, segment_id)
+                select @noteId, s.id from segments s where s.conversation_id = @conversationId and s.id = any(@ids)
+                on conflict do nothing;
+                """,
+                new { noteId, conversationId, ids = (notes[i].SegmentIds ?? []).ToArray() }, transaction, cancellationToken: ct));
         }
     }
 

@@ -9,7 +9,8 @@ namespace Nytka.Storage;
 /// </summary>
 public sealed record TaskRow(
     Guid Id, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt, string Text,
-    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due, string? Salience = null, DateTime? MarkedAt = null, long? MarkedSegmentId = null);
+    bool Done, DateTime? DoneAt, DateTime CreatedAt, Guid? PersonId, string? PersonName, string Kind, DateTime? Due, string? Salience = null, DateTime? MarkedAt = null, long? MarkedSegmentId = null,
+    bool SalienceManual = false);
 
 /// <summary>
 /// A task the model returned: its text as stored, the fingerprint the text had when it was created, the person it is
@@ -50,8 +51,8 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
         select t.id as Id, t.conversation_id as ConversationId, coalesce(c.title, c.ai_title) as ConversationTitle,
                c.started_at as ConversationStartedAt, t.text as Text, t.done as Done, t.done_at as DoneAt,
                t.created_at as CreatedAt, t.person_id as PersonId, p.name as PersonName, t.kind as Kind,
-               t.due_at as Due, case when mark.at is not null then 'vital' else t.salience end as Salience,
-               mark.at as MarkedAt, mark.segment_id as MarkedSegmentId
+               t.due_at as Due, case when t.salience_manual then t.salience when mark.at is not null then 'vital' else t.salience end as Salience,
+               mark.at as MarkedAt, mark.segment_id as MarkedSegmentId, t.salience_manual as SalienceManual
         from tasks t
         left join conversations c on c.id = t.conversation_id
         left join people p on p.id = t.person_id
@@ -202,6 +203,19 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
             Select + "\nwhere t.id = @id", new { id }, transaction, cancellationToken: ct));
         return new TaskUpdate(task, completed);
     }
+
+    /// <summary>
+    /// The wearer's mark on how much a task matters: a value sets it and stands against every later summary, null takes the mark
+    /// back (the value stays until a summary rates the task again). False when the task is gone.
+    /// </summary>
+    public static async Task<bool> SetSalienceAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, string? salience, DateTimeOffset now, CancellationToken ct) =>
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update tasks set salience = coalesce(cast(@salience as text), salience), salience_manual = cast(@salience as text) is not null, updated_at = @now
+            where id = @id and deleted_at is null
+            """,
+            new { id, salience, now }, transaction, cancellationToken: ct)) > 0;
 
     /// <summary>
     /// Adds a task by hand, inside the caller's transaction, marked <c>edited</c> so a later summary never
@@ -392,7 +406,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                 if (row is { Done: false, Edited: false, DeletedAt: null } && (row.Kind != task.Kind || row.Due != task.Due || row.Salience != task.Salience))
                 {
                     await connection.ExecuteAsync(new CommandDefinition(
-                        "update tasks set kind = @Kind, due_at = @Due, salience = @Salience, updated_at = @now where id = @Id",
+                        "update tasks set kind = @Kind, due_at = @Due, salience = case when salience_manual then salience else @Salience end, updated_at = @now where id = @Id",
                         new { row.Id, task.Kind, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
                     if (row.Kind != task.Kind && task.Kind == TaskKinds.Commitment)
                     {
@@ -431,7 +445,7 @@ public sealed class TaskStore(NpgsqlDataSource dataSource)
                     on conflict (conversation_id, task_id) do nothing;
                     update tasks set due_at = @Due, updated_at = @now where id = @existingTaskId and due_at is null and cast(@Due as timestamptz) is not null;
                     update tasks set salience = @Salience
-                    where id = @existingTaskId and {Salience.RankOf("cast(@Salience as text)")} > {Salience.RankOf("salience")};
+                    where id = @existingTaskId and not salience_manual and {Salience.RankOf("cast(@Salience as text)")} > {Salience.RankOf("salience")};
                     """,
                     new { conversationId, existingTaskId, task.Due, task.Salience, now }, transaction, cancellationToken: ct));
                 continue;

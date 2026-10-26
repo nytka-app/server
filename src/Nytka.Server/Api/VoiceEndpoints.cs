@@ -4,6 +4,7 @@ using Nytka.Audio.Decoding;
 using Nytka.Audio.Frames;
 using Nytka.Audio.Wav;
 using Nytka.Server.Jobs;
+using Nytka.Server.Memories;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
 using Nytka.Server.Voice;
@@ -191,7 +192,7 @@ public static class VoiceEndpoints
     /// </summary>
     private static async Task<IResult> MarkAsync(
         long id, HttpRequest http, VoiceStore voices, PeopleStore people, ConversationStore conversations, SpeechStore speech,
-        SettingsService settings, CancellationToken ct)
+        SettingsService settings, MemoryRegrounder reground, CancellationToken ct)
     {
         JsonElement body;
         try
@@ -262,9 +263,15 @@ public static class VoiceEndpoints
             }
         }
 
-        if (hasUser && !await voices.MarkAsync(id, isUser, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct))
+        if (hasUser)
         {
-            return NoSegment();
+            if (!await voices.MarkAsync(id, isUser, VoiceSettings.Learns(settings), VoiceRules.LearnMinSeconds, ct))
+            {
+                return NoSegment();
+            }
+
+            // "Not me" on the only wearer line of a memory takes the memory out of every reader's sight.
+            await reground.RunAsync(id, ct);
         }
 
         if (hasKind && !await speech.MarkAsync(id, kind, ct))
