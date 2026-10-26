@@ -6,7 +6,9 @@ using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Privacy;
 using Nytka.Server.Quality;
+using Nytka.Server.Related;
 using Nytka.Server.Rollups;
+using Nytka.Server.Search;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
 using Nytka.Server.Tags;
@@ -21,13 +23,13 @@ namespace Nytka.Server.Jobs;
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
 /// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs, the
 /// labelling candidates, the quality metrics, the speech kinds' follow-up of their settings, the topic pages with conversations to
-/// fold in and the rollups of the periods that just closed. Dedupe keys make every call safe to repeat.
+/// fold in, the rollups of the periods that just closed and the "Earlier" links of conversations whose vector or tags changed. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
     CalendarQueue calendar, QualityQueue quality, SpeechStore speech, BatchRetryQueue batchRetries,
-    SpeakerModel speaker, TagStore tags, TopicStore topics, RollupStore rollups, TimeProvider time)
+    SpeakerModel speaker, TagStore tags, TopicStore topics, RollupStore rollups, RelatedStore related, EmbeddingState embeddings, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -36,6 +38,9 @@ public sealed class Scheduler(
     private const int ClassifyPerTick = 50;
 
     private const int ConsecutiveFailuresBeforeProbing = 3;
+
+    /// <summary>The most conversations one tick queues for their links.</summary>
+    private const int RelatePerTick = 50;
 
     /// <summary>The most topic pages one tick queues.</summary>
     private const int FoldPerTick = 20;
@@ -71,6 +76,21 @@ public sealed class Scheduler(
         await QueueClassifySpeechAsync(now, ct);
         await QueueTopicsAsync(now, ct);
         await QueueRollupsAsync(now, ct);
+        await QueueRelatedAsync(now, ct);
+    }
+
+    /// <summary>Queues <c>relate-conversation</c> for the conversations marked stale, once the vectors are ready.</summary>
+    private async Task QueueRelatedAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (!embeddings.IsReady)
+        {
+            return;
+        }
+
+        foreach (var id in await related.StaleAsync(RelatePerTick, ct))
+        {
+            await queue.EnqueueAsync(JobKinds.RelateConversation, new RelatePayload(id), JobKinds.RelateConversationKey(id), now, ct);
+        }
     }
 
     /// <summary>

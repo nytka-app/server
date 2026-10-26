@@ -5,6 +5,7 @@ using Nytka.Server.Auth;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Privacy;
+using Nytka.Server.Related;
 using Nytka.Server.Speech;
 using Nytka.Server.Usage;
 using Nytka.Storage;
@@ -43,7 +44,7 @@ public static class ConversationEndpoints
         Guid Id, DateTime StartedAt, DateTime EndedAt, string Status, string? Title, string? Summary, string AiStatus,
         bool TitleEdited, string? AiMessage, DateTime? AiUpdatedAt, IReadOnlyList<TaskRow> Tasks, IReadOnlyList<SegmentRow> Segments,
         IReadOnlyList<BookmarkRef> Bookmarks, string Source, IReadOnlyList<string> Tags, string? SummaryTemplate, TranscriptView Transcript,
-        string? Sensitivity, IReadOnlyList<TopicRef> Topics);
+        string? Sensitivity, IReadOnlyList<TopicRef> Topics, IReadOnlyList<RelatedLink> Related);
 
     /// <summary>Where the text stands: <paramref name="Tier"/> is draft, final or mixed; <paramref name="Upgradable"/> when a pass could still replace draft lines.</summary>
     public sealed record TranscriptView(string Tier, string? Route, PassSummary? Pass, bool Upgradable);
@@ -95,14 +96,14 @@ public static class ConversationEndpoints
     /// <summary>The detail; a conversation whose sensitivity the reader may not see is a 404, as if it did not exist.</summary>
     private static async Task<IResult> GetAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        TopicStore topics, IOptions<NytkaOptions> options, SensitivityScope sensitivity, CancellationToken ct) =>
+        TopicStore topics, RelatedStore related, IOptions<NytkaOptions> options, SensitivityScope sensitivity, CancellationToken ct) =>
         await conversations.GetAsync(id, ct) is { Sensitivity: { } kind } && sensitivity.Hidden.Contains(kind)
             ? NotFound()
-            : await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, options, ct);
+            : await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, related, sensitivity.Hidden, options, ct);
 
     private static async Task<IResult> DetailAsync(
         Guid id, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags, TranscriptPassStore passes,
-        TopicStore topics, IOptions<NytkaOptions> options, CancellationToken ct)
+        TopicStore topics, RelatedStore related, string[] hidden, IOptions<NytkaOptions> options, CancellationToken ct)
     {
         if (await conversations.GetAsync(id, ct) is not { } conversation)
         {
@@ -119,13 +120,15 @@ public static class ConversationEndpoints
                 conversation.TranscriptTier, conversation.AutoRoute, await passes.LatestAsync(id, ct),
                 TranscribeConversationHandler.EngineOf(options.Value.Stt) is not null && (await passes.UncoveredBatchesAsync(id, ct)).Count > 0),
             conversation.Sensitivity,
-            (await topics.ForConversationsAsync([id], MaxTopics, ct)).GetValueOrDefault(id) ?? []));
+            (await topics.ForConversationsAsync([id], MaxTopics, ct)).GetValueOrDefault(id) ?? [],
+            [.. (await related.ForConversationAsync(id, hidden, RelatedRule.MaxLinks, ct)).Select(RelatedLink.From)]));
     }
 
     /// <summary>Body <c>{ title }</c>: 1 to 120 characters, or null for the generated title.</summary>
     private static async Task<IResult> PatchAsync(
         Guid id, JsonElement body, ConversationStore conversations, TaskStore tasks, BookmarkStore bookmarks, TagStore tags,
-        TranscriptPassStore passes, TopicStore topics, IOptions<NytkaOptions> options, TimeProvider time, CancellationToken ct)
+        TranscriptPassStore passes, TopicStore topics, RelatedStore related, SensitivityScope sensitivity, IOptions<NytkaOptions> options,
+        TimeProvider time, CancellationToken ct)
     {
         string? title = null;
         if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("title", out var value))
@@ -147,7 +150,7 @@ public static class ConversationEndpoints
         }
 
         return await conversations.SetTitleAsync(id, title, time.GetUtcNow(), ct)
-            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, options, ct)
+            ? await DetailAsync(id, conversations, tasks, bookmarks, tags, passes, topics, related, sensitivity.Hidden, options, ct)
             : NotFound();
     }
 
