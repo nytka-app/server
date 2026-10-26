@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.6](https://github.com/nytka-app/server/compare/v0.36.5...v0.36.6) (2026-10-26)
+
+
+### Features
+
+* **nudges:** GET /api/v1/nudges ([#290](https://github.com/nytka-app/server/issues/290)) ([5dc6cdc](https://github.com/nytka-app/server/commit/5dc6cdc5717b51cf9b10c0aa1d1aa3482d349365))
+* **people:** POST /people/{id}/forget removes a person and what is built from their lines ([#289](https://github.com/nytka-app/server/issues/289)) ([8e3eaf0](https://github.com/nytka-app/server/commit/8e3eaf0dcb8a3a47ba0ba540d8b4a80a460e39fa)), closes [#222](https://github.com/nytka-app/server/issues/222)
+
 ## [0.36.5](https://github.com/nytka-app/server/compare/v0.36.4...v0.36.5) (2026-10-26)
 
 
