@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.36.1](https://github.com/nytka-app/server/compare/v0.36.0...v0.36.1) (2026-10-26)
+
+
+### Features
+
+* **bookmarks:** a bookmark near a cited line makes the task or memory vital, with markedAt as evidence ([#193](https://github.com/nytka-app/server/issues/193)) ([a03ac02](https://github.com/nytka-app/server/commit/a03ac026e1603d4f214a643e4907ac0c6ee3ce58))
+* **calendar:** ?tasks=event writes commitments as VEVENTs with a link to where they were said ([#194](https://github.com/nytka-app/server/issues/194)) ([c24c807](https://github.com/nytka-app/server/commit/c24c807980f04d43ba163091200099d25b0b6534))
+* **labeling:** labelling API, migration 0052 and the labeling token scope ([#195](https://github.com/nytka-app/server/issues/195)) ([6500fd3](https://github.com/nytka-app/server/commit/6500fd3f4ff438b278ac4c8b7fab86a6ecd46b4c))
+* **related:** Earlier links from meaning plus a shared person or rare tag, GET /api/v1/related and get_related ([#197](https://github.com/nytka-app/server/issues/197)) ([99c71dc](https://github.com/nytka-app/server/commit/99c71dc1b7c22d29f610de3a9b50abd7dd7ff613))
+* **topics:** topic pages per recurring tag or named person, GET /api/v1/topics, list_topics and get_topic ([#198](https://github.com/nytka-app/server/issues/198)) ([39b8938](https://github.com/nytka-app/server/commit/39b8938cba00cfe995137fa5b7c3ff79a9b32fb7))
+
 ## [0.36.0](https://github.com/nytka-app/server/compare/v0.35.0...v0.36.0) (2026-10-24)
 
 
