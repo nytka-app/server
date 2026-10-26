@@ -720,6 +720,35 @@ needs the language model.
 - **When it fails.** A run makes three attempts; after the third it is tried again an hour later while
   the date is today or yesterday. Logs and errors say only what failed, never the digest or its input.
 
+## Summaries over time
+
+Rollups summarize a week, a month, a year and all time, each with what changed since the period before, plus
+each [topic page](#topic-pages)'s week. A week is made from its [daily digests](#daily-digest) (and, for a
+day with no digest, its conversation summaries, at most 40), a month from the weeks that start in it, a year
+from its months, and all time from the years and this year's months. Transcripts are never read, so every
+rollup costs one model call whatever the period holds. `GET /api/v1/rollups` lists them and the
+`list_rollups` MCP tool returns the same.
+
+A rollup goes to every reader, so it holds no [sensitive](#sensitive-content) content: a week's
+conversation summaries leave out the classes `privacy.hide` names, as the digests do, and a topic's week
+takes only conversations classified as not sensitive, as its page does.
+
+**Locked periods.** A period with too little recorded is stored `locked`, with its `progress` (local days
+with a summarized conversation: 3 for a week, 7 for a month, 30 for a year, 14 for all time; 2
+conversations for a topic's week) and no summary, and costs no call.
+
+**When they are made.** With `rollups.enabled` (`Nytka__Rollups__Enabled`, off by default) the scheduler
+makes the rollup of each week, month and year a day after it closes, so its last digest exists, then all
+time after each month. A month waits for its weeks, a year for its months, and the `make-rollup` job
+(Ai lane) queues any part that is missing. Periods that closed before the setting was turned on are made
+only by `POST /api/v1/rollups/backfill` (admin), which queues every closed period since a date; each costs
+at most one call.
+
+**Cost.** On the owner's data (17 digests of about 1,600 characters, about 5 conversations a day) a week
+is about 4,000 tokens in and 700 out, its share of the month a quarter of that, and about 5 topic weeks of
+800 in and 300 out: about $0.02 a week at Claude Haiku 4.5's $1 / $5 per million tokens, and about $0.10
+for a backfill of the first month.
+
 ## Quality metrics
 
 Every night the server measures how well it understood the day, from stored rows only (no model call),
@@ -830,6 +859,32 @@ calendar provider's own servers if it polls the URL on your behalf); treat the U
 as the ICS address in `Nytka__Calendar__IcsUrl`. The response carries `Cache-Control: no-store` and
 `Referrer-Policy: no-referrer`, so a cache does not keep the token-bearing URL and a browser never sends it
 onward in a `Referer` header.
+
+## Topic pages
+
+A topic page is one evolving view of something that keeps coming up, the way Memoket keeps one view per client:
+every [tag](#tags) on 3 or more conversations (after the nightly synonym merge, so `therapy` and `терапія` are
+one page) and every named person heard in 3 or more. `GET /api/v1/topics` lists them, most recently on first,
+and `GET /api/v1/topics/{id}` gives the page: a running summary, the timeline of its conversations newest
+first (for a person, at the first line they speak), and its open commitments. Each conversation names up to
+3 of the pages it is on as `topics`. The MCP tools `list_topics` and `get_topic` return the same.
+
+**Built incrementally.** Which conversations belong is read live; only the summary is stored, with the
+conversations already folded into it. When a summarized conversation joins a topic, the `fold-topic` job
+(Ai lane) sends the model the page as it stands and the new conversations' summaries, at most 10 per call,
+and stores the rewritten page; transcripts are never read, so a new conversation costs one call whatever
+the topic's size. The first run of a topic folds its earlier conversations 10 at a time. A conversation that
+leaves the topic (a tag removed) stays folded: the page is a running account, and a later fold may say what
+changed. After 3 failed folds in a row a topic waits until one succeeds.
+
+**Sensitive content.** A page is shown to every reader, so only conversations classified as not
+[sensitive](#sensitive-content) are folded into its summary; one not yet classified waits for the
+classification. The timeline, counts and commitments leave out what the reader may not see.
+
+**Off by default.** `topics.enabled` (`Nytka__Topics__Enabled`) is `false`, since turning it on spends
+model calls: on the owner's data about 20 pages, roughly 11 folds a day (about 1,400 tokens in and 400 out
+each), so about $0.26 a week at Claude Haiku 4.5's $1 / $5 per million tokens, and about $0.13 for the first
+run over the existing conversations.
 
 ## Search
 
