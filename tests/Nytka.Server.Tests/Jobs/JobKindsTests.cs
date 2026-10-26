@@ -20,6 +20,7 @@ public class JobKindsTests
     [InlineData(JobKinds.MakeRollup, JobLane.Ai)]
     [InlineData(JobKinds.RelateConversation, JobLane.Ai)]
     [InlineData(JobKinds.ClassifyMemories, JobLane.Ai)]
+    [InlineData(JobKinds.ClassifyConversations, JobLane.Ai)]
     [InlineData(JobKinds.DeliverWebhook, JobLane.Hooks)]
     [InlineData("nobody-handles-this", JobLane.Audio)]
     public void A_kind_runs_in_its_lane_and_an_unclaimed_kind_in_audio(string kind, JobLane lane) =>
@@ -55,12 +56,12 @@ public class JobKindsTests
         var audio = JobKinds.FilterOf(JobLane.Audio);
 
         Assert.False(ai.Exclude);
-        Assert.Equal(["classify-memories", "enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "make-rollup", "measure-quality", "relate-conversation", "suggest-names", "tidy-tags"], ai.Kinds.Order());
+        Assert.Equal(["classify-conversations", "classify-memories", "enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "make-rollup", "measure-quality", "relate-conversation", "suggest-names", "tidy-tags"], ai.Kinds.Order());
         Assert.False(hooks.Exclude);
         Assert.Equal(["deliver-webhook", "sync-calendar"], hooks.Kinds.Order());
         Assert.True(audio.Exclude);
         Assert.Equal(
-            ["classify-memories", "deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "make-rollup", "measure-quality", "relate-conversation", "suggest-names", "sync-calendar", "tidy-tags"],
+            ["classify-conversations", "classify-memories", "deliver-webhook", "enrich-conversation", "extract-memories", "extract-person-facts", "fold-topic", "make-brief", "make-digest", "make-rollup", "measure-quality", "relate-conversation", "suggest-names", "sync-calendar", "tidy-tags"],
             audio.Kinds.Order());
     }
 }

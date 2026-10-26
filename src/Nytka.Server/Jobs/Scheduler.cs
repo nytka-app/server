@@ -77,6 +77,21 @@ public sealed class Scheduler(
         await QueueTopicsAsync(now, ct);
         await QueueRollupsAsync(now, ct);
         await QueueRelatedAsync(now, ct);
+        await QueueClassifyConversationsAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Queues <c>classify-conversations</c>, a few minutes ahead, while a closed conversation with text has no sensitivity and
+    /// enrichment will not give it one (it was too short to summarize). The key makes it one job at a time, and a run that classifies
+    /// nothing leaves the next try to the next tick after that wait.
+    /// </summary>
+    private async Task QueueClassifyConversationsAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (llm.IsConfigured && (await conversations.UnclassifiedAsync(1, now - ClassifyConversationsHandler.Quiet, ct)).Count > 0)
+        {
+            await queue.EnqueueAsync(
+                JobKinds.ClassifyConversations, new { }, JobKinds.ClassifyConversations, now + ClassifyConversationsHandler.Wait, ct);
+        }
     }
 
     /// <summary>Queues <c>relate-conversation</c> for the conversations marked stale, once the vectors are ready.</summary>

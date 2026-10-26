@@ -35,6 +35,7 @@ public static class AiExtensions
         services.AddScoped<BackfillService>();
         services.AddSingleton<EnrichmentQueue>();
         services.AddScoped<IJobHandler, EnrichConversationHandler>();
+        services.AddScoped<IJobHandler, ClassifyConversationsHandler>();
         return services;
     }
 }

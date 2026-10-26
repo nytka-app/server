@@ -463,6 +463,52 @@ public sealed class ConversationStore(NpgsqlDataSource dataSource)
         return EnrichmentStore.Stored;
     }
 
+    /// <summary>The most characters of a conversation the sensitivity classifier reads.</summary>
+    public const int ExcerptChars = 1500;
+
+    /// <summary>A conversation with no sensitivity yet and the start of its text.</summary>
+    public sealed record UnclassifiedConversation(Guid Id, string Text);
+
+    /// <summary>
+    /// Closed conversations with text and no sensitivity that enrichment will not give one: the ones it skipped as too short, or
+    /// failed on, or has not tried (<c>none</c>); oldest first. <paramref name="quietSince"/> leaves out a conversation that ended
+    /// after it, which a late batch may still change. A conversation with no text is never listed: there is nothing to leak.
+    /// </summary>
+    public async Task<IReadOnlyList<UnclassifiedConversation>> UnclassifiedAsync(int limit, DateTimeOffset quietSince, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<UnclassifiedConversation>(new CommandDefinition(
+            $"""
+            select c.id as Id, left(t.text, {ExcerptChars}) as Text
+            from conversations c
+            join lateral (
+                select string_agg(btrim(s.text), ' ' order by s.started_at, s.id) as text
+                from segments s where s.conversation_id = c.id and btrim(s.text) <> '') t on t.text is not null
+            where c.status = 'closed' and c.sensitivity is null and c.ai_status in ('skipped', 'failed', 'none')
+              and coalesce(c.ended_at, c.started_at) < @quietSince
+            order by c.started_at, c.id
+            limit @limit
+            """,
+            new { limit, quietSince }, cancellationToken: ct))).ToList();
+    }
+
+    /// <summary>Sets the class of conversations that have none; one that has a class is never overwritten. Returns how many were set.</summary>
+    public async Task<int> ClassifyAsync(IReadOnlyList<(Guid Id, string Sensitivity)> classes, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var set = 0;
+        foreach (var (id, sensitivity) in classes)
+        {
+            set += await connection.ExecuteAsync(new CommandDefinition(
+                "update conversations set sensitivity = @sensitivity where id = @id and sensitivity is null",
+                new { id, sensitivity }, transaction, cancellationToken: ct));
+        }
+
+        await transaction.CommitAsync(ct);
+        return set;
+    }
+
     /// <summary>
     /// A run that had nothing to summarize. The title, summary and tasks of an earlier run stay. False
     /// when the result is stale or the conversation is gone (see <see cref="StoreEnrichmentAsync"/>).
