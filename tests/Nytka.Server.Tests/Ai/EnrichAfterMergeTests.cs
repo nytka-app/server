@@ -10,7 +10,6 @@ namespace Nytka.Server.Tests.Ai;
 /// A summary is stored, and conversation.ready published, only for the conversation the run read: a late
 /// batch or a merge that changes it during the model call makes the result stale.
 /// </summary>
-[Collection(PostgresCollection.Name)]
 public sealed class EnrichAfterMergeTests(PostgresFixture db) : AiTestBase(db)
 {
     private int Ready => Events.Events.Count(e => e.Type == NytkaEvent.ConversationReady);

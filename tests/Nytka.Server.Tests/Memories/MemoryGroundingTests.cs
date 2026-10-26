@@ -5,7 +5,6 @@ using Nytka.Server.Events;
 namespace Nytka.Server.Tests.Memories;
 
 /// <summary>A fact about "you" must cite a line of the wearer's (second-brain redesign, requirement 8).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class MemoryGroundingTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static string Answer(params object[] memories) => JsonSerializer.Serialize(new { memories });

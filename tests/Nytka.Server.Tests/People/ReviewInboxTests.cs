@@ -7,8 +7,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>The review inbox (docs/specs/people.md, Review inbox): rows go in with SQL, answers come through the API.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ReviewInboxTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ReviewInboxTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 10, 0, 0, TimeSpan.Zero);
 

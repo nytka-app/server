@@ -10,7 +10,6 @@ using Nytka.Server.Tests.Ai;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>Layer 1 of docs/specs/people.md: names the model hears for unnamed voices, applied only when accepted.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class NameSuggestionTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool NameSuggestions => true;

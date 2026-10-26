@@ -5,8 +5,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Webhooks;
 
-[Collection(PostgresCollection.Name)]
-public sealed class WebhookApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class WebhookApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

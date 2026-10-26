@@ -17,8 +17,7 @@ namespace Nytka.Server.Tests.Calendar;
 /// The calendar feed, the briefs and <c>brief.ready</c> (docs/specs/people.md, Pre-meeting brief). The feed is a real listener on
 /// loopback, so the production client's redirect and size rules are what the tests meet. Synthetic names only.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class CalendarBriefTests(PostgresFixture db) : IAsyncLifetime
+public sealed class CalendarBriefTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Token = "feed-token-7f3a91c2";
 

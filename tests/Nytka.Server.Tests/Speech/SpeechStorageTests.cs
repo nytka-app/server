@@ -6,8 +6,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Speech;
 
 /// <summary>What migration 0024 adds (docs/specs/speech-kind.md, Storage): the columns on segments, their constraints and <c>speech_state</c>.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SpeechStorageTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SpeechStorageTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string CheckViolation = "23514";
 

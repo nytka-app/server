@@ -3,8 +3,7 @@ using Npgsql;
 namespace Nytka.Server.Tests.Storage;
 
 /// <summary>What migrations 0003 (tokens, settings) and 0004 (AI) add: their columns, defaults and constraints.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SchemaTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SchemaTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string UniqueViolation = "23505";
     private const string CheckViolation = "23514";

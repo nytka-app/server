@@ -4,8 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
-public sealed class StatusTests(PostgresFixture db) : IAsyncLifetime
+public sealed class StatusTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

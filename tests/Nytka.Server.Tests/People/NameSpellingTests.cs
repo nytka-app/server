@@ -6,8 +6,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>Renaming or merging a person respells the model's writing about them (docs/specs/name-spelling.md).</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class NameSpellingTests(PostgresFixture db) : IAsyncLifetime
+public sealed class NameSpellingTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
 

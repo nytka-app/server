@@ -5,7 +5,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>Tasks cite the lines they come from (second-brain redesign, requirement 8).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class TaskSourcesTests(PostgresFixture db) : AiTestBase(db)
 {
     [Fact]

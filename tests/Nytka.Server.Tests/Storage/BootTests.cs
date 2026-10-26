@@ -14,8 +14,7 @@ namespace Nytka.Server.Tests.Storage;
 /// v0.2's done-when 11: the server boots on the database an older server left, which has no
 /// <c>settings</c> table, and on an empty one, and migrates both.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class BootTests(PostgresFixture db)
+public sealed class BootTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private const string ScriptPrefix = "Nytka.Storage.Migrations.";
 

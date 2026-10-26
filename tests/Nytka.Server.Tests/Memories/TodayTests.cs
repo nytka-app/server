@@ -114,7 +114,6 @@ public sealed class TodayPickTests
     }
 }
 
-[Collection(PostgresCollection.Name)]
 public sealed class TodayApiTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static Guid Id(int n) => Guid.Parse($"018f0000-0000-7000-8000-0000000000{n:x2}");

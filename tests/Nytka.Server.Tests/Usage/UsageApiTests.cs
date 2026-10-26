@@ -7,8 +7,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 namespace Nytka.Server.Tests.Usage;
 
 /// <summary><c>GET /api/v1/usage</c>: days in the user's time zone, the month to date, its forecast and the budget.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class UsageApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class UsageApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db, s =>
     {

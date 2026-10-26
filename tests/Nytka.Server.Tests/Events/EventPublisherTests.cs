@@ -5,8 +5,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Events;
 
-[Collection(PostgresCollection.Name)]
-public sealed class EventPublisherTests(PostgresFixture db) : IAsyncLifetime
+public sealed class EventPublisherTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly NytkaEvent Ready = new(NytkaEvent.ConversationReady, Guid.Parse("0198e8a0-0000-7000-8000-000000000001"));
 

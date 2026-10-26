@@ -6,7 +6,6 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Ai;
 
-[Collection(PostgresCollection.Name)]
 public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
 {
     private Task<long> Jobs() => Db.ScalarAsync<long>("select count(*) from jobs where kind = 'enrich-conversation'");

@@ -6,7 +6,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>Salience on extracted items and media kept out of the prompt (second-brain redesign, step 2).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class SalienceTests(PostgresFixture db) : AiTestBase(db)
 {
     [Fact]

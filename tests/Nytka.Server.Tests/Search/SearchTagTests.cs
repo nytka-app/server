@@ -9,8 +9,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Search;
 
 /// <summary>The <c>tag</c> filter of search and the MCP tools' tags (docs/specs/tags.md, Search and API), against REST.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SearchTagTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SearchTagTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db, services: s => SearchSeed.WithoutIndexer(s));
 

@@ -5,7 +5,6 @@ using Nytka.Server.Tests.Ai;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
 public sealed class ExportApiTests(PostgresFixture db) : AiTestBase(db)
 {
     private const string SttKey = "swordfish-for-stt";

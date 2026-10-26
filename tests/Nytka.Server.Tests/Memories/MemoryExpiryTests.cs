@@ -5,7 +5,6 @@ using Nytka.Server.Memories;
 namespace Nytka.Server.Tests.Memories;
 
 /// <summary>Facts that stop being true, and the salience of a fact (second-brain redesign, step 2).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class MemoryExpiryTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static string Answer(params object[] memories) => JsonSerializer.Serialize(new { memories });

@@ -6,8 +6,7 @@ using Nytka.Server.Auth;
 
 namespace Nytka.Server.Tests.Auth;
 
-[Collection(PostgresCollection.Name)]
-public sealed class TokenApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class TokenApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

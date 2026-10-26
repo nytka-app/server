@@ -7,8 +7,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 namespace Nytka.Server.Tests.Usage;
 
 /// <summary>The ledger (docs/specs/usage.md): a row per answered batch, the budget model past the budget, and the backfill.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class UsageLedgerTests(PostgresFixture db) : IAsyncLifetime
+public sealed class UsageLedgerTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly List<NytkaApiFactory> _servers = [];
 

@@ -16,8 +16,7 @@ namespace Nytka.Server.Tests.People;
 /// Voice groups and voiceprints (docs/specs/people.md, Layer 2) with synthetic fingerprints: a vector is a few set
 /// components, so the cosine between two is known. The wearer's voiceprint is the first axis.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceGroupTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceGroupTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
     private const int Size = 192;

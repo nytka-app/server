@@ -14,8 +14,7 @@ namespace Nytka.Server.Tests.Voice;
 /// Matching in the <c>transcribe</c> job (docs/specs/your-voice.md, track S-V) with a fake model: every fingerprint
 /// is a set vector whose cosine to the voiceprint is the next queued similarity.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceMatchingTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
 

@@ -4,8 +4,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Storage;
 
 /// <summary>Migration 0025 (the table's checks) and the store's queries that no route calls yet: the overlap S-3 reads.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class ContextRangeStoreTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ContextRangeStoreTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string CheckViolation = "23514";
 

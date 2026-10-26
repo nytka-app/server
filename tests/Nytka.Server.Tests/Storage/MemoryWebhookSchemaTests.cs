@@ -3,8 +3,7 @@ using Npgsql;
 namespace Nytka.Server.Tests.Storage;
 
 /// <summary>What migrations 0006 (memories) and 0008 (webhooks) add: their defaults, constraints and cascades.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class MemoryWebhookSchemaTests(PostgresFixture db) : IAsyncLifetime
+public sealed class MemoryWebhookSchemaTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string UniqueViolation = "23505";
     private const string CheckViolation = "23514";
