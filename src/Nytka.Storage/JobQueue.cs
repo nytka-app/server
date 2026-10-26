@@ -65,15 +65,16 @@ public sealed class JobQueue(NpgsqlDataSource dataSource)
             transaction, cancellationToken: ct));
 
     /// <summary>
-    /// Leases the next due job of the given kinds until <c>now + lease</c> and counts the attempt. A
-    /// job whose lease ran out (the process died mid-job) is due again.
+    /// Leases the next due job of the given kinds until <c>now + lease</c>. A job whose lease ran out
+    /// (the process died, or stopped without releasing it) is due again with its attempt count
+    /// unchanged: only a handler's failure (<see cref="FailAsync"/>) counts an attempt.
     /// </summary>
     public async Task<JobRecord?> DequeueAsync(DateTimeOffset now, TimeSpan lease, JobKindFilter kinds, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.QuerySingleOrDefaultAsync<JobRecord>(new CommandDefinition(
             """
-            update jobs set locked_until = @lockedUntil, attempts = attempts + 1
+            update jobs set locked_until = @lockedUntil
             where id = (
                 select id from jobs
                 where run_after <= @now and (locked_until is null or locked_until < @now)
@@ -100,9 +101,17 @@ public sealed class JobQueue(NpgsqlDataSource dataSource)
     /// <summary>Records a failed attempt; the job runs again at <paramref name="runAfter"/>.</summary>
     public Task FailAsync(long id, string error, DateTimeOffset runAfter, CancellationToken ct) =>
         ExecuteAsync(
-            "update jobs set run_after = @runAfter, locked_until = null, last_error = @error where id = @id",
+            "update jobs set attempts = attempts + 1, run_after = @runAfter, locked_until = null, last_error = @error where id = @id",
             new { id, error, runAfter },
             ct);
+
+    /// <summary>
+    /// Releases a lease a graceful shutdown is giving up before it runs out, so the job is due again
+    /// at once instead of waiting for the lease to expire. Does not touch attempts: the run it was
+    /// holding never got the chance to fail.
+    /// </summary>
+    public Task ReleaseAsync(long id, CancellationToken ct) =>
+        ExecuteAsync("update jobs set locked_until = null where id = @id", new { id }, ct);
 
     private async Task ExecuteAsync(string sql, object args, CancellationToken ct)
     {

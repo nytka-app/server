@@ -80,10 +80,10 @@ public sealed class MakeBriefHandler(
             await StoreAsync(payload, matched.Select(p => p.Id).ToList(), text, ct);
             return JobOutcome.Done;
         }
-        catch (Exception error) when (job.Attempts >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
+        catch (Exception error) when (job.Attempts + 1 >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
         {
             // Only the third attempt gives up; the earlier ones throw and the runner tries again.
-            logger.LogWarning("Making a brief failed after {Attempts} attempts: {Message}", job.Attempts, Describe(error));
+            logger.LogWarning("Making a brief failed after {Attempts} attempts: {Message}", job.Attempts + 1, Describe(error));
             return payload.StartsAt > now + RetryAfter ? JobOutcome.RunAgain(RetryAfter) : JobOutcome.Done;
         }
     }

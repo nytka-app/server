@@ -65,10 +65,10 @@ public sealed class MakeDigestHandler(
             await StoreAsync(payload, Validate(answer, input), ct);
             return JobOutcome.Done;
         }
-        catch (Exception error) when (job.Attempts >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
+        catch (Exception error) when (job.Attempts + 1 >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
         {
             // Only the third attempt gives up; the earlier ones throw and the runner tries again.
-            logger.LogWarning("Making the digest failed after {Attempts} attempts: {Message}", job.Attempts, Describe(error));
+            logger.LogWarning("Making the digest failed after {Attempts} attempts: {Message}", job.Attempts + 1, Describe(error));
             // The scheduler catches up yesterday too, so yesterday is retried as well; older dates are dropped.
             return date >= DigestDay.Today(time.GetUtcNow(), zone).AddDays(-1) ? JobOutcome.RunAgain(RetryAfter) : JobOutcome.Done;
         }

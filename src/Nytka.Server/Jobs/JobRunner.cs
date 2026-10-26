@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Nytka.Storage;
 
 namespace Nytka.Server.Jobs;
@@ -14,6 +15,9 @@ public sealed class JobRunner(JobQueue queue, IServiceScopeFactory scopes, TimeP
     private static readonly TimeSpan[] Backoff = [TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(2)];
 
     public static IReadOnlyList<JobLane> Lanes { get; } = Enum.GetValues<JobLane>();
+
+    /// <summary>The jobs currently leased by this runner, so a graceful shutdown can release them.</summary>
+    private readonly ConcurrentDictionary<long, byte> _held = new();
 
     /// <summary>
     /// How long a lane holds a job before it counts as abandoned. Longer than any job of the lane
@@ -56,11 +60,32 @@ public sealed class JobRunner(JobQueue queue, IServiceScopeFactory scopes, TimeP
         var count = 0;
         while (await queue.DequeueAsync(time.GetUtcNow(), lease, kinds, ct) is { } job)
         {
-            await RunAsync(job, ct);
+            _held[job.Id] = 0;
+            try
+            {
+                await RunAsync(job, ct);
+            }
+            finally
+            {
+                _held.TryRemove(job.Id, out _);
+            }
+
             count++;
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Releases every lease this runner currently holds. A graceful shutdown calls this so a job
+    /// mid-run when the host stops is picked up again right away, instead of waiting out its lease.
+    /// </summary>
+    public async Task ReleaseHeldLeasesAsync(CancellationToken ct)
+    {
+        foreach (var id in _held.Keys)
+        {
+            await queue.ReleaseAsync(id, ct);
+        }
     }
 
     private async Task RunAsync(JobRecord job, CancellationToken ct)
@@ -87,17 +112,20 @@ public sealed class JobRunner(JobQueue queue, IServiceScopeFactory scopes, TimeP
         }
         catch (Exception error) when (!ct.IsCancellationRequested)
         {
-            if (job.Attempts < MaxAttempts)
+            // job.Attempts is how many times the handler has already failed; this run, if it fails
+            // too, is attempt job.Attempts + 1.
+            var attempt = job.Attempts + 1;
+            if (attempt < MaxAttempts)
             {
-                var delay = Backoff[job.Attempts - 1];
+                var delay = Backoff[attempt - 1];
                 logger.LogWarning(
                     error, "Job {JobId} ({Kind}) failed on attempt {Attempt}; next try in {Delay}.",
-                    job.Id, job.Kind, job.Attempts, delay);
+                    job.Id, job.Kind, attempt, delay);
                 await queue.FailAsync(job.Id, error.Message, time.GetUtcNow() + delay, ct);
                 return;
             }
 
-            logger.LogError(error, "Job {JobId} ({Kind}) failed {Attempts} times; giving up.", job.Id, job.Kind, job.Attempts);
+            logger.LogError(error, "Job {JobId} ({Kind}) failed {Attempts} times; giving up.", job.Id, job.Kind, attempt);
             if (handler is not null)
             {
                 await handler.OnGiveUpAsync(job, error, ct);
