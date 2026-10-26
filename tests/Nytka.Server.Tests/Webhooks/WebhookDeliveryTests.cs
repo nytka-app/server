@@ -48,6 +48,8 @@ public sealed class WebhookDeliveryTests(PostgresFixture db) : IAsyncLifetime, I
         await using var transaction = await connection.BeginTransactionAsync();
         await _server.Get<IEventPublisher>().PublishAsync(new NytkaEvent(type, subject), connection, transaction, CancellationToken.None);
         await transaction.CommitAsync();
+        // conversation.ready also queues a day recompute; these tests are about deliveries only.
+        await db.ExecuteAsync("delete from jobs where kind = 'recompute-events'");
     }
 
     private async Task<Guid> SeedConversation()

@@ -10,8 +10,7 @@ namespace Nytka.Server.Tests.Storage;
 /// Migration 0058_voice_profile_prints.sql (NYTKA-159): several wearer voiceprints instead of one running mean,
 /// seeded from the row the old single-centroid schema already had so nothing already learned is lost.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceProfilePrintsMigrationTests(PostgresFixture db)
+public sealed class VoiceProfilePrintsMigrationTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private async Task<string> NewDatabase()
     {

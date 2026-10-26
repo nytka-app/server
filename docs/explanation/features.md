@@ -900,6 +900,28 @@ A task said earlier sits in `morning` unless its due date has a time that falls 
 fold the noise. Both carry `evidence`, the lines an item cites, so the app can play the audio and let you say "not me" or "wrong
 person" on the spot. A server that has them lists `today` in `features`.
 
+## Day events
+
+`GET /api/v1/events` turns a local day into a list of typed, timestamped events, so the day has structure beyond the
+conversation list. Each kind is derived only where its source exists:
+
+- `person_joined` / `person_left`: the first and last line of a named person or a numbered voice (other than the
+  wearer) within a conversation, keyed by person when there is one, else by voice label.
+- `media_started` / `media_stopped`: two independent sources, each tagged in `source` so they are never merged — a run of
+  consecutive lines the model guessed as media ([speech kind](#speech-kind), `source: "speech"`), and a phone
+  now-playing [context range](#context-from-the-phone) (`source: "context"`).
+- `call_started` / `call_ended`: a phone context range of kind `call`.
+- `silence`: a gap of at least `events.silenceMinutes` (default 20) between two conversations that both started on the
+  same local day; a gap that spans midnight is not reported, so a quiet night between two days never becomes an event.
+- `alone`: the wearer spoke in a conversation and nobody else did (media and call lines do not count as someone else).
+
+`place_changed` is not computed: the server stores no location tags or saved places to derive it from.
+
+A job recomputes a day's events after one of its conversations becomes ready and nightly for yesterday and today;
+recomputing deletes and rewrites that day's rows in one transaction, so it is idempotent and safe to run twice. An
+event tied to a conversation whose [sensitivity](#sensitive-content) class the reader may not see is left out. A
+server that has this lists `events` in `features`.
+
 ## Topic pages
 
 A topic page is one evolving view of something that keeps coming up, the way Memoket keeps one view per client:

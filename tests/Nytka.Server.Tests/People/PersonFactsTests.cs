@@ -22,7 +22,7 @@ public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
 
     private HttpClient Client => Server.CreateAuthorizedClient();
 
-    private Task<long> Jobs() => Db.ScalarAsync<long>("select count(*) from jobs");
+    private Task<long> Jobs() => Db.ScalarAsync<long>("select count(*) from jobs where kind <> 'recompute-events'");
 
     private async Task<Guid> Person(string name, string? speakerId = null)
     {
@@ -274,7 +274,7 @@ public sealed class PersonFactsTests(PostgresFixture db) : AiTestBase(db)
 
         await Publish(lines.Conversation);
 
-        Assert.Equal("extract-person-facts:" + lines.Conversation, await Db.ScalarAsync<string>("select dedupe_key from jobs"));
+        Assert.Equal("extract-person-facts:" + lines.Conversation, await Db.ScalarAsync<string>("select dedupe_key from jobs where kind <> 'recompute-events'"));
         Assert.Equal("pending", await Db.ScalarAsync<string>("select status from people_runs where kind = 'facts'"));
         Assert.Empty(Llm.Requests);
     }

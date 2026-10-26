@@ -3,7 +3,7 @@
 Self-hosted server for the Nytka app: takes Opus chunks from the app, drops silence with Silero VAD,
 sends speech to an OpenAI-compatible transcription endpoint and serves conversations over HTTP API
 v1. It also asks an OpenAI-compatible chat endpoint for titles, summaries, tasks and memories,
-indexes text for full-text search, delivers webhooks and serves an MCP endpoint (18 read tools, 3 write tools behind an `admin` token). The whole
+indexes text for full-text search, delivers webhooks and serves an MCP endpoint (19 read tools, 3 write tools behind an `admin` token). The whole
 picture: `docs/vision.md`; what each version must do: `docs/specs/v0.1.md` to `v0.4.md`; how v0.1
 was built: `docs/plans/`.
 
@@ -41,7 +41,8 @@ docker compose up -d --build
 3. **Chunk rows outlive their audio.** A retried upload must find its row to answer `200`; retention
    deletes processed rows only after 7 days.
 4. **One job at a time per lane.** `JobRunner` is the only consumer of `jobs`, with one runner per
-   lane: `Audio` (v0.1's kinds, `rescore-voice`, `rematch-voice`, `group-voices`, `apply-speech`, `classify-speech` and `pick-labeling`; Silero is not thread-safe and transcription requests go out one at a
+   lane: `Audio` (v0.1's kinds, `rescore-voice`, `rematch-voice`, `group-voices`, `apply-speech`, `classify-speech`, `pick-labeling` and
+   `recompute-events`; Silero is not thread-safe and transcription requests go out one at a
    time), `Ai` (`enrich-conversation`, `extract-memories`, `classify-memories`, `classify-conversations`, `make-digest`, `suggest-names`, `extract-person-facts`, `make-brief`, `tidy-tags`, `measure-quality`, `fold-topic`, `make-rollup`, `relate-conversation`) and `Hooks` (`deliver-webhook`, `sync-calendar`). A slow
    model or receiver never delays transcription. Dedupe keys keep one job per session, batch,
    conversation and delivery.

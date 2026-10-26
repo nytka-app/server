@@ -8,8 +8,7 @@ namespace Nytka.Server.Tests.Voice;
 /// (NYTKA-159, docs/specs/your-voice.md "Learning"): a cold or the pendant moving puts the wearer's voice in a
 /// second mode that one mean cannot hold.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceLearningTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceLearningTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
     private const int Size = 192;

@@ -30,10 +30,11 @@ public static class JobKinds
     public const string RelateConversation = "relate-conversation";
     public const string ClassifyMemories = "classify-memories";
     public const string ClassifyConversations = "classify-conversations";
+    public const string RecomputeEvents = "recompute-events";
 
     /// <summary>
-    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling and one nobody
-    /// handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
+    /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling,
+    /// recompute-events and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
     {
@@ -83,6 +84,9 @@ public static class JobKinds
     public static string MeasureQualityKey(string localDate) => $"{MeasureQuality}:{localDate}";
 
     public static string DeliverWebhookKey(Guid delivery) => $"{DeliverWebhook}:{delivery}";
+
+    /// <summary>One recompute per local date at a time.</summary>
+    public static string RecomputeEventsKey(string localDate) => $"{RecomputeEvents}:{localDate}";
 
     /// <summary>One scheduled job per local date; an on-demand run has a key of its own, so it never merges into a scheduled one.</summary>
     public static string MakeDigestKey(string localDate, bool replace = false) => $"{MakeDigest}:{localDate}" + (replace ? ":run" : "");
