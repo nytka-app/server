@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Dapper;
 using Npgsql;
@@ -159,11 +160,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// Records that a run is queued, inside the transaction of the summary that asked for it, and returns whether the caller
     /// should queue the job. False when the last run already read every segment under the current <paramref name="validator"/>
-    /// version. The failure count starts again only when segments arrived after that run.
+    /// version. The failure count starts again only when segments arrived after that run. With <paramref name="redecide"/> the run
+    /// is queued anyway and forgets how far it read, so it reads the whole conversation again.
     /// </summary>
     public async Task<bool> MarkPendingAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, int validator, DateTimeOffset now,
-        CancellationToken ct)
+        CancellationToken ct, bool redecide = false)
     {
         var last = await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
             "select max(id) from segments where conversation_id = @conversationId",
@@ -171,7 +173,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
         var run = await connection.QuerySingleOrDefaultAsync<RunMark>(new CommandDefinition(
             "select through_segment_id as Through, validator as Validator from people_runs where conversation_id = @conversationId and kind = 'names' for update",
             new { conversationId }, transaction, cancellationToken: ct));
-        if (last is null || run is { Through: { } through } && through >= last && run.Validator >= validator)
+        if (last is null || !redecide && run is { Through: { } through } && through >= last && run.Validator >= validator)
         {
             return false;
         }
@@ -182,9 +184,10 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             insert into people_runs (conversation_id, kind, status, updated_at) values (@conversationId, 'names', 'pending', @now)
             on conflict (conversation_id, kind) do update
             set status = 'pending', message = null, updated_at = @now,
-                failures = case when @fresh then 0 else people_runs.failures end
+                failures = case when @fresh then 0 else people_runs.failures end,
+                through_segment_id = case when @redecide then null else people_runs.through_segment_id end
             """,
-            new { conversationId, now, fresh }, transaction, cancellationToken: ct));
+            new { conversationId, now, fresh, redecide }, transaction, cancellationToken: ct));
         return true;
     }
 
@@ -201,11 +204,15 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     /// Stores the candidates and records the run as done in one transaction; a name already stored for the target, a rejected
     /// one included, is skipped. The run records the <paramref name="validator"/> version it applied. With
     /// <paramref name="autoApply"/> set, a stored candidate at that confidence or above is applied at once (<see cref="AutoAppliesAsync"/>).
-    /// Returns the number inserted, or null when the conversation is gone.
+    /// With <paramref name="redecide"/> set (the run read the whole conversation), the run's answer replaces the conversation's
+    /// pending model suggestions: one it names again takes the new confidence and evidence and counts as stored, so auto-apply
+    /// weighs it as a new one; a name for a voice the run gives no name (or only a role) is deleted, as revalidating deletes a
+    /// failing one. A name for a voice the run names otherwise stays, so the voice still waits for the owner.
+    /// Returns the number stored, or null when the conversation is gone.
     /// </summary>
     public async Task<int?> ApplyAsync(
         Guid conversationId, IReadOnlyList<NameCandidate> candidates, long? through, int validator, DateTimeOffset now,
-        CancellationToken ct, float? autoApply = null)
+        CancellationToken ct, float? autoApply = null, bool redecide = false)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -217,9 +224,55 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             return null;
         }
 
-        var inserted = new List<(Guid Id, NameCandidate Candidate)>();
+        var pending = new Dictionary<(string Target, string Key, string Name), Guid>();
+        if (redecide)
+        {
+            var rows = await connection.QueryAsync<(Guid Id, string Target, string Key, string Name, bool Named)>(new CommandDefinition(
+                """
+                select id as Id, target as Target, coalesce(speaker_id, case when target = 'person' then person_id::text end, segment_ids[1]::text) as Key,
+                       name as Name, named as Named
+                from name_suggestions
+                where conversation_id = @conversationId and status = 'pending' and target in ('speaker', 'label', 'person')
+                for update
+                """,
+                new { conversationId }, transaction, cancellationToken: ct));
+            var answered = candidates.Select(Identity).ToHashSet();
+            var named = candidates.Where(c => c.Named).Select(c => (c.Target, Identity(c).Key)).ToHashSet();
+            var stale = new List<Guid>();
+            foreach (var row in rows)
+            {
+                var identity = (row.Target, row.Key, row.Name.ToLowerInvariant());
+                if (answered.Contains(identity) ? !pending.TryAdd(identity, row.Id) : !row.Named || !named.Contains((row.Target, row.Key)))
+                {
+                    stale.Add(row.Id);
+                }
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition(
+                "delete from name_suggestions where id = any(@stale)", new { stale = stale.ToArray() }, transaction, cancellationToken: ct));
+        }
+
+        var stored = new List<(Guid Id, NameCandidate Candidate)>();
         foreach (var candidate in candidates)
         {
+            if (pending.TryGetValue(Identity(candidate), out var again))
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    """
+                    update name_suggestions
+                    set segment_ids = @segmentIds, role = @role, named = @named, person_id = @personId, evidence_segment_id = @evidence,
+                        confidence = @confidence
+                    where id = @again
+                    """,
+                    new
+                    {
+                        again, segmentIds = candidate.SegmentIds, role = candidate.Role, named = candidate.Named, personId = candidate.PersonId,
+                        evidence = candidate.EvidenceSegmentId, confidence = candidate.Confidence,
+                    }, transaction, cancellationToken: ct));
+                stored.Add((again, candidate));
+                continue;
+            }
+
             if (await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
                     """
                     insert into name_suggestions (id, conversation_id, target, speaker_id, segment_ids, name, role, named, person_id,
@@ -235,13 +288,13 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
                         evidence = candidate.EvidenceSegmentId, confidence = candidate.Confidence, now,
                     }, transaction, cancellationToken: ct)) is { } id)
             {
-                inserted.Add((id, candidate));
+                stored.Add((id, candidate));
             }
         }
 
         if (autoApply is { } threshold)
         {
-            foreach (var (id, candidate) in inserted)
+            foreach (var (id, candidate) in stored)
             {
                 if (candidate.Confidence < threshold || !await AutoAppliesAsync(connection, transaction, id, candidate, candidates, ct))
                 {
@@ -266,7 +319,7 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
             """,
             new { conversationId, through, validator, now }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
-        return inserted.Count;
+        return stored.Count;
     }
 
     /// <summary>
@@ -276,6 +329,12 @@ public sealed class NameSuggestionStore(NpgsqlDataSource dataSource)
     /// known only by role has it, or, for a <c>person</c> target, someone else has it (applying would merge them). A voice that
     /// already belongs to someone else or segments that all have a person are skipped by the accept itself.
     /// </summary>
+    /// <summary>A candidate's row key, as the unique index <c>name_suggestions_target_name</c> reads it.</summary>
+    private static (string Target, string Key, string Name) Identity(NameCandidate candidate) =>
+        (candidate.Target,
+         candidate.SpeakerId ?? (candidate.Target == "person" ? candidate.PersonId.ToString()! : candidate.SegmentIds[0].ToString(CultureInfo.InvariantCulture)),
+         candidate.Name.ToLowerInvariant());
+
     private static async Task<bool> AutoAppliesAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, NameCandidate candidate, IReadOnlyList<NameCandidate> run,
         CancellationToken ct)
