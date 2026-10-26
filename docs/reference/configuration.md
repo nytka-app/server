@@ -44,7 +44,7 @@ you copy without thinking would lock its setting.
 | `Nytka__User__TimeZone` | no | `UTC` | editable | IANA time zone such as `Europe/Kyiv`: prompts and mute windows use it; an unknown id falls back to UTC |
 | `Nytka__Llm__BaseUrl` | no | | editable | Base URL of an OpenAI-compatible chat endpoint, without a query or fragment; the server calls `<base URL>/chat/completions` |
 | `Nytka__Llm__ApiKey` | no | | env only | Sent as a bearer token; leave it out for a local model |
-| `Nytka__Llm__Model` | no | | editable | Sent as `model`. A gateway in front of the endpoint may serve a different model under that name; see [A gateway in front](#a-gateway-in-front-of-the-model) |
+| `Nytka__Llm__Model` | no | | editable | Sent as `model`. A gateway in front of the endpoint may serve a different model under that name; see "A gateway in front of the model" below |
 | `Nytka__Llm__OutputLanguage` | no | `auto` | editable | Language of titles, summaries, tasks and memories: `auto` follows the conversation, or a tag such as `uk` |
 | `Nytka__Llm__JsonMode` | no | `schema` | env only | `schema` sends a strict `json_schema`; `object` asks for a JSON object instead, for endpoints that reject `json_schema` |
 | `Nytka__Llm__TimeoutSeconds` | no | `120` | env only | Seconds to wait for one model request |
