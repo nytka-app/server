@@ -151,7 +151,14 @@ endearment or a generic noun, and the segment id is that of the line that says t
 **Re-running.** `people_runs.validator` records the version a run applied (0 for runs made before the
 rules). `POST /api/v1/people/backfill?force=true` also queues `suggest-names` for conversations whose
 names run is below the current version; without `force` it queues only conversations with no
-finished run. `POST /api/v1/people/suggestions/revalidate` (admin) applies the rules to the pending
+finished run, and with `force` also conversations that still hold pending suggestions (their run forgets
+`through_segment_id`, so it reads the whole conversation). A run that asks the model re-decides the conversation's pending
+`speaker`, `label` and `person` suggestions (`NameSuggestionStore.ApplyAsync`, `redecide`): one it gives again takes the new
+confidence, evidence and segments and is weighed for auto-apply as a new one; a named one for a voice it gives no name (or only
+a role) is deleted, as is a role-only one it does not give again; one for a voice it names otherwise stays, so two names for
+one voice still wait for the owner. Suggestions of other conversations are not touched. Why: on the owner's server
+(2026-10-26) 51 of 74 pending suggestions were at 0.85 or above but stored before auto-apply existed, and a re-run skipped them as already
+stored. `POST /api/v1/people/suggestions/revalidate` (admin) applies the rules to the pending
 suggestions the model made (`speaker` and `label` targets; a voice group's name is a person's) and
 deletes the failing ones, returning `{ checked, removed, kept }`. `status` cannot say "rejected by
 the system" and a rejected name is never offered again, so a failing row is deleted and a new run
