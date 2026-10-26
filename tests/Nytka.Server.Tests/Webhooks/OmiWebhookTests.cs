@@ -9,7 +9,6 @@ using Nytka.Server.Webhooks;
 namespace Nytka.Server.Tests.Webhooks;
 
 /// <summary>The <c>omi</c> webhook format: Omi's memory-creation payload, signed and retried like the default one.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class OmiWebhookTests(PostgresFixture db) : AiTestBase(db)
 {
     private static readonly DateTimeOffset Start = new(2026, 10, 23, 8, 58, 0, TimeSpan.Zero);

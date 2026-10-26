@@ -7,8 +7,7 @@ using ModelContextProtocol.Protocol;
 namespace Nytka.Server.Tests.Mcp;
 
 /// <summary>The <c>list_digests</c> tool through the official MCP client.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class McpDigestToolTests(PostgresFixture db) : IAsyncLifetime
+public sealed class McpDigestToolTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

@@ -8,7 +8,6 @@ using Nytka.Server.Ai.Backfill;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>Model work answered by the owner's model through the backfill routes (docs/how-to/backfill-with-claude.md).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class BackfillTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override void ConfigureServices(IServiceCollection services) =>

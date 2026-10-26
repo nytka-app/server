@@ -13,7 +13,6 @@ using static Nytka.Server.Tests.SyntheticAudio;
 namespace Nytka.Server.Tests.Pipeline;
 
 /// <summary>The paid pass and its atomic swap (docs/specs/auto-transcription.md), against the fake Soniox.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class TranscriptPassTests(PostgresFixture db) : AiTestBase(db)
 {
     /// <summary>Tokens in seconds into the pass WAV: "first" over the draft in its first stretch, "second" 200 ms into its second (3.3 s + 0.2 s).</summary>

@@ -6,7 +6,6 @@ using Nytka.Server.Tests.Ai;
 
 namespace Nytka.Server.Tests.Tasks;
 
-[Collection(PostgresCollection.Name)]
 public sealed class TaskApiTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

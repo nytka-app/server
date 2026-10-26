@@ -336,8 +336,7 @@ public sealed class VectorSearchTests(VectorPostgresFixture db) : IAsyncLifetime
 }
 
 /// <summary>Postgres without pgvector: the migration applies and setup says so instead of failing.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VectorUnavailableTests(PostgresFixture db)
+public sealed class VectorUnavailableTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     [Fact]
     public async Task Setup_answers_unavailable_and_search_stays_full_text()

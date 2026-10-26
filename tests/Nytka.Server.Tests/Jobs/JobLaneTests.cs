@@ -9,8 +9,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Jobs;
 
-[Collection(PostgresCollection.Name)]
-public sealed class JobLaneTests : IAsyncLifetime
+public sealed class JobLaneTests : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     /// <summary>A kind no lane claims, so it runs in Audio.</summary>
     private const string AudioKind = "test";

@@ -11,8 +11,7 @@ using static Nytka.Server.Tests.SyntheticAudio;
 
 namespace Nytka.Server.Tests.Settings;
 
-[Collection(PostgresCollection.Name)]
-public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private NytkaApiFactory _server = new(db);
 

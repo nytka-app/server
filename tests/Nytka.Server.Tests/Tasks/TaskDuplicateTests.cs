@@ -7,7 +7,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Tasks;
 
 /// <summary>NYTKA-75: a summary's task that is an open task again joins it, or waits in the review inbox when unsure.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class TaskDuplicateTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

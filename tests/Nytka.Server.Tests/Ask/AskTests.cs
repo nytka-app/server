@@ -14,8 +14,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Ask;
 
 /// <summary>POST /api/v1/ask and the <c>ask</c> MCP tool (docs/specs/v0.8.md, Ask), against the fake model.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class AskTests(PostgresFixture db) : IAsyncLifetime
+public sealed class AskTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Question = "what did I say about the zebrafish tank?";
 

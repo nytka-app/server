@@ -7,7 +7,6 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
 public sealed class BookmarkApiTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

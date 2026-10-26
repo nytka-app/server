@@ -9,8 +9,7 @@ namespace Nytka.Server.Tests.Speech;
 /// The <c>speech</c> review kind and <c>GET /speech/eval</c> (docs/specs/speech-kind.md, S-5): no classifier is needed, a test
 /// sets a guess and a score on a segment itself. Synthetic lines only.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class SpeechReviewTests(PostgresFixture db) : IAsyncLifetime
+public sealed class SpeechReviewTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 10, 0, 0, TimeSpan.Zero);
 

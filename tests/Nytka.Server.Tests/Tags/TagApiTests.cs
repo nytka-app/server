@@ -12,7 +12,6 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Tags;
 
-[Collection(PostgresCollection.Name)]
 public sealed class TagApiTests(PostgresFixture db) : AiTestBase(db)
 {
     private readonly LogCapture _logs = new();

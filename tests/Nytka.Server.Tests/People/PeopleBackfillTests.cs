@@ -6,7 +6,6 @@ using Nytka.Server.Tests.Ai;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>The backfill of docs/specs/people.md: names and facts for conversations summarized before the People features.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class PeopleBackfillTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool NameSuggestions => true;

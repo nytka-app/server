@@ -4,8 +4,7 @@ using System.Text.Json;
 
 namespace Nytka.Server.Tests.Api;
 
-[Collection(PostgresCollection.Name)]
-public sealed class ConversationApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class ConversationApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTime T0 = new(2026, 9, 29, 8, 0, 0, DateTimeKind.Utc);
 

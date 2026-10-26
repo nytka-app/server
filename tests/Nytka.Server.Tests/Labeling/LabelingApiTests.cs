@@ -12,8 +12,7 @@ namespace Nytka.Server.Tests.Labeling;
 /// The labelling API (docs/reference/api.md, Labelling) on synthetic tone and invented text. A line starts <c>start</c> seconds after
 /// <see cref="SyntheticAudio.StartMs"/>, where the tone starts too.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class LabelingApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class LabelingApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset Start = DateTimeOffset.FromUnixTimeMilliseconds(StartMs);
 

@@ -3,8 +3,7 @@ using System.Net;
 namespace Nytka.Server.Tests.Mcp;
 
 /// <summary>/mcp is never open, whatever its host does or does not do yet.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class McpGuardTests(PostgresFixture db)
+public sealed class McpGuardTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     [Theory]
     [InlineData("POST")]

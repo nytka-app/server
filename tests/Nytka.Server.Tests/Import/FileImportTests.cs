@@ -11,8 +11,7 @@ using Nytka.Server.Import;
 
 namespace Nytka.Server.Tests.Import;
 
-[Collection(PostgresCollection.Name)]
-public sealed class FileImportTests(PostgresFixture db) : IAsyncLifetime
+public sealed class FileImportTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _factory = new(db);
 

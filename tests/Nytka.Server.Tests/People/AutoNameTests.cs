@@ -8,7 +8,6 @@ using Nytka.Server.Tests.Ai;
 namespace Nytka.Server.Tests.People;
 
 /// <summary>docs/specs/people.md, Auto-applied names: a sure suggestion names its voice at once and can be undone.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class AutoNameTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool NameSuggestions => true;

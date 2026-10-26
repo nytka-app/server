@@ -8,8 +8,7 @@ namespace Nytka.Server.Tests.Pipeline;
 /// drops audio captured inside a mute window. The audio starts at 2026-09-29 10:00 UTC, a Tuesday,
 /// which is 13:00 in Europe/Kyiv; the window is 13:01 to 13:02 local, so 60 to 120 seconds in.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class MuteWindowTests(PostgresFixture db) : IAsyncLifetime
+public sealed class MuteWindowTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Window = """[{"days":[2],"start":"13:01","end":"13:02"}]""";
 

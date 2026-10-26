@@ -8,7 +8,6 @@ using Nytka.Server.Ai;
 namespace Nytka.Server.Tests.Ai;
 
 /// <summary>What a <c>read</c> token may do on B's routes: GET conversations and tasks, nothing that writes.</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class ReadScopeTests(PostgresFixture db) : AiTestBase(db)
 {
     private static StringContent Body(string json) => new(json, Encoding.UTF8, "application/json");

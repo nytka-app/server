@@ -20,8 +20,7 @@ namespace Nytka.Server.Tests.Voice;
 /// The voice routes (docs/specs/your-voice.md, track S-A) with a fake model: a low tone fingerprints as the wearer's
 /// voice and a high one as its opposite, so readings of synthetic tones agree or disagree on purpose.
 /// </summary>
-[Collection(PostgresCollection.Name)]
-public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime
+public sealed class VoiceApiTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private const string Model = "fake-model";
     private const double Low = 440;

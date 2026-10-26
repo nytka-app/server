@@ -5,8 +5,7 @@ using Npgsql;
 namespace Nytka.Server.Tests;
 
 /// <summary>The test host's own promises, which the tracks that build on it rely on.</summary>
-[Collection(PostgresCollection.Name)]
-public sealed class TestHostTests(PostgresFixture db) : IAsyncLifetime
+public sealed class TestHostTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private readonly NytkaApiFactory _server = new(db);
 

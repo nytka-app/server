@@ -5,7 +5,6 @@ using System.Text.Json;
 
 namespace Nytka.Server.Tests.Ai;
 
-[Collection(PostgresCollection.Name)]
 public sealed class ConversationAiApiTests(PostgresFixture db) : AiTestBase(db)
 {
     private HttpClient Client => Server.CreateAuthorizedClient();

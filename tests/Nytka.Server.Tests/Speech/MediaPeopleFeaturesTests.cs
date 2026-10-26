@@ -13,7 +13,6 @@ namespace Nytka.Server.Tests.Speech;
 /// pipeline with a fake model that records every prompt. A test sets guesses and marks on synthetic lines itself; the stored kind
 /// follows the applied mode, so <c>shadow</c> must give the output of a conversation with no kinds, byte for byte.
 /// </summary>
-[Collection(PostgresCollection.Name)]
 public sealed partial class MediaPeopleFeaturesTests(PostgresFixture db) : AiTestBase(db)
 {
     protected override bool NameSuggestions => true;

@@ -9,7 +9,6 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Memories;
 
 /// <summary>The wearer's own mark on how much an item matters, and "not me" on a line a memory cites (redesign step 5).</summary>
-[Collection(PostgresCollection.Name)]
 public sealed class SalienceMarkTests(PostgresFixture db) : MemoryTestBase(db)
 {
     private static Guid Id(int n) => Guid.Parse($"018f0000-0000-7000-8000-0000000000{n:x2}");

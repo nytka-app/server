@@ -12,8 +12,7 @@ using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Webhooks;
 
-[Collection(PostgresCollection.Name)]
-public sealed class WebhookDeliveryTests(PostgresFixture db) : IAsyncLifetime
+public sealed class WebhookDeliveryTests(PostgresFixture db) : IAsyncLifetime, IClassFixture<PostgresFixture>
 {
     private static readonly DateTime T0 = new(2026, 9, 29, 8, 0, 0, DateTimeKind.Utc);
 
