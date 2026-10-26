@@ -65,7 +65,7 @@ docs do not say.
   With an embeddings model and pgvector they also find by meaning, not only by the words you said
   ([vector search](docs/reference/configuration.md#vector-search)).
 - **Webhooks and MCP.** Your other tools hear about new conversations, tasks and memories; AI agents read it all over
-  MCP (Model Context Protocol, how AI tools read data) with 18 read tools and 3 that write.
+  MCP (Model Context Protocol, how AI tools read data) with 19 read tools and 3 that write.
 - **Usage and a budget.** Each transcription request is priced by a table you can edit, `GET /api/v1/usage` shows
   the cost per day, the month so far and its forecast, and past a monthly budget batches go to a free engine and are
   marked to transcribe again, never dropped ([usage and budget](docs/specs/usage.md)).
