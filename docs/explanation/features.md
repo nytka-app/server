@@ -602,7 +602,10 @@ The summary marks each conversation, and each task, note and memory, with a **se
 symptoms, a doctor), `therapy` (a therapy or counselling session), `intimate` (sex, the private side of a relationship) or
 `money` (debts, salary, account details). It is one more field in the summary and memory answers, so it costs no extra call;
 conversations summarized before it have none until they are summarized again, and memories from before it have none until
-`POST /api/v1/memories/classify` classifies them from their text. A row with no class is treated as `none`.
+`POST /api/v1/memories/classify` classifies them from their text. A conversation too short to summarize (under 20 words) is never
+summarized, so it has no summary to carry a class; the scheduler classifies it from the start of its text (up to 1,500 characters)
+in one small call for up to 30 conversations at a time, once it has been closed for 10 minutes and a few minutes more have passed.
+A conversation with no text at all has nothing to leak and stays without a class. A row with no class is treated as `none`.
 
 Readers you did not trust leave out the classes `Nytka__Privacy__Hide` names (by default all four; `none` hides nothing):
 

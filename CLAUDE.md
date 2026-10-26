@@ -42,7 +42,7 @@ docker compose up -d --build
    deletes processed rows only after 7 days.
 4. **One job at a time per lane.** `JobRunner` is the only consumer of `jobs`, with one runner per
    lane: `Audio` (v0.1's kinds, `rescore-voice`, `rematch-voice`, `group-voices`, `apply-speech`, `classify-speech` and `pick-labeling`; Silero is not thread-safe and transcription requests go out one at a
-   time), `Ai` (`enrich-conversation`, `extract-memories`, `classify-memories`, `make-digest`, `suggest-names`, `extract-person-facts`, `make-brief`, `tidy-tags`, `measure-quality`, `fold-topic`, `make-rollup`, `relate-conversation`) and `Hooks` (`deliver-webhook`, `sync-calendar`). A slow
+   time), `Ai` (`enrich-conversation`, `extract-memories`, `classify-memories`, `classify-conversations`, `make-digest`, `suggest-names`, `extract-person-facts`, `make-brief`, `tidy-tags`, `measure-quality`, `fold-topic`, `make-rollup`, `relate-conversation`) and `Hooks` (`deliver-webhook`, `sync-calendar`). A slow
    model or receiver never delays transcription. Dedupe keys keep one job per session, batch,
    conversation and delivery.
 5. **Nothing sensitive in logs or errors.** No audio, no transcript text, no token, no response body
