@@ -19,7 +19,7 @@ public static class UserTimeZone
     /// <summary>The id the prompt names: the IANA id, or UTC.</summary>
     public static string Name(TimeZoneInfo zone) => zone.Id == "Etc/UTC" ? Default : zone.Id;
 
-    private static bool TryFind(string id, out TimeZoneInfo zone)
+    public static bool TryFind(string id, out TimeZoneInfo zone)
     {
         try
         {

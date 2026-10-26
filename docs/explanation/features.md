@@ -865,6 +865,24 @@ as the ICS address in `Nytka__Calendar__IcsUrl`. The response carries `Cache-Con
 `Referrer-Policy: no-referrer`, so a cache does not keep the token-bearing URL and a browser never sends it
 onward in a `Referer` header.
 
+## Today
+
+`GET /api/v1/today` answers "what is worth a look today" without trusting the model's `vital` label alone, which rates almost
+nothing vital. For the owner's local day it takes the items said that day, and open tasks due by the end of it, and keeps:
+
+- anything rated `vital`, whether the model did it, a bookmark near a cited line did, or you did with your own mark;
+- every open commitment with a named person or a due date;
+- everything somebody owes you (`waiting_on`).
+
+It never shows `noise` (your mark of noise wins over everything), a task that is done, an idea, memory or note that is not
+vital, an unconfirmed memory, or anything with a [sensitivity](#sensitive-content), whoever asks. Items due today or overdue come
+first, then vital ones, then what is owed to you, then those with a person; the best 7 are listed in the order they were said.
+A task said earlier but due today sits in the part of the day of its due time, or in `day` when the due date has none.
+
+`GET /api/v1/timeline` is the same day as scenes, one per conversation, with every live item in any salience, so the app can
+fold the noise. Both carry `evidence`, the lines an item cites, so the app can play the audio and let you say "not me" or "wrong
+person" on the spot. A server that has them lists `today` in `features`.
+
 ## Topic pages
 
 A topic page is one evolving view of something that keeps coming up, the way Memoket keeps one view per client:
