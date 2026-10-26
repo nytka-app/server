@@ -87,11 +87,11 @@ public sealed class ExtractPersonFactsHandler(
             await ApplyAsync(conversationId, asked, covered ? run?.ThroughSegmentId : input.LastSegmentId, ct);
             return JobOutcome.Done;
         }
-        catch (Exception error) when (job.Attempts >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
+        catch (Exception error) when (job.Attempts + 1 >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
         {
             // Only the third attempt records the failure; the earlier ones throw and the runner tries again.
             var message = Describe(error);
-            logger.LogWarning(error, "Extracting person facts failed after {Attempts} attempts: {Message}", job.Attempts, message);
+            logger.LogWarning(error, "Extracting person facts failed after {Attempts} attempts: {Message}", job.Attempts + 1, message);
             var failures = await facts.MarkFailedAsync(conversationId, message, time.GetUtcNow(), ct);
             return failures is { } count && count < MaxRounds ? JobOutcome.RunAgain(RetryAfter) : JobOutcome.Done;
         }

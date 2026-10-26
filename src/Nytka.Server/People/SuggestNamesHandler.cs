@@ -64,11 +64,11 @@ public sealed class SuggestNamesHandler(
                 ct, PeopleSettings.AutoApplyConfidence(settings));
             return JobOutcome.Done;
         }
-        catch (Exception error) when (job.Attempts >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
+        catch (Exception error) when (job.Attempts + 1 >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
         {
             // Only the third attempt records the failure; the earlier ones throw and the runner tries again.
             var message = ExtractMemoriesHandler.Describe(error);
-            logger.LogWarning(error, "Suggesting names failed after {Attempts} attempts: {Message}", job.Attempts, message);
+            logger.LogWarning(error, "Suggesting names failed after {Attempts} attempts: {Message}", job.Attempts + 1, message);
             var failures = await suggestions.MarkFailedAsync(conversationId, message, time.GetUtcNow(), ct);
             return failures is { } count && count < ExtractMemoriesHandler.MaxRounds
                 ? JobOutcome.RunAgain(ExtractMemoriesHandler.RetryAfter)

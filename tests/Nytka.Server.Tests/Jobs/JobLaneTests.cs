@@ -174,6 +174,33 @@ public sealed class JobLaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Stopping_the_service_releases_the_lease_of_a_job_still_running()
+    {
+        _probe.Hold(JobKinds.EnrichConversation);
+        await Enqueue(JobKinds.EnrichConversation, "enrich");
+
+        using var service = new JobRunnerService(Runner, _factory.Time, NullLogger<JobRunnerService>.Instance);
+        await service.StartAsync(default);
+        try
+        {
+            await _probe.Started(JobKinds.EnrichConversation).WaitAsync(Patience);
+
+            using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            await service.StopAsync(shutdown.Token);
+
+            var queue = _factory.Get<JobQueue>();
+            var redequeued = await queue.DequeueAsync(
+                _factory.Time.GetUtcNow(), JobRunner.LeaseOf(JobLane.Ai), JobKindFilter.Any, default);
+            Assert.NotNull(redequeued);
+            Assert.Equal(0, redequeued?.Attempts);
+        }
+        finally
+        {
+            _probe.Release(JobKinds.EnrichConversation);
+        }
+    }
+
+    [Fact]
     public async Task The_service_keeps_a_slow_lane_from_stopping_the_others()
     {
         _probe.Hold(JobKinds.EnrichConversation);

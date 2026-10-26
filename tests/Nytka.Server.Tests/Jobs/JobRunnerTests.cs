@@ -139,7 +139,50 @@ public sealed class JobRunnerTests : IAsyncLifetime
 
         Assert.NotNull(first);
         Assert.Null(second);
-        Assert.Equal(2, afterLease?.Attempts);
+        Assert.Equal(0, afterLease?.Attempts);
+    }
+
+    [Fact]
+    public async Task A_lease_that_expires_without_a_recorded_failure_keeps_the_attempt_count()
+    {
+        await Enqueue();
+        var queue = _factory.Get<JobQueue>();
+        var now = _factory.Time.GetUtcNow();
+        var lease = JobRunner.LeaseOf(JobLane.Audio);
+
+        await queue.DequeueAsync(now, lease, JobKindFilter.Any, default);
+        var redequeued = await queue.DequeueAsync(now + lease + TimeSpan.FromSeconds(1), lease, JobKindFilter.Any, default);
+
+        Assert.Equal(0, redequeued?.Attempts);
+        Assert.Equal(0, await _db.ScalarAsync<int>("select attempts from jobs"));
+    }
+
+    [Fact]
+    public async Task Graceful_shutdown_releases_a_held_lease_so_a_new_runner_dequeues_it_at_once()
+    {
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        _handler.OnRun = async () =>
+        {
+            started.SetResult();
+            await release.Task;
+        };
+        await Enqueue();
+
+        var runner = _factory.Get<JobRunner>();
+        var runTask = runner.RunDueJobsAsync(JobLane.Audio, default);
+        await started.Task;
+
+        await runner.ReleaseHeldLeasesAsync(default);
+
+        var queue = _factory.Get<JobQueue>();
+        var redequeued = await queue.DequeueAsync(
+            _factory.Time.GetUtcNow(), JobRunner.LeaseOf(JobLane.Audio), JobKindFilter.Any, default);
+        Assert.NotNull(redequeued);
+        Assert.Equal(0, redequeued?.Attempts);
+
+        release.SetResult();
+        await runTask;
     }
 
     public sealed class ScriptedHandler : IJobHandler
@@ -150,15 +193,23 @@ public sealed class JobRunnerTests : IAsyncLifetime
 
         public JobOutcome Outcome { get; set; } = JobOutcome.Done;
 
+        /// <summary>Awaited inside <see cref="RunAsync"/>, before <see cref="Fail"/> is checked, so a test can hold a run open.</summary>
+        public Func<Task>? OnRun { get; set; }
+
         public int Runs { get; private set; }
 
         public int GaveUp { get; private set; }
 
         public string Kind => TestKind;
 
-        public Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
+        public async Task<JobOutcome> RunAsync(JobRecord job, CancellationToken ct)
         {
             Runs++;
+            if (OnRun is { } onRun)
+            {
+                await onRun();
+            }
+
             if (Fail)
             {
                 throw new InvalidOperationException("scripted failure");
@@ -166,7 +217,7 @@ public sealed class JobRunnerTests : IAsyncLifetime
 
             var outcome = Outcome;
             Outcome = JobOutcome.Done;
-            return Task.FromResult(outcome);
+            return outcome;
         }
 
         public Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct)
