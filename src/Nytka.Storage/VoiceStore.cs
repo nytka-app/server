@@ -188,6 +188,39 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
         return true;
     }
 
+    /// <summary>Sets the wearer's own mark on the segments inside the caller's transaction, teaching nothing.</summary>
+    public static Task SetMarksAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long[] segmentIds, bool? isUser, CancellationToken ct) =>
+        connection.ExecuteAsync(new CommandDefinition(
+            "update segments set is_user_manual = @isUser where id = any(@segmentIds)",
+            new { segmentIds, isUser }, transaction, cancellationToken: ct));
+
+    /// <summary>
+    /// Teaches the voiceprint the segments marked the wearer's that are <paramref name="learnSeconds"/> or longer and still hold a
+    /// fingerprint of the voiceprint's model, inside the caller's transaction. Returns how many it learned.
+    /// </summary>
+    public static async Task<int> LearnMarkedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long[] segmentIds, double learnSeconds, CancellationToken ct)
+    {
+        var rows = (await connection.QueryAsync<(string Model, byte[] Fingerprint)>(new CommandDefinition(
+            """
+            select f.model, f.fingerprint
+            from segments s
+            join segment_fingerprints f on f.segment_id = s.id
+            join voice_profile v on v.id = 1 and v.model = f.model
+            where s.id = any(@segmentIds) and s.is_user_manual
+              and extract(epoch from s.ended_at - s.started_at)::float8 >= @learnSeconds
+            """,
+            new { segmentIds, learnSeconds }, transaction, cancellationToken: ct))).ToList();
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        await LearnAsync(connection, transaction, rows[0].Model, [.. rows.Select(r => Decode(r.Fingerprint))], ct);
+        return rows.Count;
+    }
+
     /// <summary>Segments that started after <paramref name="since"/> and before <paramref name="until"/>, oldest first.</summary>
     public async Task<IReadOnlyList<VoiceSegment>> ListSegmentsAsync(
         DateTimeOffset? since, DateTimeOffset? until, int limit, CancellationToken ct)
