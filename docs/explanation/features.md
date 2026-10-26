@@ -1164,3 +1164,18 @@ conversation it came from, or null); `at` is the conversation's start or the mem
 The question, the sources sent to the model and the answer are not stored and not logged; failures
 carry fixed sentences. Both calls go to the model you configured, so what your history holds leaves
 the server the way summaries do.
+
+## Scenes
+
+With `timeline.scenes` on (default off), the Timeline shows scenes instead of whole conversations. Conversations stay as
+stored; scenes are derived when the Timeline is read. A new scene starts at a scene-starting [day event](#day-events) inside
+a conversation (`person_joined`, `person_left`, `media_started`, `call_started`; there is no `place_changed` yet) and at a
+topic boundary: for a conversation over 20 minutes, the enrichment call asks the model for one more field,
+`topicBoundaries`, the segment ids where a clearly new topic starts, kept in `conversations.topic_boundaries` (migration
+0062). Each scene's `startsWith` names what started it; the first scene of a conversation says `conversation_started` unless
+an event falls at its very start. A scene carries the conversation's title, summary and people, and the items said in its span.
+
+Continuity: memory extraction checks new facts against what is known. A fact the model marks as contradicting a confirmed
+known memory (`contradicts`) without replacing it is stored unconfirmed, as an ungrounded fact is, and never shown. With
+`timeline.scenes` on, a fact that names a known person (a one-word name) with no `person_joined` event of theirs in the
+conversation is stored unconfirmed too.

@@ -88,4 +88,28 @@ public sealed class MemoryGroundingTests(PostgresFixture db) : MemoryTestBase(db
         Assert.Equal(["You live in Kyiv."], await Listed());
         Assert.Equal(2, await Db.ScalarAsync<long>("select count(*) from memories"));
     }
+
+    [Fact]
+    public async Task A_fact_that_contradicts_a_confirmed_memory_is_stored_unconfirmed()
+    {
+        await Db.ExecuteAsync(
+            """
+            insert into memories (id, text, fingerprint, source, created_at, updated_at)
+            values ('018f0000-0000-7000-8000-0000000000a1', 'You live in Kyiv.', 'you live in kyiv', 'ai', now(), now())
+            """);
+        var mine = await Line("I run every morning.");
+        await Db.ExecuteAsync("update segments set is_user = true where id = @mine", new { mine });
+        Llm.Respond = _ => Answer(new
+        {
+            text = "You live in Lviv.", replaces = (string?)null, contradicts = "018f0000-0000-7000-8000-0000000000a1", salience = "vital",
+            expires = (string?)null, segmentIds = new[] { mine },
+        });
+
+        await PublishReadyAsync(Conversation);
+        await Server.RunJobsAsync();
+
+        Assert.Equal(["You live in Kyiv."], await Listed());
+        Assert.False(await Db.ScalarAsync<bool>("select confirmed from memories where text = 'You live in Lviv.'"));
+        Assert.DoesNotContain(Recorded.Events, e => e.Type == NytkaEvent.MemoryCreated);
+    }
 }

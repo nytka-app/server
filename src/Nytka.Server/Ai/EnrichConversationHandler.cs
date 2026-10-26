@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Dapper;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Nytka.Server.Events;
@@ -102,7 +103,8 @@ public sealed class EnrichConversationHandler(
             var tagNames = suggestTags && !brief ? await tags.NamesInUseAsync(ConversationPrompt.MaxTagNames, ct) : [];
             answer = await AskAsync(
                 new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, brief,
-                people.Select(p => p.Name).ToList(), tagNames, suggestTags, mediaLines, template, ct);
+                people.Select(p => p.Name).ToList(), tagNames, suggestTags, mediaLines, template,
+                AsksTopicBoundaries(conversation.StartedAt, conversation.EndedAt, brief), ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -150,7 +152,7 @@ public sealed class EnrichConversationHandler(
     private async Task<ConversationAnswer> AskAsync(
         DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
         IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, bool mediaLines, TemplateChoice template,
-        CancellationToken ct)
+        bool topicBoundaries, CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -166,6 +168,12 @@ public sealed class EnrichConversationHandler(
         var zoneName = UserTimeZone.Name(zone);
         var system = ConversationPrompt.System(llmOptions.OutputLanguage, zoneName, brief, suggestTags, mediaLines, template.Spec, template.Kinds);
         var schema = template.Kinds is null ? ConversationPrompt.Schema : ConversationPrompt.SchemaWithKind;
+        if (topicBoundaries)
+        {
+            schema = ConversationPrompt.WithTopicBoundaries(schema);
+            system += ConversationPrompt.TopicBoundaryLine;
+        }
+
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
@@ -175,9 +183,11 @@ public sealed class EnrichConversationHandler(
         var answer = parts.Count == 1
             ? parts[0]
             : await CompleteAsync(
-                schema, ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags, mediaLines, template.Spec, template.Kinds),
+                schema, ConversationPrompt.SystemForMerge(llmOptions.OutputLanguage, zoneName, suggestTags, mediaLines, template.Spec, template.Kinds)
+                    + (topicBoundaries ? ConversationPrompt.TopicBoundaryLine + " Keep the boundaries of every part." : ""),
                 ConversationPrompt.UserForMerge(startedAt, parts, zone, people, tagNames), ct);
         var result = brief ? answer with { Items = [] } : answer;
+        result = topicBoundaries ? result : result with { TopicBoundaries = null };
         return brief || !suggestTags ? result with { Tags = [] } : result;
     }
 
@@ -254,6 +264,14 @@ public sealed class EnrichConversationHandler(
             return stored; // no event: the conversation is gone, changed since the read, or was summarized already
         }
 
+        // The lines where a new topic starts, kept only when they are lines of this conversation (docs/explanation/features.md#scenes).
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update conversations
+            set topic_boundaries = array(select s.id from segments s where s.conversation_id = @conversationId and s.id = any(@ids) order by s.id)
+            where id = @conversationId
+            """,
+            new { conversationId, ids = (answer.TopicBoundaries ?? []).Distinct().ToArray() }, transaction, cancellationToken: ct));
         var created = await tasks.ReconcileAsync(connection, transaction, conversationId, classified.Tasks, now, ct);
         await NoteStore.ReplaceAsync(connection, transaction, conversationId, classified.Notes, now, ct);
         await NoteStore.ReplaceDroppedAsync(connection, transaction, conversationId, classified.Dropped, now, ct);
@@ -329,6 +347,10 @@ public sealed class EnrichConversationHandler(
     private static bool IsPermanent(LlmException error) => error.StatusCode is >= 400 and < 500 and not 429;
 
     public static bool IsBrief(int words) => words < BriefWords;
+
+    /// <summary>Whether the call asks for topic boundaries: a conversation, not a brief one, over <see cref="ConversationPrompt.TopicBoundaryMinutes"/>.</summary>
+    public static bool AsksTopicBoundaries(DateTime startedAt, DateTime endedAt, bool brief) =>
+        !brief && endedAt - startedAt > TimeSpan.FromMinutes(ConversationPrompt.TopicBoundaryMinutes);
 
     /// <summary>The words of the lines that are not media: a conversation that is only a TV playing is too short to summarize.</summary>
     public static int SpokenWords(IEnumerable<SegmentRow> segments) =>

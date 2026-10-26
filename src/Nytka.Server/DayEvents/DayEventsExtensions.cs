@@ -1,3 +1,4 @@
+using Nytka.Server.Api;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Settings;
@@ -10,6 +11,7 @@ public static class DayEventsExtensions
     public static IServiceCollection AddNytkaDayEvents(this IServiceCollection services)
     {
         services.AddSingleton<ISettingsGroup, DayEventSettings>();
+        services.AddSingleton<ISettingsGroup, TimelineSettings>();
         services.AddScoped<IJobHandler, RecomputeEventsHandler>();
         services.AddSingleton<IEventSubscriber, RecomputeEventsTrigger>();
         return services;

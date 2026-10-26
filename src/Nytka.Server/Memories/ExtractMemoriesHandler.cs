@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Dapper;
 using Nytka.Server.Ai;
+using Nytka.Server.Api;
 using Nytka.Server.Events;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
@@ -40,8 +42,9 @@ public sealed class ExtractMemoriesHandler(
         """
         { "type": "object", "additionalProperties": false, "required": ["memories"],
           "properties": { "memories": { "type": "array", "items": { "type": "object",
-            "additionalProperties": false, "required": ["text", "replaces", "salience", "expires", "segmentIds", "sensitivity"],
+            "additionalProperties": false, "required": ["text", "replaces", "contradicts", "salience", "expires", "segmentIds", "sensitivity"],
             "properties": { "text": { "type": "string" }, "replaces": { "type": ["string", "null"] },
+                            "contradicts": { "type": ["string", "null"] },
                             "salience": { "type": "string", "enum": ["vital", "ordinary", "noise"] },
                             "expires": { "type": ["string", "null"] },
                             "segmentIds": { "type": "array", "items": { "type": "integer" } },
@@ -56,7 +59,7 @@ public sealed class ExtractMemoriesHandler(
     /// <summary>A proposed fact. <paramref name="Salience"/> and <paramref name="Expires"/> are missing in answers from before they existed.</summary>
     public sealed record Candidate(
         string Text, string? Replaces, string? Salience = null, string? Expires = null, IReadOnlyList<long>? SegmentIds = null,
-        string? Sensitivity = null);
+        string? Sensitivity = null, string? Contradicts = null);
 
     public sealed record Answer(IReadOnlyList<Candidate> Memories);
 
@@ -109,6 +112,8 @@ public sealed class ExtractMemoriesHandler(
         var zone = UserTimeZone.Resolve(settings);
         var system = SystemMessage(llmOptions.CurrentValue.OutputLanguage, UserTimeZone.Name(zone));
         var userName = MemorySettings.UserName(settings);
+        var scenes = TimelineSettings.Scenes(settings);
+        var joined = scenes ? await JoinedAsync(input, ct) : null;
 
         var from = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(input.StartedAt, TimeSpan.Zero), zone).DateTime);
         var pooled = new List<MemoryCandidate>();
@@ -127,9 +132,10 @@ public sealed class ExtractMemoriesHandler(
 
                 Guid? replaces = Guid.TryParse(candidate.Replaces, out var id) && listed.Contains(id) ? id : null;
                 var cited = Cited(candidate.SegmentIds, input.Segments);
+                var grounded = candidate.SegmentIds is null || IsGrounded(cited, input.Segments);
                 pooled.Add(new MemoryCandidate(
                     text, fingerprint, replaces, Salience.Parse(candidate.Salience), ExpiresAt(candidate.Expires, from, zone),
-                    cited, candidate.SegmentIds is null || IsGrounded(cited, input.Segments), Storage.Sensitivity.Parse(candidate.Sensitivity)));
+                    cited, grounded && IsContinuous(candidate, replaces, listed, text, joined), Storage.Sensitivity.Parse(candidate.Sensitivity)));
             }
         }
 
@@ -153,6 +159,45 @@ public sealed class ExtractMemoriesHandler(
     {
         var wearer = segments.Where(s => !s.IsMedia && s.Speaker == SpeakerLabel.Wearer).Select(s => s.Id).ToHashSet();
         return cited.Any(wearer.Contains);
+    }
+
+    /// <summary>
+    /// The continuity check (docs/explanation/features.md#scenes): a fact that contradicts a confirmed known memory without replacing
+    /// it is not confirmed, and with <c>timeline.scenes</c> on (<paramref name="joined"/> not null) neither is one that names a known
+    /// person with no <c>person_joined</c> event in the conversation. <paramref name="joined"/> maps each known person's name, lower
+    /// case, to whether they joined.
+    /// </summary>
+    public static bool IsContinuous(
+        Candidate candidate, Guid? replaces, IReadOnlySet<Guid> listed, string text, IReadOnlyDictionary<string, bool>? joined)
+    {
+        if (replaces is null && Guid.TryParse(candidate.Contradicts, out var contradicted) && listed.Contains(contradicted))
+        {
+            return false;
+        }
+
+        if (joined is null)
+        {
+            return true;
+        }
+
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.Trim('.', ',', ';', ':', '!', '?', '"', '\'', '(', ')').ToLowerInvariant())
+            .ToHashSet();
+        return joined.All(p => p.Value || !words.Contains(p.Key));
+    }
+
+    /// <summary>Each known person's name (lower case, one word) and whether a <c>person_joined</c> event of theirs is in the conversation.</summary>
+    private async Task<IReadOnlyDictionary<string, bool>> JoinedAsync(ExtractionInput input, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<(string Name, bool Joined)>(new CommandDefinition(
+            """
+            select lower(p.name), exists (
+                select 1 from events e where e.conversation_id = @id and e.kind = 'person_joined' and e.person_id = p.id)
+            from people p where p.name !~ '\s'
+            """,
+            new { id = input.ConversationId }, cancellationToken: ct));
+        return rows.GroupBy(r => r.Name).ToDictionary(g => g.Key, g => g.Any(r => r.Joined));
     }
 
     /// <summary>
@@ -202,7 +247,8 @@ public sealed class ExtractMemoriesHandler(
         Set "sensitivity" to "health", "therapy", "intimate" or "money" for a fact about your health, a therapy or counselling session, your sex life or the private side of a relationship, or your money; "none" otherwise.
         Set "salience" to "vital" for what shapes your life (family, health, home, work, money, a big decision), "noise" for trivia (a passing taste or opinion), and "ordinary" for the rest.
         Return at most {MaxMemoriesPerRun} facts, none that a known memory already states. When a fact updates a
-        known memory, set "replaces" to that memory's id, otherwise to null. Return an empty list when there is
+        known memory, set "replaces" to that memory's id, otherwise to null. When a fact contradicts a known memory and does not
+        plainly update it, set "contradicts" to that memory's id, otherwise to null. Return an empty list when there is
         nothing lasting.
         """;
 
