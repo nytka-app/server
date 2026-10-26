@@ -379,7 +379,7 @@ public sealed class TranscriptPassTests(PostgresFixture db) : AiTestBase(db)
         var batch = await Db.ScalarAsync<long>("select id from transcription_batches");
         var group = Guid.NewGuid();
         await Db.ExecuteAsync(
-            "insert into voice_profile (id, model, enrolled, enrolled_count, centroid, centroid_count, enrolled_at, updated_at) values (1, 'm', '\\x00', 1, '\\x00', 1, now(), now())");
+            "insert into voice_profile (id, model, enrolled, enrolled_count, enrolled_at, updated_at) values (1, 'm', '\\x00', 1, now(), now())");
         await Db.ExecuteAsync("insert into voice_groups (id, model, centroid, count, created_at, updated_at) values (@group, 'm', '\\x00', 2, now(), now())", new { group });
         await Db.ExecuteAsync(
             "insert into segment_fingerprints (segment_id, batch_id, model, fingerprint, created_at, group_id, grouped) values (@draft, @batch, 'm', '\\x00', now(), @group, true)",

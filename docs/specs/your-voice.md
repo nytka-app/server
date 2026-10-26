@@ -188,7 +188,7 @@ Migration `0013_voice.sql`:
   `applied_threshold real`, `enrolled_at`, `updated_at`. A vector is 192 little-endian `float4`s, 768
   bytes.
 
-Migration `0057_voice_profile_prints.sql` (NYTKA-159): `voice_profile_prints` holds the wearer's
+Migration `0058_voice_profile_prints.sql` (NYTKA-159): `voice_profile_prints` holds the wearer's
 centroids — `id bigint generated always as identity`, `profile_id smallint references voice_profile
 on delete cascade`, `embedding bytea`, `line_count int`, `created_at`, `updated_at` — seeded from
 `voice_profile`'s former `centroid`/`centroid_count` columns (then dropped) so nothing already

@@ -315,8 +315,10 @@ public sealed class LabelingApiTests(PostgresFixture db) : IAsyncLifetime
         var vector = Enumerable.Repeat(1f / MathF.Sqrt(192), 192).ToArray();
         await db.ExecuteAsync(
             """
-            insert into voice_profile (id, model, enrolled, enrolled_count, centroid, centroid_count, enrolled_at, updated_at)
-            values (1, 'model-a', @v, 10, @v, 10, @Start, @Start);
+            insert into voice_profile (id, model, enrolled, enrolled_count, enrolled_at, updated_at)
+            values (1, 'model-a', @v, 10, @Start, @Start);
+            insert into voice_profile_prints (profile_id, embedding, line_count, created_at, updated_at)
+            values (1, @v, 10, @Start, @Start);
             insert into segment_fingerprints (segment_id, batch_id, model, fingerprint, created_at)
             select id, batch_id, 'model-a', @v, @Start from segments
             """,
@@ -325,22 +327,22 @@ public sealed class LabelingApiTests(PostgresFixture db) : IAsyncLifetime
         await Post(await Item(c, "voice", flagged), Answer(("source", new[] { "me" }), ("flags", new[] { "two_speakers" })));
 
         Assert.Equal((true, null), await Marks(line));
-        Assert.Equal(10, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(10, await db.ScalarAsync<int>("select sum(line_count)::int from voice_profile_prints"));
         var pending = (await Client.GetFromJsonAsync<JsonElement>("/api/v1/labeling/voice/pending")).GetProperty("items").EnumerateArray().Single();
         Assert.Equal((me, line, 3000), (pending.GetProperty("labelId").GetInt64(), pending.GetProperty("segmentId").GetInt64(), pending.GetProperty("durationMs").GetInt32()));
 
         var bad = await Client.PostAsJsonAsync("/api/v1/labeling/voice/confirm", new { labelIds = new[] { me, 9_999_999 } });
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-        Assert.Equal(10, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(10, await db.ScalarAsync<int>("select sum(line_count)::int from voice_profile_prints"));
 
         var learned = await Client.PostAsJsonAsync("/api/v1/labeling/voice/confirm", new { labelIds = new[] { me } });
         Assert.Equal(1, (await learned.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("learned").GetInt32());
-        Assert.Equal(11, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(11, await db.ScalarAsync<int>("select sum(line_count)::int from voice_profile_prints"));
         Assert.Equal(0, (await Client.GetFromJsonAsync<JsonElement>("/api/v1/labeling/voice/pending")).GetProperty("items").GetArrayLength());
 
         var again = await Client.PostAsJsonAsync("/api/v1/labeling/voice/confirm", new { labelIds = new[] { me } });
         Assert.Equal(0, (await again.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("learned").GetInt32());
-        Assert.Equal(11, await db.ScalarAsync<int>("select centroid_count from voice_profile"));
+        Assert.Equal(11, await db.ScalarAsync<int>("select sum(line_count)::int from voice_profile_prints"));
     }
 
     [Fact]

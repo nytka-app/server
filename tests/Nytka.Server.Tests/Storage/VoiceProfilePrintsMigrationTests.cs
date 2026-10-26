@@ -7,7 +7,7 @@ using Nytka.Storage;
 namespace Nytka.Server.Tests.Storage;
 
 /// <summary>
-/// Migration 0057_voice_profile_prints.sql (NYTKA-159): several wearer voiceprints instead of one running mean,
+/// Migration 0058_voice_profile_prints.sql (NYTKA-159): several wearer voiceprints instead of one running mean,
 /// seeded from the row the old single-centroid schema already had so nothing already learned is lost.
 /// </summary>
 [Collection(PostgresCollection.Name)]
@@ -25,13 +25,13 @@ public sealed class VoiceProfilePrintsMigrationTests(PostgresFixture db)
     {
         var connectionString = await NewDatabase();
 
-        // Everything up to, but not including, 0057: the schema as it was before this change.
+        // Everything up to, but not including, 0058: the schema as it was before this change.
         var before = DeployChanges.To
             .PostgresqlDatabase(connectionString)
             .WithScriptsEmbeddedInAssembly(
                 NytkaMigrations.Scripts,
                 name => name.Contains(".Migrations.", StringComparison.Ordinal)
-                    && !name.Contains("0057_voice_profile_prints", StringComparison.Ordinal))
+                    && !name.Contains("0058_voice_profile_prints", StringComparison.Ordinal))
             .WithTransactionPerScript()
             .LogToNowhere()
             .Build()
@@ -51,9 +51,9 @@ public sealed class VoiceProfilePrintsMigrationTests(PostgresFixture db)
                 new { centroid, enrolledAt, updatedAt });
         }
 
-        // The rest, including 0057: it must seed voice_profile_prints from the row just inserted.
+        // The rest, including 0058: it must seed voice_profile_prints from the row just inserted.
         var applied = NytkaMigrations.Run(connectionString, NullLogger.Instance);
-        Assert.Contains("Nytka.Storage.Migrations.0057_voice_profile_prints.sql", applied);
+        Assert.Contains("Nytka.Storage.Migrations.0058_voice_profile_prints.sql", applied);
 
         await using var after = new NpgsqlConnection(connectionString);
         var prints = (await after.QueryAsync<(short ProfileId, byte[] Embedding, int LineCount, DateTime CreatedAt, DateTime UpdatedAt)>(
