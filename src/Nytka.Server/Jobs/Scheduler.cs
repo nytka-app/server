@@ -6,6 +6,7 @@ using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Privacy;
 using Nytka.Server.Quality;
+using Nytka.Server.Rollups;
 using Nytka.Server.Settings;
 using Nytka.Server.Speech;
 using Nytka.Server.Tags;
@@ -19,13 +20,14 @@ namespace Nytka.Server.Jobs;
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
 /// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs, the
-/// quality metrics, the speech kinds' follow-up of their settings and the topic pages with conversations to fold in. Dedupe keys make every call safe to repeat.
+/// quality metrics, the speech kinds' follow-up of their settings, the topic pages with conversations to fold in and the rollups of
+/// the periods that just closed. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
     CalendarQueue calendar, QualityQueue quality, SpeechStore speech, BatchRetryQueue batchRetries,
-    SpeakerModel speaker, TagStore tags, TopicStore topics, TimeProvider time)
+    SpeakerModel speaker, TagStore tags, TopicStore topics, RollupStore rollups, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
     private const int EnrichPerTick = 100;
@@ -67,6 +69,48 @@ public sealed class Scheduler(
         await QueueApplySpeechAsync(now, ct);
         await QueueClassifySpeechAsync(now, ct);
         await QueueTopicsAsync(now, ct);
+        await QueueRollupsAsync(now, ct);
+    }
+
+    /// <summary>
+    /// Queues the rollups of the week, month and year that closed at least a day ago (so their last digest exists), the topics'
+    /// weeks and, after a month closes, all time again, while <c>rollups.enabled</c>. Never older periods: those need a backfill.
+    /// </summary>
+    private async Task QueueRollupsAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (!llm.IsConfigured || !RollupSettings.Enabled(settings))
+        {
+            return;
+        }
+
+        var zone = UserTimeZone.Resolve(settings);
+        var settled = DigestDay.Today(now, zone).AddDays(-1);
+        foreach (var period in new[] { RollupStore.Week, RollupStore.Month, RollupStore.Year })
+        {
+            var start = RollupPeriod.Text(RollupPeriod.LastClosed(period, settled));
+            if (await rollups.GetAsync(period, start, null, ct) is null)
+            {
+                await MakeRollupHandler.QueueAsync(queue, period, start, null, now, ct);
+            }
+        }
+
+        var week = RollupPeriod.LastClosed(RollupStore.Week, settled);
+        var (from, _) = DigestDay.Bounds(week, zone);
+        var (to, _) = DigestDay.Bounds(RollupPeriod.EndOf(RollupStore.Week, week), zone);
+        foreach (var topic in await rollups.TopicsActiveAsync(from, to, RollupPeriod.TopicNeed, ct))
+        {
+            if (await rollups.GetAsync(RollupStore.Week, RollupPeriod.Text(week), topic, ct) is null)
+            {
+                await MakeRollupHandler.QueueAsync(queue, RollupStore.Week, RollupPeriod.Text(week), topic, now, ct);
+            }
+        }
+
+        var month = await rollups.GetAsync(RollupStore.Month, RollupPeriod.Text(RollupPeriod.LastClosed(RollupStore.Month, settled)), null, ct);
+        var all = await rollups.GetAsync(RollupStore.All, "", null, ct);
+        if (month is not null && (all is null || all.UpdatedAt < month.UpdatedAt))
+        {
+            await MakeRollupHandler.QueueAsync(queue, RollupStore.All, null, null, now, ct);
+        }
     }
 
     /// <summary>Starts the pages that are due and queues <c>fold-topic</c> for those with conversations to take in, while <c>topics.enabled</c>.</summary>

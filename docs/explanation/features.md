@@ -712,6 +712,35 @@ needs the language model.
 - **When it fails.** A run makes three attempts; after the third it is tried again an hour later while
   the date is today or yesterday. Logs and errors say only what failed, never the digest or its input.
 
+## Summaries over time
+
+Rollups summarize a week, a month, a year and all time, each with what changed since the period before, plus
+each [topic page](#topic-pages)'s week. A week is made from its [daily digests](#daily-digest) (and, for a
+day with no digest, its conversation summaries, at most 40), a month from the weeks that start in it, a year
+from its months, and all time from the years and this year's months. Transcripts are never read, so every
+rollup costs one model call whatever the period holds. `GET /api/v1/rollups` lists them and the
+`list_rollups` MCP tool returns the same.
+
+A rollup goes to every reader, so it holds no [sensitive](#sensitive-content) content: a week's
+conversation summaries leave out the classes `privacy.hide` names, as the digests do, and a topic's week
+takes only conversations classified as not sensitive, as its page does.
+
+**Locked periods.** A period with too little recorded is stored `locked`, with its `progress` (local days
+with a summarized conversation: 3 for a week, 7 for a month, 30 for a year, 14 for all time; 2
+conversations for a topic's week) and no summary, and costs no call.
+
+**When they are made.** With `rollups.enabled` (`Nytka__Rollups__Enabled`, off by default) the scheduler
+makes the rollup of each week, month and year a day after it closes, so its last digest exists, then all
+time after each month. A month waits for its weeks, a year for its months, and the `make-rollup` job
+(Ai lane) queues any part that is missing. Periods that closed before the setting was turned on are made
+only by `POST /api/v1/rollups/backfill` (admin), which queues every closed period since a date; each costs
+at most one call.
+
+**Cost.** On the owner's data (17 digests of about 1,600 characters, about 5 conversations a day) a week
+is about 4,000 tokens in and 700 out, its share of the month a quarter of that, and about 5 topic weeks of
+800 in and 300 out: about $0.02 a week at Claude Haiku 4.5's $1 / $5 per million tokens, and about $0.10
+for a backfill of the first month.
+
 ## Quality metrics
 
 Every night the server measures how well it understood the day, from stored rows only (no model call),
