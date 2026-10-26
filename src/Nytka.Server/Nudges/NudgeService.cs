@@ -1,4 +1,5 @@
 using System.Globalization;
+using Nytka.Server.Ai;
 using Nytka.Server.Api;
 using Nytka.Server.Digests;
 using Nytka.Server.Insights;

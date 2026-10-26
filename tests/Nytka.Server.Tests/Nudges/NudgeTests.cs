@@ -35,7 +35,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
         return id;
     }
 
-    private async Task<Guid> Task(Guid conversation, string text, DateTimeOffset due, string? sensitivity = null)
+    private async Task<Guid> Commitment(Guid conversation, string text, DateTimeOffset due, string? sensitivity = null)
     {
         var id = Guid.NewGuid();
         await db.ExecuteAsync(
@@ -59,7 +59,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task A_commitment_due_in_three_hours_is_one_nudge_with_the_same_id_on_a_second_poll()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        var task = await Task(conversation, "Send the invoice", Now.AddHours(3));
+        var task = await Commitment(conversation, "Send the invoice", Now.AddHours(3));
 
         var first = Assert.Single(await Poll());
         var second = Assert.Single(await Poll());
@@ -76,8 +76,8 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task A_commitment_beyond_a_day_or_already_done_is_no_nudge()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        await Task(conversation, "Far off", Now.AddHours(30));
-        var done = await Task(conversation, "Done already", Now.AddHours(2));
+        await Commitment(conversation, "Far off", Now.AddHours(30));
+        var done = await Commitment(conversation, "Done already", Now.AddHours(2));
         await db.ExecuteAsync("update tasks set done = true where id = @done", new { done });
 
         Assert.Empty(await Poll());
@@ -88,9 +88,9 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     {
         var plain = await Conversation(Now.AddHours(-2));
         var therapy = await Conversation(Now.AddHours(-1), sensitivity: "therapy");
-        await Task(plain, "Hidden task", Now.AddHours(3), sensitivity: "health");
-        await Task(therapy, "Task in a hidden conversation", Now.AddHours(3));
-        var visible = await Task(plain, "Visible task", Now.AddHours(4));
+        await Commitment(plain, "Hidden task", Now.AddHours(3), sensitivity: "health");
+        await Commitment(therapy, "Task in a hidden conversation", Now.AddHours(3));
+        var visible = await Commitment(plain, "Visible task", Now.AddHours(4));
 
         var items = await Poll();
 
@@ -101,7 +101,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task A_nudge_whose_task_is_hidden_later_is_no_longer_returned()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        var task = await Task(conversation, "Later hidden", Now.AddHours(3));
+        var task = await Commitment(conversation, "Later hidden", Now.AddHours(3));
         Assert.Single(await Poll());
 
         await db.ExecuteAsync("update tasks set sensitivity = 'money' where id = @task", new { task });
@@ -113,7 +113,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task Since_returns_only_what_is_shown_from_then_on()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        await Task(conversation, "Send the invoice", Now.AddHours(3));
+        await Commitment(conversation, "Send the invoice", Now.AddHours(3));
         Assert.Single(await Poll());
         var made = Now;
 
@@ -126,7 +126,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task Nothing_is_shown_inside_quiet_hours_and_comes_when_they_end()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        await Task(conversation, "Call the bank", Now.AddHours(14));
+        await Commitment(conversation, "Call the bank", Now.AddHours(14));
         _server.Time.Advance(TimeSpan.FromHours(13)); // 23:00, quiet from 22:00
         var before = Now;
 
@@ -142,7 +142,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task The_quiet_hours_follow_the_tz_of_the_request()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        await Task(conversation, "Call the bank", Now.AddHours(5));
+        await Commitment(conversation, "Call the bank", Now.AddHours(5));
         _server.Time.Advance(TimeSpan.FromHours(12)); // 22:00 UTC is 01:00 in Kyiv: quiet there, quiet in UTC too
 
         Assert.Empty(await Poll("?tz=Europe/Kyiv"));
@@ -153,7 +153,7 @@ public sealed class NudgeTests(PostgresFixture db) : IAsyncLifetime, IClassFixtu
     public async Task Switching_nudges_off_empties_the_list()
     {
         var conversation = await Conversation(Now.AddHours(-1));
-        await Task(conversation, "Send the invoice", Now.AddHours(3));
+        await Commitment(conversation, "Send the invoice", Now.AddHours(3));
         (await _server.CreateAuthorizedClient().PatchAsJsonAsync(
             "/api/v1/settings", new { values = new Dictionary<string, string> { ["nudges.enabled"] = "false" } })).EnsureSuccessStatusCode();
 

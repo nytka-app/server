@@ -11,6 +11,7 @@ using Nytka.Server.Digests;
 using Nytka.Server.Events;
 using Nytka.Server.Import;
 using Nytka.Server.Insights;
+using Nytka.Server.Nudges;
 using Nytka.Server.Jobs;
 using Nytka.Server.Labeling;
 using Nytka.Server.Mcp;
