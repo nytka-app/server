@@ -28,6 +28,7 @@ public static class JobKinds
     public const string FoldTopic = "fold-topic";
     public const string MakeRollup = "make-rollup";
     public const string RelateConversation = "relate-conversation";
+    public const string ClassifyMemories = "classify-memories";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling and one nobody
@@ -46,6 +47,7 @@ public static class JobKinds
         [FoldTopic] = JobLane.Ai,
         [MakeRollup] = JobLane.Ai,
         [RelateConversation] = JobLane.Ai,
+        [ClassifyMemories] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };

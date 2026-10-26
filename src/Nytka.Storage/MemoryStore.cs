@@ -124,6 +124,39 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
         return rows.ToList();
     }
 
+    /// <summary>Live memories nobody has classified yet, oldest first: what the classifier sends to the model.</summary>
+    public async Task<IReadOnlyList<KnownMemory>> UnclassifiedAsync(int limit, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<KnownMemory>(new CommandDefinition(
+            "select id as Id, text as Text from memories where deleted_at is null and sensitivity is null order by id limit @limit",
+            new { limit }, cancellationToken: ct))).ToList();
+    }
+
+    public async Task<int> CountUnclassifiedAsync(CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            "select count(*)::int from memories where deleted_at is null and sensitivity is null", cancellationToken: ct));
+    }
+
+    /// <summary>Sets the class of memories that have none; one already classified, by extraction or a person, is never overwritten. Returns how many were set.</summary>
+    public async Task<int> ClassifyAsync(IReadOnlyList<(Guid Id, string Sensitivity)> classes, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
+        var set = 0;
+        foreach (var (id, sensitivity) in classes)
+        {
+            set += await connection.ExecuteAsync(new CommandDefinition(
+                "update memories set sensitivity = @sensitivity where id = @id and sensitivity is null and deleted_at is null",
+                new { id, sensitivity }, transaction, cancellationToken: ct));
+        }
+
+        await transaction.CommitAsync(ct);
+        return set;
+    }
+
     /// <summary>The conversation's title, day and transcript, or null when it is gone.</summary>
     public async Task<ExtractionInput?> ReadInputAsync(Guid conversationId, CancellationToken ct)
     {
