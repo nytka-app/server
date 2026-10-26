@@ -36,6 +36,7 @@ public static class ItemClassifier
         var notes = new Dictionary<string, List<string>>();
         var noteSalience = new Dictionary<string, string?>();
         var noteSensitivity = new Dictionary<string, string?>();
+        var noteSegments = new Dictionary<string, List<long>>();
         var dropped = new List<DroppedCandidate>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var commitments = 0;
@@ -104,13 +105,19 @@ public static class ItemClassifier
                         points.Add(text);
                         noteSalience[topic] = Salience.Max(noteSalience.GetValueOrDefault(topic), Salience.Parse(item.Salience));
                         noteSensitivity[topic] = Sensitivity.Stronger(noteSensitivity.GetValueOrDefault(topic), Sensitivity.Parse(item.Sensitivity));
+                        if (!noteSegments.TryGetValue(topic, out var lines))
+                        {
+                            noteSegments[topic] = lines = [];
+                        }
+
+                        lines.AddRange(item.SegmentIds ?? []);
                     }
 
                     break;
             }
         }
 
-        return new ClassifiedItems(tasks, [.. notes.Select(n => new AiNote(n.Key, n.Value, noteSalience.GetValueOrDefault(n.Key), noteSensitivity.GetValueOrDefault(n.Key)))], dropped);
+        return new ClassifiedItems(tasks, [.. notes.Select(n => new AiNote(n.Key, n.Value, noteSalience.GetValueOrDefault(n.Key), noteSensitivity.GetValueOrDefault(n.Key), noteSegments.GetValueOrDefault(n.Key)?.Distinct().ToList()))], dropped);
     }
 
     private static DateTime? Due(string? text, DateOnly? from) =>

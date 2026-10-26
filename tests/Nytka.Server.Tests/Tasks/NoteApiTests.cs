@@ -41,7 +41,7 @@ public sealed class NoteApiTests(PostgresFixture db) : AiTestBase(db)
         Assert.Equal(conversation.ToString(), note.GetProperty("conversationId").GetString());
         Assert.Equal("Lesson", note.GetProperty("conversationTitle").GetString());
         Assert.Equal(
-            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "topic", "points", "createdAt"],
+            ["id", "conversationId", "conversationTitle", "conversationStartedAt", "topic", "points", "createdAt", "salience", "salienceManual"],
             note.EnumerateObject().Select(p => p.Name));
         Assert.Equal(JsonValueKind.Null, page.GetProperty("nextBefore").ValueKind);
     }

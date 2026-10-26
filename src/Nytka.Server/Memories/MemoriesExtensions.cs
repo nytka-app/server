@@ -14,6 +14,7 @@ public static class MemoriesExtensions
         services.AddScoped<IJobHandler, ExtractMemoriesHandler>();
         services.AddScoped<IJobHandler, ClassifyMemoriesHandler>();
         services.AddScoped<MemoryRecheck>();
+        services.AddScoped<MemoryRegrounder>();
         return services;
     }
 }

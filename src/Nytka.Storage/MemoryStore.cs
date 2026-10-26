@@ -11,7 +11,8 @@ namespace Nytka.Storage;
 /// </summary>
 public sealed record MemoryRow(
     Guid Id, string Text, string Source, Guid? ConversationId, string? ConversationTitle, DateTime? ConversationStartedAt,
-    DateTime CreatedAt, DateTime UpdatedAt, string? Salience = null, DateTime? ExpiresAt = null, DateTime? MarkedAt = null, long? MarkedSegmentId = null);
+    DateTime CreatedAt, DateTime UpdatedAt, string? Salience = null, DateTime? ExpiresAt = null, DateTime? MarkedAt = null, long? MarkedSegmentId = null,
+    bool SalienceManual = false);
 
 /// <summary>A page of memories and the id to pass as <c>before</c> for the next one, or null on the last page.</summary>
 public sealed record MemoryPage(IReadOnlyList<MemoryRow> Items, Guid? NextBefore);
@@ -122,6 +123,43 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
             "select id as Id, text as Text from memories where deleted_at is null and confirmed order by id desc limit @limit",
             new { limit }, cancellationToken: ct));
         return rows.ToList();
+    }
+
+    /// <summary>The wearer's mark on how much a memory matters, as <see cref="TaskStore.SetSalienceAsync"/> does for a task. False when it is gone.</summary>
+    public async Task<bool> SetSalienceAsync(Guid id, string? salience, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.ExecuteAsync(new CommandDefinition(
+            """
+            update memories set salience = coalesce(cast(@salience as text), salience), salience_manual = cast(@salience as text) is not null, updated_at = @now
+            where id = @id and deleted_at is null
+            """,
+            new { id, salience, now }, cancellationToken: ct)) > 0;
+    }
+
+    /// <summary>A memory taken from a conversation, with every line it cites: what a changed mark on a line re-judges.</summary>
+    public sealed class CitingMemory
+    {
+        public Guid Id { get; init; }
+
+        public Guid ConversationId { get; init; }
+
+        public long[] Lines { get; init; } = [];
+    }
+
+    /// <summary>The live memories nobody edited that cite <paramref name="segmentId"/>, each with all its cited lines.</summary>
+    public async Task<IReadOnlyList<CitingMemory>> CitingAsync(long segmentId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<CitingMemory>(new CommandDefinition(
+            """
+            select m.id as Id, m.conversation_id as ConversationId,
+                   array(select segment_id from memory_sources where memory_id = m.id order by segment_id) as Lines
+            from memories m
+            where m.deleted_at is null and not m.edited and m.source = 'ai' and m.conversation_id is not null
+              and exists (select 1 from memory_sources s where s.memory_id = m.id and s.segment_id = @segmentId)
+            """,
+            new { segmentId }, cancellationToken: ct))).ToList();
     }
 
     /// <summary>Live memories nobody has classified yet, oldest first: what the classifier sends to the model.</summary>
@@ -268,7 +306,8 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
                 && await connection.ExecuteAsync(new CommandDefinition(
                     """
                     update memories
-                    set text = @text, fingerprint = @fingerprint, conversation_id = @conversationId, salience = @Salience,
+                    set text = @text, fingerprint = @fingerprint, conversation_id = @conversationId,
+                        salience = case when salience_manual then salience else @Salience end,
                         expires_at = @ExpiresAt, sensitivity = coalesce(@Sensitivity, sensitivity), updated_at = @now
                     where id = @replaces and deleted_at is null and edited = false and source = 'ai'
                     """,
@@ -380,8 +419,8 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
         $"""
         select m.id as Id, m.text as Text, m.source as Source, m.conversation_id as ConversationId,
                coalesce(c.title, c.ai_title) as ConversationTitle, c.started_at as ConversationStartedAt,
-               m.created_at as CreatedAt, m.updated_at as UpdatedAt, case when mark.at is not null then 'vital' else m.salience end as Salience,
-               m.expires_at as ExpiresAt, mark.at as MarkedAt, mark.segment_id as MarkedSegmentId
+               m.created_at as CreatedAt, m.updated_at as UpdatedAt, case when m.salience_manual then m.salience when mark.at is not null then 'vital' else m.salience end as Salience,
+               m.expires_at as ExpiresAt, mark.at as MarkedAt, mark.segment_id as MarkedSegmentId, m.salience_manual as SalienceManual
         from memories m
         left join conversations c on c.id = m.conversation_id
         left join lateral ({BookmarkStore.MemoryMark}) mark on true

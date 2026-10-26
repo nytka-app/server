@@ -40,7 +40,7 @@ public sealed class MemoryApiTests(PostgresFixture db) : MemoryTestBase(db)
         Assert.Equal(JsonValueKind.Null, memory.GetProperty("conversationTitle").ValueKind);
         Assert.Equal(JsonValueKind.Null, memory.GetProperty("conversationStartedAt").ValueKind);
         Assert.Equal(
-            ["id", "text", "source", "conversationId", "conversationTitle", "conversationStartedAt", "createdAt", "updatedAt", "salience", "expiresAt", "markedAt", "markedSegmentId"],
+            ["id", "text", "source", "conversationId", "conversationTitle", "conversationStartedAt", "createdAt", "updatedAt", "salience", "expiresAt", "markedAt", "markedSegmentId", "salienceManual"],
             memory.EnumerateObject().Select(p => p.Name));
         Assert.Equal("i live in kyiv", await Db.ScalarAsync<string>("select fingerprint from memories"));
     }
