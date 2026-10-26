@@ -27,6 +27,7 @@ public static class JobKinds
     public const string PickLabeling = "pick-labeling";
     public const string FoldTopic = "fold-topic";
     public const string MakeRollup = "make-rollup";
+    public const string RelateConversation = "relate-conversation";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling and one nobody
@@ -44,6 +45,7 @@ public static class JobKinds
         [MeasureQuality] = JobLane.Ai,
         [FoldTopic] = JobLane.Ai,
         [MakeRollup] = JobLane.Ai,
+        [RelateConversation] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };
@@ -67,6 +69,7 @@ public static class JobKinds
 
     /// <summary>One rollup per period, start and topic at a time.</summary>
     public static string MakeRollupKey(string period, string? start, Guid? topic) => $"{MakeRollup}:{period}:{start}:{topic}";
+    public static string RelateConversationKey(Guid conversation) => $"{RelateConversation}:{conversation}";
 
     public static string TidyTagsKey(string localDate) => $"{TidyTags}:{localDate}";
 

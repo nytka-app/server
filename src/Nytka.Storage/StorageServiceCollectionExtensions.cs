@@ -47,6 +47,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<TagStore>();
         services.AddSingleton<TopicStore>();
         services.AddSingleton<RollupStore>();
+        services.AddSingleton<RelatedStore>();
         services.AddSingleton<TagSuggestionStore>();
         services.AddSingleton<SpeechStore>();
         services.AddSingleton<LabelStore>();

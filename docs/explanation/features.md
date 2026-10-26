@@ -886,6 +886,31 @@ model calls: on the owner's data about 20 pages, roughly 11 folds a day (about 1
 each), so about $0.26 a week at Claude Haiku 4.5's $1 / $5 per million tokens, and about $0.13 for the first
 run over the existing conversations.
 
+## Earlier links
+
+A conversation links to the earlier conversations it is about, each at the moment that matches best, the way
+Memoket shows the source of a recording's earlier context. `GET /api/v1/conversations/{id}` carries them as
+`related`, and `GET /api/v1/related` and the `get_related` MCP tool return the same list for a conversation,
+task, memory or note.
+
+**What makes a link.** Two signals, never one: the earlier conversation is close in meaning (the vectors of
+title and summary from [vector search](#search), similarity at least 0.55 of 1) **and** the two share a
+person, or a rare tag (one on at most 10% of the tagged conversations, and at least 3). On the owner's own
+data (146 conversations, 2026-10-24), meaning alone matched garbled fragments to each other as often as real
+topics, even above 0.75, while meaning plus a shared person or rare tag was right about 85% of the time.
+The score is the similarity plus 0.05 for each shared rare tag and person (two of each at most). A conversation
+keeps its best 5 links, from the 10 earlier conversations nearest it; noise fragments (fewer than 20 words)
+neither link nor are linked to. The moment is the earlier conversation's line (not media) nearest by meaning;
+for a task it is the line nearest the lines the task cites, for a memory the line nearest the memory, and a
+note, which cites no lines, gets its conversation's moments.
+
+**Derived, recomputed, never a fact.** Links live in `related_moments` and are worked out again by the
+`relate-conversation` job (no model call) whenever the conversation's vector or tags change: a new summary
+or title, a tag added, removed or merged. Without vectors (no embeddings endpoint, or no pgvector) there are
+none. Nothing reads a link to write a memory, a fact or a task: a link only says two moments are about the
+same thing, which is how a fact about someone else would become a fact about you. An unconfirmed memory has
+no links, since no reader sees it.
+
 ## Search
 
 `GET /api/v1/search?q=` and the `search` MCP tool search transcripts, titles, summaries, memories, and
