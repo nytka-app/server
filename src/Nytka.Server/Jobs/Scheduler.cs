@@ -3,6 +3,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Calendar;
 using Nytka.Server.DayEvents;
 using Nytka.Server.Digests;
+using Nytka.Server.Insights;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Privacy;
@@ -23,13 +24,13 @@ namespace Nytka.Server.Jobs;
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
 /// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs, the
-/// labelling candidates, the quality metrics, the speech kinds' follow-up of their settings, the topic pages with conversations to
+/// labelling candidates, the quality metrics, the "Over time" insights, the speech kinds' follow-up of their settings, the topic pages with conversations to
 /// fold in, the rollups of the periods that just closed and the "Earlier" links of conversations whose vector or tags changed. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
-    CalendarQueue calendar, QualityQueue quality, SpeechStore speech, BatchRetryQueue batchRetries,
+    CalendarQueue calendar, QualityQueue quality, InsightQueue insights, SpeechStore speech, BatchRetryQueue batchRetries,
     SpeakerModel speaker, TagStore tags, TopicStore topics, RollupStore rollups, RelatedStore related, EmbeddingState embeddings, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
@@ -69,6 +70,7 @@ public sealed class Scheduler(
         await QueueDigestAsync(now, ct);
         await QueueTidyTagsAsync(now, ct);
         await quality.QueueAsync(now, ct);
+        await insights.QueueAsync(now, ct);
         await QueueRescoreAsync(now, ct);
         await QueueRematchAsync(now, ct);
         await QueueGroupVoicesAsync(now, ct);

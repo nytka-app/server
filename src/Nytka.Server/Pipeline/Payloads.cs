@@ -25,3 +25,6 @@ public sealed record DigestPayload(string LocalDate, bool Replace);
 
 /// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>measure-quality</c> measures.</summary>
 public sealed record QualityPayload(string LocalDate);
+
+/// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>measure-insights</c> measures.</summary>
+public sealed record InsightPayload(string LocalDate);

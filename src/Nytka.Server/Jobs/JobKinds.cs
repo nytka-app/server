@@ -24,6 +24,7 @@ public static class JobKinds
     public const string MakeBrief = "make-brief";
     public const string TidyTags = "tidy-tags";
     public const string MeasureQuality = "measure-quality";
+    public const string MeasureInsights = "measure-insights";
     public const string PickLabeling = "pick-labeling";
     public const string FoldTopic = "fold-topic";
     public const string MakeRollup = "make-rollup";
@@ -46,6 +47,7 @@ public static class JobKinds
         [MakeBrief] = JobLane.Ai,
         [TidyTags] = JobLane.Ai,
         [MeasureQuality] = JobLane.Ai,
+        [MeasureInsights] = JobLane.Ai,
         [FoldTopic] = JobLane.Ai,
         [MakeRollup] = JobLane.Ai,
         [RelateConversation] = JobLane.Ai,
@@ -82,6 +84,9 @@ public static class JobKinds
 
     /// <summary>One measurement per local date at a time.</summary>
     public static string MeasureQualityKey(string localDate) => $"{MeasureQuality}:{localDate}";
+
+    /// <summary>One measurement per local date at a time.</summary>
+    public static string MeasureInsightsKey(string localDate) => $"{MeasureInsights}:{localDate}";
 
     public static string DeliverWebhookKey(Guid delivery) => $"{DeliverWebhook}:{delivery}";
 

@@ -786,6 +786,31 @@ so a regression shows up the next morning. One row per local day in `Nytka__User
 - **Graph it.** There is no `/metrics` endpoint; point a Grafana Postgres data source at
   `quality_days` with a read-only role.
 
+## Insights
+
+The app's Over time tab reads `GET /api/v1/insights`: four numbers measured nightly from stored rows only
+(no model call), each locked until enough days have audio and, once unlocked, a 28-day series against a
+baseline.
+
+- **When.** Today once `Nytka__Digest__Hour` has come, yesterday again once it has ended (late audio and
+  the evening), and every earlier day since the first conversation that has no row, 31 a tick: the backfill
+  after an upgrade or an outage. The `measure-insights` job runs on the `Ai` lane, one per date, and writes
+  one row per insight to `insight_days`.
+- **The four insights.** `talk-time` (minutes of speech a day, the wearer and others), `people-week`
+  (distinct people heard, never the wearer, in the trailing 7 days ending that day), `open-commitments`
+  (open [commitments](#task-kinds) created that day) and `time-of-day` (the share of that day's
+  conversations starting at or after 18:00 in `Nytka__User__TimeZone`).
+- **Locked.** Below `Nytka__Insights__TrustedAfterDays` (14 by default) local days with audio, every
+  insight answers `unlocked: false` with its `progress` (days with audio, capped at that setting, against
+  it) and no `summary`, `series`, `baseline` or `unitLabel`.
+- **Unlocked.** A one-line `summary` built from numbers only, `series` (the last 28 days as
+  `{ date, value }`) and `baseline`, the median of the last 28 days that had audio, excluding today (fewer
+  than 28 when the wearer has not had that many yet).
+- **Read it.** `GET /api/v1/insights` (read token, like `/today`) and the `get_insights` MCP tool, both
+  filtered the same way as every other read: the classes `Nytka__Privacy__Hide` names are left out of
+  every count, for every token, so a hidden conversation's minutes, people or commitments never reach a
+  baseline or a series. Per-item extraction (tasks, memories, notes) is not gated by any of this.
+
 ## Labelling
 
 A labeller app (the web app `nytka-app/labeler` behind your SSO, or `nytka-app/labeler-android` with a token of scope
