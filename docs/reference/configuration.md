@@ -44,7 +44,7 @@ you copy without thinking would lock its setting.
 | `Nytka__User__TimeZone` | no | `UTC` | editable | IANA time zone such as `Europe/Kyiv`: prompts and mute windows use it; an unknown id falls back to UTC |
 | `Nytka__Llm__BaseUrl` | no | | editable | Base URL of an OpenAI-compatible chat endpoint, without a query or fragment; the server calls `<base URL>/chat/completions` |
 | `Nytka__Llm__ApiKey` | no | | env only | Sent as a bearer token; leave it out for a local model |
-| `Nytka__Llm__Model` | no | | editable | Sent as `model` |
+| `Nytka__Llm__Model` | no | | editable | Sent as `model`. A gateway in front of the endpoint may serve a different model under that name; see [A gateway in front](#a-gateway-in-front-of-the-model) |
 | `Nytka__Llm__OutputLanguage` | no | `auto` | editable | Language of titles, summaries, tasks and memories: `auto` follows the conversation, or a tag such as `uk` |
 | `Nytka__Llm__JsonMode` | no | `schema` | env only | `schema` sends a strict `json_schema`; `object` asks for a JSON object instead, for endpoints that reject `json_schema` |
 | `Nytka__Llm__TimeoutSeconds` | no | `120` | env only | Seconds to wait for one model request |
@@ -233,6 +233,13 @@ A language model gives each closed conversation a title, a summary and tasks, an
 (`Nytka__Llm__ApiKey`): keys are environment only. Any OpenAI-compatible chat endpoint works. The
 server calls `<base URL>/chat/completions` with the key as a bearer token, and sends no temperature
 and no token limit, because some models refuse them.
+
+**A gateway in front of the model.** The `model` you send is only a name. A gateway or router (one that holds your keys, say) can
+map it to another model, usually a cheaper one, and can cap tokens and requests per hour for the key. Read the real model and
+price from the gateway's own metrics before you estimate a rerun of many conversations. When a cap is hit the endpoint answers
+`429`; a job gives up after three tries, the conversation shows `aiStatus: failed` with a fixed message saying so, and it keeps its
+previous summary, so nothing is lost. Queue it again with `POST /api/v1/conversations/{id}/enrich` once the window has reset,
+and pace a bulk rerun to the cap (a conversation costs about 10,000 input tokens).
 
 | Provider | `Nytka__Llm__BaseUrl` |
 |---|---|
