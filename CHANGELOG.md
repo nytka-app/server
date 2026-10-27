@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.7](https://github.com/nytka-app/server/compare/v0.36.6...v0.36.7) (2026-10-27)
+
+
+### Features
+
+* **scenes:** say what the Timeline returns with timeline.scenes off ([#294](https://github.com/nytka-app/server/issues/294)) ([2f8187a](https://github.com/nytka-app/server/commit/2f8187a7852c787df8b798d783e0883e94093caf))
+
 ## [0.36.6](https://github.com/nytka-app/server/compare/v0.36.5...v0.36.6) (2026-10-26)
 
 
