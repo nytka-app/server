@@ -267,6 +267,31 @@ public sealed class TodayApiTests(PostgresFixture db) : MemoryTestBase(db)
     }
 
     [Fact]
+    public async Task With_timeline_scenes_off_the_timeline_is_byte_identical_to_one_scene_per_conversation()
+    {
+        await Task(1, "Send the lease draft");
+        await Db.ExecuteAsync(
+            """
+            update conversations set ended_at = started_at + interval '30 minutes', topic_boundaries = array(select id from segments where text = 'I run every morning.')
+            where id = @id
+            """,
+            new { id = Conversation });
+        var before = await Admin.GetStringAsync("/api/v1/timeline?date=2026-09-29");
+
+        await Admin.PatchAsJsonAsync("/api/v1/settings", new { values = new Dictionary<string, string> { ["timeline.scenes"] = "false" } });
+        var off = await Admin.GetStringAsync("/api/v1/timeline?date=2026-09-29");
+        await Admin.PatchAsJsonAsync("/api/v1/settings", new { values = new Dictionary<string, string> { ["timeline.scenes"] = "true" } });
+        var on = await Admin.GetFromJsonAsync<JsonElement>("/api/v1/timeline?date=2026-09-29");
+
+        Assert.Equal(before, off);
+        Assert.DoesNotContain("startsWith", off, StringComparison.Ordinal);
+        Assert.Equal(2, JsonDocument.Parse(off).RootElement.GetProperty("scenes").GetArrayLength());
+        var scenes = on.GetProperty("scenes").EnumerateArray().ToList();
+        Assert.Equal(["conversation_started", "topic_shift", "conversation_started"], scenes.Select(s => s.GetProperty("startsWith").GetString()));
+        Assert.Equal([Conversation, Conversation, Other], scenes.Select(s => s.GetProperty("conversationId").GetGuid()));
+    }
+
+    [Fact]
     public async Task The_timeline_hides_a_private_scene_and_item_from_a_read_token_but_not_from_admin_or_a_sensitive_token()
     {
         await Db.ExecuteAsync("update conversations set sensitivity = 'therapy' where id = @id", new { id = Other });

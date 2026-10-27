@@ -59,6 +59,9 @@ public sealed record Scene(
     Guid Id, DateTime StartedAt, DateTime? EndedAt, string? Title, string? Summary, IReadOnlyList<ScenePerson> People, bool Noise,
     string? Sensitivity, IReadOnlyList<DayItem> Items);
 
+/// <summary>What cuts a conversation into scenes: its scene-starting events and the starts of its topic-boundary lines.</summary>
+public sealed record ConversationSpans(IReadOnlyList<(string Kind, DateTime At)> Events, IReadOnlyList<DateTime> Boundaries);
+
 /// <summary>Which candidates the Today view shows, and in which order. Pure, so the rule is tested without a database.</summary>
 public static class TodayPick
 {
@@ -232,6 +235,26 @@ public sealed class TodayStore(NpgsqlDataSource dataSource)
                 [.. people[c.Id].OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).Select(p => new ScenePerson(p.PersonId, p.Name))],
                 c.Noise, Real(c.Sensitivity), [.. items[c.Id]])),
         ];
+    }
+
+    /// <summary>The scene-starting events and the topic boundaries (as instants) of each conversation, for <see cref="SceneSplit"/>.</summary>
+    public async Task<IReadOnlyDictionary<Guid, ConversationSpans>> SpansAsync(Guid[] ids, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var kinds = SceneSplit.Starters.ToArray();
+        var events = (await connection.QueryAsync<(Guid ConversationId, string Kind, DateTime At)>(new CommandDefinition(
+            "select conversation_id, kind, at from events where conversation_id = any(@ids) and kind = any(@kinds)",
+            new { ids, kinds }, cancellationToken: ct))).ToLookup(e => e.ConversationId);
+        var boundaries = (await connection.QueryAsync<(Guid ConversationId, DateTime At)>(new CommandDefinition(
+            """
+            select s.conversation_id, s.started_at
+            from conversations c join segments s on s.conversation_id = c.id and s.id = any(c.topic_boundaries)
+            where c.id = any(@ids)
+            """,
+            new { ids }, cancellationToken: ct))).ToLookup(b => b.ConversationId);
+        return ids.ToDictionary(
+            id => id,
+            id => new ConversationSpans([.. events[id].Select(e => (e.Kind, e.At))], [.. boundaries[id].Select(b => b.At)]));
     }
 
     /// <summary>A sensitivity as a reader sees it: null for none.</summary>

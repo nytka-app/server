@@ -10,7 +10,7 @@ namespace Nytka.Server.Ai;
 /// <paramref name="Sensitivity"/> is a <see cref="Nytka.Storage.Sensitivity"/> value, missing in answers from before it.
 public sealed record ConversationAnswer(
     string Title, string Summary, IReadOnlyList<AnswerItem> Items, IReadOnlyList<string> Tags, string? ConversationKind = null,
-    string? Sensitivity = null);
+    string? Sensitivity = null, IReadOnlyList<long>? TopicBoundaries = null);
 
 /// <summary>
 /// A candidate task as the model words and labels it (docs/specs/task-kinds.md). <paramref name="Kind"/> and <paramref name="Owner"/> are
@@ -52,6 +52,24 @@ public static class ConversationPrompt
             "\"properties\": { \"title\": { \"type\": \"string\" },",
             "\"properties\": { \"conversationKind\": { \"type\": \"string\", \"enum\": [\"meeting\", \"lecture\", \"doctor\", \"call\", \"other\"] }, \"title\": { \"type\": \"string\" },",
             StringComparison.Ordinal);
+
+    /// <summary>
+    /// The schema for a conversation over <see cref="TopicBoundaryMinutes"/>: <paramref name="schema"/> plus <c>topicBoundaries</c>,
+    /// the segment ids where a new topic starts (docs/explanation/features.md#scenes).
+    /// </summary>
+    public static string WithTopicBoundaries(string schema) => schema
+        .Replace("\"required\": [\"title\", \"summary\", \"items\", \"tags\", \"sensitivity\"", "\"required\": [\"title\", \"summary\", \"items\", \"tags\", \"sensitivity\", \"topicBoundaries\"", StringComparison.Ordinal)
+        .Replace(
+            "\"tags\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },",
+            "\"tags\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }, \"topicBoundaries\": { \"type\": \"array\", \"items\": { \"type\": \"integer\" } },",
+            StringComparison.Ordinal);
+
+    /// <summary>A conversation longer than this many minutes is asked for its topic boundaries.</summary>
+    public const int TopicBoundaryMinutes = 20;
+
+    /// <summary>What the system message adds when the answer has <c>topicBoundaries</c>.</summary>
+    public const string TopicBoundaryLine =
+        "\nTopic boundaries: set topicBoundaries to the segment ids (without \"#\") of the lines where the conversation turns to a clearly new topic, each the first line of the new topic; never the first line of the transcript. Return an empty list when the topic stays the same.";
 
     public const int MaxTitle = 80;
     public const int MaxSummary = 1_200;

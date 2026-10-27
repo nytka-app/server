@@ -34,6 +34,13 @@ public static class TodayEndpoints
 
     public sealed record TimelineResponse(string Date, IReadOnlyList<TimelineScene> Scenes);
 
+    /// <summary>A scene with <c>timeline.scenes</c> on: a span of a conversation, with <c>startsWith</c>, what started it.</summary>
+    public sealed record TimelineSpanScene(
+        string Id, Guid ConversationId, DateTime StartedAt, DateTime? EndedAt, string? Title, string? Summary, IReadOnlyList<ScenePerson> People,
+        string? Place, bool Noise, string? Sensitivity, IReadOnlyList<DayItem> Items, string StartsWith);
+
+    public sealed record TimelineSpanResponse(string Date, IReadOnlyList<TimelineSpanScene> Scenes);
+
     /// <summary>
     /// The items worth a look on the day, at most <see cref="TodayPick.Max"/>, oldest first: what is vital, every open commitment
     /// with a named person or a due date, everything owed to the wearer, due or overdue tasks first. Nothing with a sensitivity.
@@ -78,10 +85,37 @@ public static class TodayEndpoints
 
         var (from, to) = DigestDay.Bounds(day, zone);
         var scenes = await store.TimelineAsync(from.UtcDateTime, to.UtcDateTime, now, sensitivity.Hidden, ct);
+        if (TimelineSettings.Scenes(settings))
+        {
+            var spans = await store.SpansAsync([.. scenes.Select(s => s.Id)], ct);
+            return Results.Ok(new TimelineSpanResponse(
+                DigestDay.Text(day),
+                [.. scenes.SelectMany(s => Spans(s, spans[s.Id]))]));
+        }
+
         return Results.Ok(new TimelineResponse(
             DigestDay.Text(day),
             [.. scenes.Select(s => new TimelineScene(
                 s.Id.ToString(), s.Id, s.StartedAt, s.EndedAt, s.Title, s.Summary, s.People, null, s.Noise, s.Sensitivity, s.Items))]));
+    }
+
+    /// <summary>
+    /// A conversation's scenes: each holds the people who spoke in the whole conversation and the items said in its span (an item
+    /// with no time in the conversation goes to the first). One scene keeps the conversation's id; the next ones add <c>:n</c>.
+    /// </summary>
+    private static IEnumerable<TimelineSpanScene> Spans(Scene scene, ConversationSpans spans)
+    {
+        var parts = SceneSplit.Split(scene.StartedAt, scene.EndedAt ?? scene.StartedAt, spans.Events, spans.Boundaries);
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var part = parts[i];
+            var last = i == parts.Count - 1;
+            var items = scene.Items.Where(item =>
+                (i == 0 || item.At >= part.StartedAt) && (last || item.At < part.EndedAt)).ToList();
+            yield return new TimelineSpanScene(
+                i == 0 ? scene.Id.ToString() : $"{scene.Id}:{i}", scene.Id, part.StartedAt, last ? scene.EndedAt : part.EndedAt, scene.Title,
+                scene.Summary, scene.People, null, scene.Noise, scene.Sensitivity, items, part.StartsWith);
+        }
     }
 
     private static bool Zone(string? tz, SettingsService settings, out TimeZoneInfo zone, out IResult? problem)

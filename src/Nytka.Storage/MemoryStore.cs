@@ -37,7 +37,8 @@ public sealed record SegmentLine(long Id, DateTime StartedAt, string? Speaker, s
 }
 
 /// <summary>A conversation as extraction reads it. <see cref="LastSegmentId"/> is the highest segment id among <see cref="Segments"/>.</summary>
-public sealed record ExtractionInput(string? Title, DateTime StartedAt, long? LastSegmentId, IReadOnlyList<SegmentLine> Segments);
+public sealed record ExtractionInput(
+    string? Title, DateTime StartedAt, long? LastSegmentId, IReadOnlyList<SegmentLine> Segments, Guid ConversationId = default);
 
 public sealed record MemoryRun(string Status, long? ThroughSegmentId, int Failures);
 
@@ -215,7 +216,7 @@ public sealed class MemoryStore(NpgsqlDataSource dataSource)
             order by s.started_at, s.id
             """,
             new { conversationId }, cancellationToken: ct))).ToList();
-        return new ExtractionInput(header.Title, header.StartedAt, rows.Count == 0 ? null : rows.Max(r => r.Id), rows);
+        return new ExtractionInput(header.Title, header.StartedAt, rows.Count == 0 ? null : rows.Max(r => r.Id), rows, conversationId);
     }
 
     public async Task<MemoryRun?> GetRunAsync(Guid conversationId, CancellationToken ct)
