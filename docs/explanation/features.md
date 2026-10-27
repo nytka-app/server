@@ -1179,3 +1179,6 @@ Continuity: memory extraction checks new facts against what is known. A fact the
 known memory (`contradicts`) without replacing it is stored unconfirmed, as an ungrounded fact is, and never shown. With
 `timeline.scenes` on, a fact that names a known person (a one-word name) with no `person_joined` event of theirs in the
 conversation is stored unconfirmed too.
+
+A scene's `startedAt` and `endedAt` are the bounds of its span: each scene ends where the next one starts, and the last ends
+with the conversation. An item with no time in the conversation goes to the first scene.
