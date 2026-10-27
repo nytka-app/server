@@ -1182,3 +1182,5 @@ conversation is stored unconfirmed too.
 
 A scene's `startedAt` and `endedAt` are the bounds of its span: each scene ends where the next one starts, and the last ends
 with the conversation. An item with no time in the conversation goes to the first scene.
+
+With `timeline.scenes` off, the Timeline is unchanged: one scene per conversation, with no `startsWith`.
