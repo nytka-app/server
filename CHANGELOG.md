@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.8](https://github.com/nytka-app/server/compare/v0.36.7...v0.36.8) (2026-10-29)
+
+
+### Performance Improvements
+
+* build a conversation's playback stream once per burst, read only the chunk bodies a run uses ([#309](https://github.com/nytka-app/server/issues/309)) ([e53fe4b](https://github.com/nytka-app/server/commit/e53fe4ba9669636f34d919f2aabbd370bf78b2fa))
+
 ## [0.36.7](https://github.com/nytka-app/server/compare/v0.36.6...v0.36.7) (2026-10-27)
 
 
