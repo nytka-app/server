@@ -73,6 +73,23 @@ public sealed class AudioApiTests(PostgresFixture db) : IAsyncLifetime, IClassFi
     }
 
     [Fact]
+    public async Task Builds_the_stream_again_when_its_audio_changes()
+    {
+        var id = await Speak(Tone(3), Silence(2), Gap(60), Tone(2), Silence(2));
+        var client = _server.CreateAuthorizedClient();
+        var first = await client.GetAsync($"/api/v1/conversations/{id}/audio");
+        var again = await client.GetAsync($"/api/v1/conversations/{id}/audio");
+
+        await db.ExecuteAsync(
+            "delete from speech_audio where id = (select max(id) from speech_audio where conversation_id = @id)", new { id });
+        var changed = await client.GetAsync($"/api/v1/conversations/{id}/audio");
+
+        Assert.Equal(first.Headers.ETag, again.Headers.ETag);
+        Assert.NotEqual(first.Headers.ETag, changed.Headers.ETag);
+        Assert.True((await changed.Content.ReadAsByteArrayAsync()).Length < (await first.Content.ReadAsByteArrayAsync()).Length);
+    }
+
+    [Fact]
     public async Task Indexes_runs_by_capture_time()
     {
         var id = await Speak(Tone(3), Silence(2), Gap(60), Tone(2), Silence(2));

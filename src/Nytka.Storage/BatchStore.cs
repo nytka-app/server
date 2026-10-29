@@ -24,6 +24,9 @@ public sealed record BatchRow(long Id, DateTime StartedAt, DateTime EndedAt, str
 /// <summary>Runs inside <see cref="BatchStore.CompleteAsync"/>'s transaction after the segments are written, so what it writes commits with them.</summary>
 public delegate Task BatchStoredHook(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid conversationId, CancellationToken ct);
 
+/// <summary>A cheap fingerprint of a conversation's speech audio (<see cref="BatchStore.SpeechAudioVersionAsync"/>).</summary>
+public sealed record SpeechAudioVersion(long Count, long MaxId, long Bytes);
+
 public sealed class BatchStore(NpgsqlDataSource dataSource)
 {
     /// <summary>Inserts a pending batch and its speech audio inside the caller's transaction.</summary>
@@ -222,6 +225,21 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
         return (await connection.QueryAsync<byte[]>(new CommandDefinition(
             "select body from speech_audio where conversation_id = @conversationId order by started_at, id",
             new { conversationId }, cancellationToken: ct))).AsList();
+    }
+
+    /// <summary>
+    /// What a conversation's speech audio looks like without reading it: rows are only inserted, deleted or moved
+    /// between conversations, so the count, the highest id and the byte total change whenever its stream would.
+    /// </summary>
+    public async Task<SpeechAudioVersion> SpeechAudioVersionAsync(Guid conversationId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return await connection.QuerySingleAsync<SpeechAudioVersion>(new CommandDefinition(
+            """
+            select count(*) as Count, coalesce(max(id), 0) as MaxId, coalesce(sum(octet_length(body)), 0)::bigint as Bytes
+            from speech_audio where conversation_id = @conversationId
+            """,
+            new { conversationId }, cancellationToken: ct));
     }
 
     /// <summary>The speech audio bodies of a conversation that overlap capture times <paramref name="from"/> to <paramref name="until"/>, in capture order.</summary>

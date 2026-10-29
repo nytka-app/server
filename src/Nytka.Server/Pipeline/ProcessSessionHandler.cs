@@ -71,14 +71,12 @@ public sealed class ProcessSessionHandler(
             return JobOutcome.Done;
         }
 
-        var loaded = await chunks.LoadPendingAsync(sessionId, MaxChunksPerRun + 1, ct);
-        if (loaded.Count == 0)
+        var (window, more) = await chunks.LoadWindowAsync(sessionId, MinFramesPerRun, MaxChunksPerRun, ct);
+        if (window.Count == 0)
         {
             return JobOutcome.Done;
         }
 
-        var window = TakeWindow(loaded);
-        var more = loaded.Count > window.Count;
         var (used, waiting) = TakeContiguous(window, session, now);
         if (used.Count == 0)
         {
@@ -147,24 +145,6 @@ public sealed class ProcessSessionHandler(
         }
 
         return kept;
-    }
-
-    private static List<PendingChunk> TakeWindow(IReadOnlyList<PendingChunk> loaded)
-    {
-        var window = new List<PendingChunk>();
-        var frames = 0;
-        foreach (var chunk in loaded.Take(MaxChunksPerRun))
-        {
-            if (frames >= MinFramesPerRun)
-            {
-                break;
-            }
-
-            window.Add(chunk);
-            frames += chunk.FrameCount;
-        }
-
-        return window;
     }
 
     /// <summary>
