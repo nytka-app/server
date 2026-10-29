@@ -151,21 +151,39 @@ public sealed class ChunkStore(NpgsqlDataSource dataSource)
             new { session, now }, cancellationToken: ct));
     }
 
-    /// <summary>Chunks that still hold audio, in sequence order.</summary>
-    public async Task<IReadOnlyList<PendingChunk>> LoadPendingAsync(Guid session, int limit, CancellationToken ct)
+    /// <summary>
+    /// The first chunks that still hold audio, in sequence order: chunks are taken while fewer than
+    /// <paramref name="minFrames"/> frames came before them, at most <paramref name="maxChunks"/>. The window is picked from
+    /// the rows' frame counts, so only its own bodies are read. <c>More</c> is true when chunks with audio lie beyond it.
+    /// </summary>
+    public async Task<(IReadOnlyList<PendingChunk> Window, bool More)> LoadWindowAsync(
+        Guid session, int minFrames, int maxChunks, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
-        var chunks = await connection.QueryAsync<PendingChunk>(new CommandDefinition(
+        var rows = (await connection.QueryAsync<WindowRow>(new CommandDefinition(
             """
-            select first_seq as FirstSeq, frame_count as FrameCount, received_at as ReceivedAt, body as Body
-            from audio_chunks
-            where session_id = @session and body is not null
-            order by first_seq
-            limit @limit
+            with pending as (
+                select first_seq,
+                       sum(frame_count) over w - frame_count as frames_before,
+                       row_number() over w as rn,
+                       count(*) over () as total
+                from audio_chunks
+                where session_id = @session and body is not null
+                window w as (order by first_seq rows between unbounded preceding and current row))
+            select c.first_seq as FirstSeq, c.frame_count as FrameCount, c.received_at as ReceivedAt, c.body as Body,
+                   p.total as Total
+            from pending p
+            join audio_chunks c on c.session_id = @session and c.first_seq = p.first_seq
+            where p.rn <= @maxChunks and p.frames_before < @minFrames
+            order by c.first_seq
             """,
-            new { session, limit }, cancellationToken: ct));
-        return chunks.ToList();
+            new { session, minFrames, maxChunks }, cancellationToken: ct))).AsList();
+        return (
+            [.. rows.Select(r => new PendingChunk(r.FirstSeq, r.FrameCount, r.ReceivedAt, r.Body))],
+            rows.Count > 0 && rows[0].Total > rows.Count);
     }
+
+    private sealed record WindowRow(long FirstSeq, int FrameCount, DateTime ReceivedAt, byte[] Body, long Total);
 
     /// <summary>
     /// Moves the session's processed point and drops the audio of used chunks that lie wholly

@@ -64,6 +64,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddSingleton<JobRunner>();
 builder.Services.AddSingleton<Scheduler>();
 builder.Services.AddSingleton<BatchRetryQueue>();
+builder.Services.AddSingleton<PlaybackCache>();
 builder.Services.AddHostedService<JobRunnerService>();
 builder.Services.AddHostedService<SchedulerService>();
 builder.Services.AddSingleton<NamedPeopleLookup>(sp => sp.GetRequiredService<PeopleStore>().NamesAsync);

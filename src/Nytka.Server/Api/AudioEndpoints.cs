@@ -9,8 +9,9 @@ namespace Nytka.Server.Api;
 
 /// <summary>
 /// Playback (docs/specs/v0.8.md): a conversation's speech audio as one Ogg Opus stream, and the map from stream
-/// positions to capture times. Both need <c>read</c>. The stream is rebuilt from the stored Opus packets on each
-/// request and is identical every time, so range requests and <c>If-Range</c> work without keeping a copy.
+/// positions to capture times. Both need <c>read</c>. The stream is built from the stored Opus packets and is
+/// identical every time, so range requests and <c>If-Range</c> work; <see cref="PlaybackCache"/> keeps the
+/// last one so a player's burst of range requests builds it once.
 /// </summary>
 public static class AudioEndpoints
 {
@@ -31,17 +32,29 @@ public static class AudioEndpoints
 
     public sealed record AudioIndex(int DurationMs, IReadOnlyList<IndexRun> Runs);
 
-    private static async Task<IResult> StreamAsync(Guid id, BatchStore batches, CancellationToken ct)
+    private static async Task<IResult> StreamAsync(Guid id, BatchStore batches, PlaybackCache cache, CancellationToken ct)
     {
-        var frames = await FramesAsync(id, batches, ct);
-        if (frames.Count == 0)
+        var version = await batches.SpeechAudioVersionAsync(id, ct);
+        if (version.Count == 0)
         {
             return NotFound();
         }
 
-        var body = OggOpusWriter.Write([.. frames.Select(f => f.Payload)], Serial(id));
-        var tag = Convert.ToHexString(SHA256.HashData(body).AsSpan(0, 16));
-        return Results.File(body, OggMediaType, entityTag: new EntityTagHeaderValue($"\"{tag}\""), enableRangeProcessing: true);
+        var stream = await cache.GetAsync(id, version, async token =>
+        {
+            var frames = await FramesAsync(id, batches, token);
+            if (frames.Count == 0)
+            {
+                return null;
+            }
+
+            var body = OggOpusWriter.Write([.. frames.Select(f => f.Payload)], Serial(id));
+            return new PlaybackStream(body, Convert.ToHexString(SHA256.HashData(body).AsSpan(0, 16)));
+        }, ct);
+
+        return stream is null
+            ? NotFound()
+            : Results.File(stream.Body, OggMediaType, entityTag: new EntityTagHeaderValue($"\"{stream.Tag}\""), enableRangeProcessing: true);
     }
 
     private static async Task<IResult> IndexAsync(Guid id, BatchStore batches, CancellationToken ct)
