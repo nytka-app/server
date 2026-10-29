@@ -67,6 +67,7 @@ docker compose up -d --build
 - Dapper maps constructor parameters to column names: alias every column (`started_at as StartedAt`)
   and read `timestamptz` as `DateTime` (Npgsql returns `Kind = Utc`); writes may pass `DateTimeOffset`.
 - One SQL file per migration under `db/migrations/`, numbered, never edited once applied.
+  CI lints each added migration with squawk (`.squawk.toml`); accept a finding on purpose with `-- squawk-ignore <rule>` and the reason.
 - A setting is a `SettingDefinition` in a settings group. Its variable is `Nytka__` plus the key with
   each `.` as `__` and each part capitalized (`llm.baseUrl` is `Nytka__Llm__BaseUrl`). A new key or
   option needs its variable in `.env.example` (commented out) and in `docker-compose.yml` (empty
