@@ -1,0 +1,34 @@
+name: squawk
+
+# Postgres migration linter (https://squawkhq.com). It reads only the migrations a pull request adds, so the
+# applied ones are never judged. Rules and Postgres version: .squawk.toml. To accept a finding on purpose,
+# put `-- squawk-ignore <rule>` above the statement, with the reason.
+on:
+  pull_request:
+    paths:
+      - db/migrations/**
+      - .squawk.toml
+      - .github/workflows/squawk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  squawk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Lint added migrations
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=A "origin/${BASE_REF}...HEAD" -- 'db/migrations/*.sql')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No added migrations."
+            exit 0
+          fi
+          npx --yes squawk-cli@2.70.0 "${files[@]}"
