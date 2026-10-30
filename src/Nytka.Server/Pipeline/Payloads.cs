@@ -26,8 +26,19 @@ public sealed record DigestPayload(string LocalDate, bool Replace);
 /// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>measure-quality</c> measures.</summary>
 public sealed record QualityPayload(string LocalDate);
 
-/// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>build-tracks</c> builds.</summary>
-public sealed record TracksPayload(string LocalDate);
+/// <summary>
+/// <paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>build-tracks</c> builds; <paramref name="AfterLinks"/> marks the build
+/// that follows the day's links within its situations, after which the day is cut once more.
+/// </summary>
+public sealed record TracksPayload(string LocalDate, bool AfterLinks = false);
+
+/// <summary>
+/// <paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>build-situations</c> cuts; <paramref name="Recut"/> is the one cut
+/// after the links within the situations: it asks for no links again.
+/// </summary>
+public sealed record SituationsPayload(string LocalDate, bool Recut = false);
+
+public sealed record EnrichSituationPayload(Guid SituationId);
 
 /// <summary>
 /// The scene <c>link-speakers</c> reads: the conversation's lines from <paramref name="SceneStartedAt"/> to <paramref name="SceneEndedAt"/>

@@ -5,6 +5,7 @@ using Nytka.Server.Jobs;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
+using Nytka.Server.Situations;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
@@ -16,11 +17,12 @@ namespace Nytka.Server.Tracks;
 /// model is not loaded. A rebuild keeps the id, the person and the owner's decisions of a track whose lines stay together, and links
 /// nothing on its own: a track like a person's voiceprint or like an earlier day's track becomes a suggestion. With <c>tracks.meaning</c>
 /// on, the links by meaning of the day are soft constraints (<see cref="TrackPlanner"/>), and a build queues <c>link-speakers</c> for the
-/// scenes not asked yet. The log carries counts only.
+/// scenes not asked yet. With <c>situations.enabled</c> on, the links are asked within the day's situations instead (<c>build-situations</c>),
+/// and every build queues the cut of the day: the one after the links asks for none. The log carries counts only.
 /// </summary>
 public sealed partial class BuildTracksHandler(
-    TrackStore tracks, LinkStore links, LinkQueue linkQueue, VoiceGroupStore groups, SpeakerModel model, SettingsService settings, TimeProvider time,
-    ILogger<BuildTracksHandler> logger)
+    TrackStore tracks, LinkStore links, LinkQueue linkQueue, JobQueue queue, VoiceGroupStore groups, SpeakerModel model, SettingsService settings,
+    TimeProvider time, ILogger<BuildTracksHandler> logger)
     : IJobHandler
 {
     /// <summary>
@@ -57,10 +59,18 @@ public sealed partial class BuildTracksHandler(
             PeopleSettings.VoiceThreshold(settings));
         await tracks.ReplaceDayAsync(day, modelId, plan.Tracks, suggestions, time.GetUtcNow(), ct);
         LogBuilt(logger, lines.Count, plan.Tracks.Count, suggestions.Count);
-        if (meaning)
+        var situations = SituationSettings.Enabled(settings);
+        if (meaning && !situations)
         {
             // The links of the scenes asked now count at the build their last job queues.
             await linkQueue.QueueAsync(day, from, to, ct);
+        }
+
+        if (situations)
+        {
+            await queue.EnqueueAsync(
+                JobKinds.BuildSituations, new SituationsPayload(payload.LocalDate, payload.AfterLinks),
+                JobKinds.BuildSituationsKey(payload.LocalDate, payload.AfterLinks), time.GetUtcNow(), ct);
         }
 
         return JobOutcome.Done;

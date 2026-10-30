@@ -62,6 +62,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<TrackStore>();
         services.AddSingleton<LinkStore>();
         services.AddSingleton<TrackNameStore>();
+        services.AddSingleton<SituationStore>();
 
         return services;
     }

@@ -82,7 +82,7 @@ public class PostgresFixture : IAsyncLifetime
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
                      segments, speech_audio, jobs, diagnostics, api_tokens, settings,
                      webhooks, webhook_deliveries, people, bookmarks, digests, voice_profile,
-                     transcription_usage, usage_alerts, transcript_passes, quality_days, insight_days, nudges restart identity cascade;
+                     transcription_usage, usage_alerts, transcript_passes, quality_days, insight_days, nudges, situation_days restart identity cascade;
             insert into speech_state (id, applied_mode, applied_threshold, updated_at) values (1, 'shadow', 0.94, now())
             on conflict (id) do update set applied_mode = 'shadow', applied_threshold = 0.94, updated_at = now()
             """,
