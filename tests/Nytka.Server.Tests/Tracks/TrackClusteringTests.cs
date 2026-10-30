@@ -1,4 +1,8 @@
+using Nytka.Audio.Decoding;
+using Nytka.Audio.Voice;
+using Nytka.Audio.Wav;
 using Nytka.Server.Tracks;
+using Nytka.Server.Voice;
 using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Tracks;
@@ -261,4 +265,24 @@ public sealed class TrackClusteringTests
     }
 
     private static float SpeakerCosine(float[] a, float[] b) => Nytka.Audio.Voice.SpeakerEmbedder.Cosine(a, b);
+
+    [Fact]
+    public void A_line_gets_one_fingerprint_per_window_over_30_seconds_one_up_to_it_and_none_under_the_minimum()
+    {
+        var wav = new WavAudio(new short[60 * Timeline.SampleRate], Timeline.SampleRate, 1);
+        var spans = new WavSpan[] { new(0, 0.5), new(1, 4), new(5, 35), new(5, 50) };
+
+        var prints = VoiceMatcher.Prints(new CountingEmbedder(), "model", wav, spans, minSegmentSeconds: 1);
+
+        Assert.Null(prints[0]);
+        Assert.Equal(new[] { 1, 1, 5 }, prints.Skip(1).Select(p => p!.Windows.Count).ToArray());
+        Assert.All(prints.Where(p => p is not null), p => Assert.Equal("model", p!.Model));
+    }
+
+    private sealed class CountingEmbedder : ISpeakerEmbedder
+    {
+        public int Dimensions => Size;
+
+        public float[] Embed(ReadOnlySpan<float> samples) => Voice(0);
+    }
 }
