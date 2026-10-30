@@ -16,9 +16,9 @@ alter table context_ranges validate constraint context_ranges_contact_call;
 -- the event it came from. Neither kind is ever applied on its own.
 -- Both dropped checks are replaced by wider ones below, in the same migration, so no guarantee is lost.
 -- squawk-ignore ban-drop-constraint
-alter table track_suggestions
-    drop constraint track_suggestions_kind_check,
-    drop constraint track_suggestions_check;
+alter table track_suggestions drop constraint track_suggestions_kind_check;
+-- squawk-ignore ban-drop-constraint
+alter table track_suggestions drop constraint track_suggestions_check;
 alter table track_suggestions
     add column name text null check (name is null or length(name) between 1 and 80),
     add column evidence jsonb null;
