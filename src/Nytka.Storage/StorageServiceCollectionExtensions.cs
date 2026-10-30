@@ -61,6 +61,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<DayEventStore>();
         services.AddSingleton<TrackStore>();
         services.AddSingleton<LinkStore>();
+        services.AddSingleton<TrackNameStore>();
 
         return services;
     }

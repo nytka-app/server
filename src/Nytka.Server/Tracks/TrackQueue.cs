@@ -1,6 +1,7 @@
 using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
+using Nytka.Server.People;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
 using Nytka.Server.Voice;
@@ -11,9 +12,11 @@ namespace Nytka.Server.Tracks;
 /// <summary>
 /// What the scheduler's scan does for speaker tracks: it records the effective <c>tracks.enabled</c> where the readers' SQL can see it,
 /// and, while it is on, queues <c>build-tracks</c> for every local day that has ended and has a line with a fingerprint but no track
-/// (a day nobody built, or lines that came late), oldest first and <see cref="PerTick"/> at a time. Dedupe keys make every call safe to repeat.
+/// (a day nobody built, or lines that came late), oldest first and <see cref="PerTick"/> at a time. While call or calendar names are on, it
+/// also queues <c>name-tracks</c> for every day whose tracks were built, or whose call ranges arrived, since it was last named. Dedupe keys
+/// make every call safe to repeat.
 /// </summary>
-public sealed class TrackQueue(JobQueue queue, TrackStore tracks, SpeakerModel model, SettingsService settings)
+public sealed class TrackQueue(JobQueue queue, TrackStore tracks, TrackNameStore trackNames, SpeakerModel model, SettingsService settings)
 {
     /// <summary>
     /// The most days one tick queues: a build reads a day's fingerprints and clusters them in memory, so a backlog drains over a few
@@ -36,6 +39,15 @@ public sealed class TrackQueue(JobQueue queue, TrackStore tracks, SpeakerModel m
         {
             var text = DigestDay.Text(day);
             await queue.EnqueueAsync(JobKinds.BuildTracks, new TracksPayload(text), JobKinds.BuildTracksKey(text), now, ct);
+        }
+
+        if (PeopleSettings.CallNames(settings) || PeopleSettings.CalendarNames(settings))
+        {
+            foreach (var day in await trackNames.DaysToNameAsync(PerTick, ct))
+            {
+                var text = DigestDay.Text(day);
+                await queue.EnqueueAsync(JobKinds.NameTracks, new TracksPayload(text), JobKinds.NameTracksKey(text), now, ct);
+            }
         }
     }
 }

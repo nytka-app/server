@@ -4,9 +4,13 @@ using Npgsql;
 namespace Nytka.Storage;
 
 /// <summary>A range the app sent, already checked: a known kind, a route and a detail that kind takes, and an end not before its start.</summary>
-public sealed record NewContextRange(Guid Id, string Kind, string Route, DateTimeOffset StartedAt, DateTimeOffset EndedAt, string? Detail = null);
+public sealed record NewContextRange(
+    Guid Id, string Kind, string Route, DateTimeOffset StartedAt, DateTimeOffset EndedAt, string? Detail = null, string? Contact = null,
+    string? ContactHash = null);
 
-public sealed record ContextRangeRow(Guid Id, string Kind, string Route, DateTime StartedAt, DateTime EndedAt, string? Detail = null);
+public sealed record ContextRangeRow(
+    Guid Id, string Kind, string Route, DateTime StartedAt, DateTime EndedAt, string? Detail = null, string? Contact = null,
+    string? ContactHash = null);
 
 /// <summary>A row of an upload refused on its own: its id and a fixed reason code, never the value.</summary>
 public sealed record RejectedRange(Guid Id, string Reason);
@@ -25,7 +29,7 @@ public sealed record ContextKind(string Name, IReadOnlyList<string> Routes, IRea
 
 /// <summary>
 /// Context ranges (<c>context_ranges</c>): when the owner's phone played sound through its loudspeaker or was in a call.
-/// A kind, a route and two times, never an app, a title or a number.
+/// A kind, a route and two times, never an app or a title. A call may name its contact and carry a hash of the number, never the number.
 /// </summary>
 public sealed class ContextRangeStore(NpgsqlDataSource dataSource)
 {
@@ -52,7 +56,8 @@ public sealed class ContextRangeStore(NpgsqlDataSource dataSource)
     public static readonly IReadOnlyList<string> Features = [.. KindRules.Select(k => k.Feature).OfType<string>().Distinct()];
 
     private const string Select =
-        "select id as Id, kind as Kind, route as Route, started_at as StartedAt, ended_at as EndedAt, detail as Detail from context_ranges";
+        "select id as Id, kind as Kind, route as Route, started_at as StartedAt, ended_at as EndedAt, detail as Detail, "
+        + "contact as Contact, contact_hash as ContactHash from context_ranges";
 
     /// <summary>Stores the ranges in one statement; one whose id exists is skipped, so a retried upload changes nothing.</summary>
     public async Task<ContextRangeInsert> InsertAsync(IReadOnlyList<NewContextRange> ranges, DateTimeOffset receivedAt, CancellationToken ct)
@@ -60,9 +65,10 @@ public sealed class ContextRangeStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         var accepted = await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into context_ranges (id, kind, route, started_at, ended_at, detail, received_at)
-            select r.id, r.kind, r.route, r.started_at, r.ended_at, r.detail, @receivedAt
-            from unnest(@ids, @kinds, @routes, @starts, @ends, @details) as r(id, kind, route, started_at, ended_at, detail)
+            insert into context_ranges (id, kind, route, started_at, ended_at, detail, contact, contact_hash, received_at)
+            select r.id, r.kind, r.route, r.started_at, r.ended_at, r.detail, r.contact, r.contact_hash, @receivedAt
+            from unnest(@ids, @kinds, @routes, @starts, @ends, @details, @contacts, @contactHashes)
+                as r(id, kind, route, started_at, ended_at, detail, contact, contact_hash)
             on conflict (id) do nothing
             """,
             new
@@ -73,6 +79,8 @@ public sealed class ContextRangeStore(NpgsqlDataSource dataSource)
                 starts = ranges.Select(r => r.StartedAt.UtcDateTime).ToArray(),
                 ends = ranges.Select(r => r.EndedAt.UtcDateTime).ToArray(),
                 details = ranges.Select(r => r.Detail).ToArray(),
+                contacts = ranges.Select(r => r.Contact).ToArray(),
+                contactHashes = ranges.Select(r => r.ContactHash).ToArray(),
                 receivedAt,
             },
             cancellationToken: ct));

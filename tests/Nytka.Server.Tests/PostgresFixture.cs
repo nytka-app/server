@@ -78,6 +78,7 @@ public class PostgresFixture : IAsyncLifetime
             truncate tags cascade;
             truncate tag_tidy_runs;
             truncate context_ranges;
+            truncate track_name_runs;
             truncate capture_sessions, audio_chunks, conversations, transcription_batches,
                      segments, speech_audio, jobs, diagnostics, api_tokens, settings,
                      webhooks, webhook_deliveries, people, bookmarks, digests, voice_profile,

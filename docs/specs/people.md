@@ -358,6 +358,8 @@ security" say so, and that the calendar URL usually contains a token.
 | `people.facts` | `Nytka__People__Facts` | `true` | Layer 3 extraction |
 | `people.voiceMatching` | `Nytka__People__VoiceMatching` | `false` | Layer 2 |
 | `people.voiceThreshold` | `Nytka__People__VoiceThreshold` | `0.7` | Similarity, 0.5 to 0.95, for joining a group or matching a voiceprint |
+| `people.callNames` | `Nytka__People__CallNames` | `true` | A phone call's contact as the suggested name of the other voice's track (needs `tracks.enabled`) |
+| `people.calendarNames` | `Nytka__People__CalendarNames` | `false` | A calendar event's attendees as suggested names of the tracks heard in it, never applied on their own (needs `tracks.enabled`) |
 | `calendar.icsUrl` | `Nytka__Calendar__IcsUrl` | empty | ICS feed; environment only (a `Secret` setting), because it usually carries a token |
 | `calendar.briefMinutes` | `Nytka__Calendar__BriefMinutes` | `30` | How long before a meeting its brief is made, 5 to 240 |
 

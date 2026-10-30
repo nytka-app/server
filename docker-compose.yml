@@ -120,6 +120,8 @@ services:
       Nytka__Voice__ModelPath: "${Nytka__Voice__ModelPath:-}"
       Nytka__People__VoiceMatching: "${Nytka__People__VoiceMatching:-}"
       Nytka__People__VoiceThreshold: "${Nytka__People__VoiceThreshold:-}"
+      Nytka__People__CallNames: "${Nytka__People__CallNames:-}"
+      Nytka__People__CalendarNames: "${Nytka__People__CalendarNames:-}"
       Nytka__Tracks__Enabled: "${Nytka__Tracks__Enabled:-}"
       Nytka__Tracks__Threshold: "${Nytka__Tracks__Threshold:-}"
       Nytka__Tracks__Meaning: "${Nytka__Tracks__Meaning:-}"

@@ -13,6 +13,7 @@ public static class TracksExtensions
         services.AddScoped<IJobHandler, BuildTracksHandler>();
         services.AddScoped<LinkQueue>();
         services.AddScoped<IJobHandler, LinkSpeakersHandler>();
+        services.AddScoped<IJobHandler, NameTracksHandler>();
         return services;
     }
 }

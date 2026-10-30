@@ -328,6 +328,26 @@ compared with it; `DELETE /api/v1/people/voiceprints` and forgetting a person de
 counts a track as the speaker (instead of the raw label) in `labelsPerConversation` and in the golden `fragmentation`, so the effect shows in
 [Quality metrics](#quality-metrics).
 
+### Names from context
+
+With tracks on, two sources of names beyond voiceprints feed the same suggestions. A scheduler tick queues `name-tracks` (Audio lane, no
+model call) for every local day whose tracks were built, or whose call ranges arrived, since it was last named; it replaces the day's
+pending `call` and `meeting` suggestions and never touches a decided one. A name rejected for a track is not offered for it again.
+
+- **Calls** (`Nytka__People__CallNames`, on). A `call` [context range](#context-from-the-phone) may carry the `contact` the phone showed
+  (and a `contactHash` of the number; the server never receives the number). During the range, the non-wearer track with the most
+  speech inside it becomes a `call` suggestion for the contact, confidence 0.9, with the range as evidence, when it has at least 10 s
+  there and at least twice as much as the next voice. Two voices of similar length give no suggestion; a track a person already owns,
+  a dismissed one and one mostly yours are never named. The contact matches a person by name (ignoring case; people have no aliases
+  yet) and is otherwise a new person, created when the suggestion is accepted.
+- **Calendar** (`Nytka__People__CalendarNames`, off). Every non-wearer track with 10 s or more inside an event of the feed
+  (`Nytka__Calendar__IcsUrl`) that has attendees gets a `meeting` suggestion for each attendee who is not already a person owning a
+  track heard in the event, confidence 0.6, with the event as evidence. Attendees only say who could have been there, so a track may get
+  several, and the owner picks. The server keeps an event for a day after it ends, so only recent days can be named this way.
+
+No suggestion of either kind is ever applied on its own, and the auto-apply settings of [People](#people) do not reach them: the owner
+accepts or rejects one with `POST /api/v1/tracks/suggestions/{id}`.
+
 ## Speech kind
 
 The pendant records everything near it. Some of that is not a person talking to you: a TV, a video, a
@@ -769,7 +789,9 @@ The pendant also hears what your phone plays: a video, a podcast, the far side o
 tell the server when that happened, as a **range** for each stretch in which the phone played sound through its own
 loudspeaker (`kind` `media`) or was in a call (`call`). A range the app sends holds the `kind`, the `route` of the sound (`speaker`,
 `earpiece`, `headset`, `bluetooth` or `other`) and two times, and nothing else: never an app name, a title or a number.
-Android does not tell the app which app plays, and the app does not ask.
+Android does not tell the app which app plays, and the app does not ask. A `call` range may also carry the `contact`, the display name
+the phone showed for the other end, and a `contactHash`, the SHA-256 of that number (the server never receives the number), which
+[Names from context](#names-from-context) reads. The server accepts both from any app; the app change that sends them is its own issue.
 
 Newer apps send more of what the phone knows, each kind behind its own `/api/v1/info` feature: the screen was on
 (`screen`, feature `context-device`), sound went to headphones and not into the room (`headphones`, `context-device`), what
@@ -781,8 +803,8 @@ not take, is refused on its own and listed in the answer's `rejected`, so a newe
 
 The app sends ranges to `POST /api/v1/context/ranges` in batches of up to 500, each with an id it made, so a batch it
 retries changes nothing. It sends them while `/api/v1/info` lists `context-ranges` and its "Phone context" switch is on.
-`GET /api/v1/context/ranges` lists them. Nothing else reads them yet; they are the context for telling a person near you
-from a voice that comes out of a screen or a loudspeaker. The server keeps a range as long as speech audio
+`GET /api/v1/context/ranges` lists them. They are the context for telling a person near you
+from a voice that comes out of a screen or a loudspeaker, and a call's contact names the voice on the other end. The server keeps a range as long as speech audio
 (`Nytka__Audio__RetentionDays`; with `0`, a day after it ends) and logs counts only, never a time or an id.
 
 ## Daily digest

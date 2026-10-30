@@ -38,11 +38,12 @@ public static class ContextEndpoints
     public const string BadRoute = "bad-route";
     public const string BadDetail = "bad-detail";
     public const string BadTimes = "bad-times";
+    public const string BadContact = "bad-contact";
 
     /// <summary>
-    /// Body <c>{ items: [{ id, kind, route, startedAt, endedAt, detail? }] }</c>, 1 to 500 items. An item that is no object or has
+    /// Body <c>{ items: [{ id, kind, route, startedAt, endedAt, detail?, contact?, contactHash? }] }</c>, 1 to 500 items. An item that is no object or has
     /// no UUID id makes the upload a 400 naming the field and the index (<c>items[3].id</c>), never the value. Any other bad item
-    /// (a kind the server does not know, a route or detail its kind does not take, times out of bounds) is refused on its own and
+    /// (a kind the server does not know, a route or detail its kind does not take, a contact on a kind but <c>call</c>, times out of bounds) is refused on its own and
     /// listed in <c>rejected</c> with a reason code, and the rest are stored. Answers <c>{ accepted, skipped, rejected }</c>;
     /// <c>skipped</c> counts the ranges whose id is already stored, a repeat inside the batch included, and a rejected row counts in neither.
     /// </summary>
@@ -126,13 +127,39 @@ public static class ContextEndpoints
             return new RejectedRange(id, BadDetail);
         }
 
+        if (!ReadContact(item, kind.Name, out var contact, out var contactHash))
+        {
+            return new RejectedRange(id, BadContact);
+        }
+
         if (!ReadTime(item, "startedAt", out var startedAt) || !ReadTime(item, "endedAt", out var endedAt)
             || startedAt < Earliest || startedAt > now + MaxAhead || endedAt < startedAt || endedAt - startedAt > MaxLength)
         {
             return new RejectedRange(id, BadTimes);
         }
 
-        return new NewContextRange(id, kind.Name, route, startedAt, endedAt, kind.Details is null ? null : detail);
+        return new NewContextRange(id, kind.Name, route, startedAt, endedAt, kind.Details is null ? null : detail, contact, contactHash);
+    }
+
+    /// <summary>
+    /// A call's <c>contact</c> (a display name of 1 to 80 characters, trimmed) and its optional <c>contactHash</c> (64 hex characters,
+    /// the app's SHA-256 of the number, kept in lower case). False when either is wrong, is sent without a contact, or is sent on a kind but call.
+    /// </summary>
+    private static bool ReadContact(JsonElement item, string kind, out string? contact, out string? hash)
+    {
+        contact = null;
+        hash = null;
+        var hasContact = item.TryGetProperty("contact", out var contactValue) && contactValue.ValueKind != JsonValueKind.Null;
+        var hasHash = item.TryGetProperty("contactHash", out var hashValue) && hashValue.ValueKind != JsonValueKind.Null;
+        if (!hasContact && !hasHash)
+        {
+            return true;
+        }
+
+        contact = Text(item, "contact")?.Trim();
+        hash = Text(item, "contactHash")?.ToLowerInvariant();
+        return kind == "call" && contact is { Length: > 0 and <= PeopleEndpoints.MaxNameLength } && !contact.Any(char.IsControl)
+            && (!hasHash || (hash is { Length: 64 } && hash.All(Uri.IsHexDigit)));
     }
 
     /// <summary>The string property, or null when it is missing or not a string.</summary>

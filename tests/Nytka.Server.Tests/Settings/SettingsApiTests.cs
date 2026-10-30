@@ -65,7 +65,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime, IClas
                 "voice.newPrintBelow", "voice.maxPrints",
                 "people.suggestNames",
                 "people.voiceMatching", "people.voiceThreshold",
-                "people.facts", "people.autoApplyNames", "people.autoApplyConfidence", "people.cardMinConversations",
+                "people.facts", "people.autoApplyNames", "people.autoApplyConfidence", "people.cardMinConversations", "people.callNames", "people.calendarNames",
                 "tags.suggest", "tags.auto", "privacy.hide", "topics.enabled", "rollups.enabled", "events.silenceMinutes",
                 "timeline.scenes", "calendar.icsUrl", "calendar.briefMinutes",
                 "speech.mode", "speech.mediaThreshold",
