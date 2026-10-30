@@ -806,6 +806,15 @@ so a regression shows up the next morning. One row per local day in `Nytka__User
   for those with attribution): shares and percentiles from the summed lines and lists, `perDay` and `unmappedMinutes`
   as a mean per day. A day measured before these existed has `attribution: null` and counts out of the pooled value;
   the nightly run fills yesterday and today only.
+- **Golden scores.** Against the [golden labels](#labelling), measured for today and yesterday only (like the voice groups, a snapshot of
+  the system as it is then; a backfilled day has none, and neither has a system with no golden label). `attribution.goldenAccuracy` is the share of
+  answered `speaker` lines (every answer but `unsure`) that the system shows the way the owner said: `wearer` is the wearer class, `person` the same
+  person, `media` the media class, `new-voice` an unnamed voice (class `label` or `none`), `same-as` the same identity as the other line (the wearer,
+  one person, or one track), and `crowd` never, since the system has no such class. `attribution.fragmentation` is the mean number of distinct
+  tracks (a voice group, else the batch's raw label, else none) per golden person and day, over person-days with two lines or more; a golden person is
+  the lines tied by the same `wearer` or `person` answer or by `same-as` chains, and 1 is ideal. `boundary.goldenF1` is the F1 of the
+  system's boundaries (another conversation starts, or the enrichment marked a topic shift) against the owner's `new-situation` answers. `goldenLines`,
+  `goldenPersons` and `goldenBoundaries` are the sample sizes behind them.
 - **Read it.** `GET /api/v1/quality?from=&to=` (admin) and the `get_quality` MCP tool (any token: counts
   and rates, never text). Rates run from 0 to 1, four decimals, null when their base is 0.
 - **Graph it.** There is no `/metrics` endpoint; point a Grafana Postgres data source at
@@ -883,6 +892,13 @@ Nytka's own marks. Routes: [Labelling](../reference/api.md#labelling).
   marks the line and teaches nothing until you confirm a batch (`POST /api/v1/labeling/voice/confirm`).
 - **Score the model, not the rule.** Once a label is a mark, the rule repeats it; `GET /labels` therefore carries each
   line's own verdicts (`voice_is_user`, `speech_guess`), and evaluations read those.
+- **Golden days.** The tasks `speaker` and `boundary` are served only for the local days in `Nytka__Eval__GoldenDays`, the set every
+  attribution and boundary change is scored against (the [quality metrics](#quality-metrics)). `speaker` asks who spoke one line: you, a person,
+  the same voice as another golden line, a new voice, media, a crowd, or unsure. `boundary` asks whether two adjacent lines are one situation or
+  a new one; it is asked for every pair across a conversation split or a topic shift, and for the widest gap inside each conversation (the split the
+  system did not make that is likeliest). Items are made when `GET /tasks`, `GET /next` or `GET /api/v1/labeling/golden/progress` is first called for
+  a day, and asked longest speech first, so few answers cover the most minutes. An answer is a row of `golden_labels` and changes nothing else: no
+  mark, no person, no voiceprint, no segment.
 - **Clips.** The clip route cuts the item from speech audio. With `Nytka__Labeling__KeepClips` on, each labelled clip is
   kept beside its label past `Nytka__Audio__RetentionDays`, until you delete the label; off (the default), it goes with
   its audio and retention drops any kept before.

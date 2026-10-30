@@ -15,7 +15,7 @@ public sealed record QualityDay(
     double? WearerLineShare, double? WearerConversationShare, double? VoiceScoredShare, double? UnknownSpeakerShare,
     double? RawLabelShare, double? StoredRawLabelShare, double? MediaShare, double? MediaLineShare, double? TaggedShare,
     QualityItems Items, int UnconfirmedMemories, int? VoiceGroups, double? SingletonShare,
-    QualityAttribution? Attribution, QualityConversations ConversationStats, QualityWindow Last7Days);
+    QualityAttribution? Attribution, QualityBoundary Boundary, QualityConversations ConversationStats, QualityWindow Last7Days);
 
 /// <summary>Per class, the wearer's, a media line's, a person's, a raw provider label's and no label's, as <see cref="QualityCounts"/> defines them.</summary>
 public sealed record QualityClasses<T>(T Wearer, T Person, T Label, T Media, T None);
@@ -26,10 +26,17 @@ public sealed record QualityLabels(double? Mean, int? P50, int? P90);
 /// <summary>
 /// How a day's lines were attributed. <paramref name="ClassShare"/> is the share of lines (0 to 1, null with no line),
 /// <paramref name="SpeechSeconds"/> their speech time, <paramref name="UnmappedMinutes"/> the speech minutes on raw labels
-/// that no person owns (the <c>label</c> class). Null on a day measured before these existed.
+/// that no person owns (the <c>label</c> class). Null on a day measured before these existed. The golden fields are the system's
+/// score against the golden labels (<see cref="QualityGolden"/>): <paramref name="GoldenAccuracy"/> the share of
+/// <paramref name="GoldenLines"/> answered lines it shows as the owner said, <paramref name="Fragmentation"/> the mean distinct tracks
+/// per golden person and day over <paramref name="GoldenPersons"/> person-days; all null while no golden label exists.
 /// </summary>
 public sealed record QualityAttribution(
-    QualityClasses<double?> ClassShare, QualityClasses<double> SpeechSeconds, QualityLabels LabelsPerConversation, double UnmappedMinutes);
+    QualityClasses<double?> ClassShare, QualityClasses<double> SpeechSeconds, QualityLabels LabelsPerConversation, double UnmappedMinutes,
+    double? GoldenAccuracy, int? GoldenLines, double? Fragmentation, int? GoldenPersons);
+
+/// <summary><paramref name="GoldenF1"/> is the F1 of the system's boundaries against the owner's over <paramref name="GoldenBoundaries"/> answered ones; null while none exists or none is new.</summary>
+public sealed record QualityBoundary(double? GoldenF1, int? GoldenBoundaries);
 
 /// <summary><paramref name="ShortShare"/> is the share of conversations under <see cref="QualityStore.FragmentSeconds"/> s, null with none.</summary>
 public sealed record QualityConversations(double? ShortShare, double PerDay);
@@ -37,9 +44,11 @@ public sealed record QualityConversations(double? ShortShare, double PerDay);
 /// <summary>
 /// The value of the day and the six before it, pooled over the measured days among them: shares and percentiles from the sums
 /// and the lists of all those days, <c>perDay</c> and <c>unmappedMinutes</c> as a mean per day. <paramref name="AttributionDays"/>
-/// counts the days that have attribution metrics, <paramref name="Days"/> every measured day.
+/// counts the days that have attribution metrics, <paramref name="Days"/> every measured day. The golden scores are a snapshot, not
+/// a sum: the window shows those of its newest day that has them.
 /// </summary>
-public sealed record QualityWindow(int Days, int AttributionDays, QualityAttribution? Attribution, QualityConversations Conversations);
+public sealed record QualityWindow(
+    int Days, int AttributionDays, QualityAttribution? Attribution, QualityBoundary Boundary, QualityConversations Conversations);
 
 public sealed record QualityResponse(string TimeZone, string From, string To, IReadOnlyList<QualityDay> Days);
 
@@ -53,8 +62,9 @@ public static class QualityReport
     {
         var c = row.Counts;
         var end = DateOnly.ParseExact(row.LocalDate, "yyyy-MM-dd");
-        var window = measured.Where(r => DateOnly.ParseExact(r.LocalDate, "yyyy-MM-dd") is var d && d <= end && d > end.AddDays(-WindowDays))
-            .Select(r => r.Counts).ToList();
+        var inWindow = measured.Where(r => DateOnly.ParseExact(r.LocalDate, "yyyy-MM-dd") is var d && d <= end && d > end.AddDays(-WindowDays)).ToList();
+        var window = inWindow.Select(r => r.Counts).ToList();
+        var golden = inWindow.OrderByDescending(r => r.LocalDate, StringComparer.Ordinal).Select(r => r.Counts.Golden).FirstOrDefault(g => g is not null);
         var withAttribution = window.Where(w => w.LabelsPerConversation is not null).ToList();
         return new QualityDay(
             row.LocalDate, row.MeasuredAt, c.Conversations, c.Lines,
@@ -64,11 +74,15 @@ public static class QualityReport
             Rate(c.MediaConversations, c.NonEmpty), Rate(c.MediaLineConversations, c.NonEmpty), Rate(c.TaggedConversations, c.Conversations),
             new QualityItems(c.ItemsVital, c.ItemsOrdinary, c.ItemsNoise, c.ItemsUnrated), c.UnconfirmedMemories,
             c.VoiceGroups, c.VoiceGroups is { } groups && c.SingletonGroups is { } singletons ? Rate(singletons, groups) : null,
-            Attribution([c]), Conversations([c], 1),
-            new QualityWindow(window.Count, withAttribution.Count, Attribution(withAttribution), Conversations(window, window.Count)));
+            Attribution([c], c.Golden), Boundary(c.Golden), Conversations([c], 1),
+            new QualityWindow(
+                window.Count, withAttribution.Count, Attribution(withAttribution, golden), Boundary(golden), Conversations(window, window.Count)));
     }
 
-    private static QualityAttribution? Attribution(IReadOnlyList<QualityCounts> days)
+    private static QualityBoundary Boundary(GoldenCounts? golden) =>
+        new(golden is null ? null : GoldenScore.F1(golden.BoundaryTp, golden.BoundaryFp, golden.BoundaryFn), golden?.Boundaries);
+
+    private static QualityAttribution? Attribution(IReadOnlyList<QualityCounts> days, GoldenCounts? golden)
     {
         if (days.Count == 0 || days.Any(d => d.LabelsPerConversation is null))
         {
@@ -90,7 +104,9 @@ public static class QualityReport
         var perConversation = labels.Count == 0
             ? new QualityLabels(null, null, null)
             : new QualityLabels(Math.Round(labels.Average(), 4), Percentile(labels, 0.5), Percentile(labels, 0.9));
-        return new QualityAttribution(share, seconds, perConversation, Math.Round(Secs(d => d.LabelSeconds) / 60 / days.Count, 4));
+        return new QualityAttribution(
+            share, seconds, perConversation, Math.Round(Secs(d => d.LabelSeconds) / 60 / days.Count, 4),
+            golden is null ? null : Rate(golden.Correct, golden.Lines), golden?.Lines, golden?.Fragmentation, golden?.Persons);
     }
 
     private static QualityConversations Conversations(IReadOnlyList<QualityCounts> days, int count) =>

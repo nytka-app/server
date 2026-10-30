@@ -323,6 +323,20 @@ public sealed class LabelStore(NpgsqlDataSource dataSource)
             """,
             new { conversations, ids = ids.ToArray(), context }, cancellationToken: ct))).ToList();
 
+        // A boundary item can span two conversations: the line outside the first one's is read by its id.
+        var seen = lines.Select(l => l.Id).ToHashSet();
+        var elsewhere = items.Values.Where(i => i.Task == LabelingTasks.Boundary).SelectMany(i => i.SegmentIds).Where(id => !seen.Contains(id)).ToArray();
+        if (elsewhere.Length > 0)
+        {
+            lines.AddRange(await connection.QueryAsync<LineRow>(new CommandDefinition(
+                $"""
+                select s.id as Id, s.conversation_id as ConversationId, s.started_at as StartedAt, s.ended_at as EndedAt, s.text as Text,
+                       coalesce({SpeakerLabel.IsUser}, false) as IsUser
+                from segments s where s.id = any(@elsewhere)
+                """,
+                new { elsewhere }, cancellationToken: ct)));
+        }
+
         var views = new List<ItemView>();
         var gone = new List<long>();
         foreach (var id in ids)
@@ -335,7 +349,7 @@ public sealed class LabelStore(NpgsqlDataSource dataSource)
             var own = item.SegmentIds.ToHashSet();
             var near = lines.Where(l => l.ConversationId == item.ConversationId
                 && l.StartedAt < item.EndedAt + context && l.EndedAt > item.StartedAt - context).ToList();
-            var mine = near.Where(l => own.Contains(l.Id)).Select(l => Line(l, item.StartedAt)).ToList();
+            var mine = lines.Where(l => own.Contains(l.Id)).OrderBy(l => l.StartedAt).ThenBy(l => l.Id).Select(l => Line(l, item.StartedAt)).ToList();
             if (mine.Count == 0)
             {
                 gone.Add(id);
@@ -840,7 +854,7 @@ public sealed class LabelStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>SQL for the opaque key of a segment aliased <c>s</c>'s voice, joined to its fingerprint <c>f</c>: its voice group, else the provider's label.</summary>
-    private const string SpeakerKey =
+    internal const string SpeakerKey =
         "coalesce('g:' || f.group_id::text, 's:' || nullif(s.speaker_id, ''), 's:' || nullif(s.speaker, ''))";
 }
 
@@ -853,15 +867,26 @@ public static class LabelingTasks
     public const string Transcript = "transcript";
     public const string Overlap = "overlap";
 
+    /// <summary>The golden kinds (<see cref="GoldenStore"/>): asked only for the days in <c>eval.goldenDays</c>, in no mix.</summary>
+    public const string Speaker = "speaker";
+
+    public const string Boundary = "boundary";
+
     /// <summary>Not a task: <c>GET /next?task=mixed</c> interleaves them all.</summary>
     public const string Mixed = "mixed";
 
     public static readonly string[] All = [Device, Voice, Quiet, Transcript, Overlap];
 
+    public static readonly string[] Golden = [Speaker, Boundary];
+
+    public static bool IsGolden(string task) => Golden.Contains(task);
+
     public static string Ask(string task) => task switch
     {
         Device or Voice => "source",
         Overlap => "overlap",
+        Speaker => "speaker",
+        Boundary => "boundary",
         _ => "transcript",
     };
 }

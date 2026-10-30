@@ -9,6 +9,7 @@ public static class LabelingExtensions
     public static IServiceCollection AddNytkaLabeling(this IServiceCollection services)
     {
         services.AddSingleton<ISettingsGroup, LabelingSettings>();
+        services.AddSingleton<ISettingsGroup, EvalSettings>();
         services.AddScoped<IJobHandler, PickLabelingHandler>();
         return services;
     }
