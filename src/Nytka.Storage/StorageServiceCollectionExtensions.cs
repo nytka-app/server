@@ -63,6 +63,8 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<LinkStore>();
         services.AddSingleton<TrackNameStore>();
         services.AddSingleton<SituationStore>();
+        services.AddSingleton<DerivationStore>();
+        services.AddSingleton<RethinkStore>();
 
         return services;
     }

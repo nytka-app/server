@@ -126,6 +126,9 @@ services:
       Nytka__Tracks__Threshold: "${Nytka__Tracks__Threshold:-}"
       Nytka__Tracks__Meaning: "${Nytka__Tracks__Meaning:-}"
       Nytka__Situations__Enabled: "${Nytka__Situations__Enabled:-}"
+      Nytka__Rethink__Enabled: "${Nytka__Rethink__Enabled:-}"
+      Nytka__Rethink__MaxUsdPerNight: "${Nytka__Rethink__MaxUsdPerNight:-}"
+      Nytka__Rethink__MaxDaysPerNight: "${Nytka__Rethink__MaxDaysPerNight:-}"
       Nytka__Speech__Mode: "${Nytka__Speech__Mode:-}"
       Nytka__Speech__MediaThreshold: "${Nytka__Speech__MediaThreshold:-}"
     ports:

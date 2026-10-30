@@ -40,6 +40,9 @@ public sealed record SituationsPayload(string LocalDate, bool Recut = false);
 
 public sealed record EnrichSituationPayload(Guid SituationId);
 
+/// <summary><paramref name="Night"/> is <c>yyyy-MM-dd</c>, the local date on which the quiet hours <c>rethink</c> runs in began.</summary>
+public sealed record RethinkPayload(string Night);
+
 /// <summary>
 /// The scene <c>link-speakers</c> reads: the conversation's lines from <paramref name="SceneStartedAt"/> to <paramref name="SceneEndedAt"/>
 /// (null for the conversation's last scene) that fall on the local day <paramref name="LocalDate"/> (<c>yyyy-MM-dd</c>).

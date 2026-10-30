@@ -53,7 +53,7 @@ public sealed class TrackNameStore(NpgsqlDataSource dataSource)
     /// transaction. A decided one stays, and a name already stored for the track (a rejected one included) is not stored again. A name
     /// of a person who exists carries that person; any other is for a new person, created when the suggestion is accepted.
     /// </summary>
-    public async Task ReplaceAsync(DateOnly day, IReadOnlyList<NewTrackName> names, DateTimeOffset now, CancellationToken ct)
+    public async Task ReplaceAsync(DateOnly day, IReadOnlyList<NewTrackName> names, DateTimeOffset now, long derivation, CancellationToken ct)
     {
         var date = day;
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -79,10 +79,10 @@ public sealed class TrackNameStore(NpgsqlDataSource dataSource)
 
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into track_name_runs (day, ran_at) values (@date, @now)
-            on conflict (day) do update set ran_at = excluded.ran_at
+            insert into track_name_runs (day, ran_at, derivation_id) values (@date, @now, @derivation)
+            on conflict (day) do update set ran_at = excluded.ran_at, derivation_id = excluded.derivation_id
             """,
-            new { date, now }, transaction, cancellationToken: ct));
+            new { date, now, derivation }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
     }
 

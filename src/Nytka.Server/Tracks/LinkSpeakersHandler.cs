@@ -3,6 +3,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Rethink;
 using Nytka.Server.Settings;
 using Nytka.Server.Situations;
 using Nytka.Storage;
@@ -18,7 +19,8 @@ namespace Nytka.Server.Tracks;
 /// transcript, the answer and the lines it cites never reach them.
 /// </summary>
 public sealed partial class LinkSpeakersHandler(
-    LinkStore links, JobQueue queue, ILlmClient llm, SettingsService settings, TimeProvider time, ILogger<LinkSpeakersHandler> logger)
+    LinkStore links, JobQueue queue, ILlmClient llm, SettingsService settings, DerivationService derivations, TimeProvider time,
+    ILogger<LinkSpeakersHandler> logger)
     : IJobHandler
 {
     /// <summary>A rate-limited call waits this long before it asks again, as the other model jobs do.</summary>
@@ -35,13 +37,14 @@ public sealed partial class LinkSpeakersHandler(
             return JobOutcome.Done;
         }
 
+        var version = (await derivations.CurrentAsync(DerivedLayers.Links, ct)).Current;
         var (from, to) = DigestDay.Bounds(day, UserTimeZone.Resolve(settings));
         var lines = await links.SceneLinesAsync(payload.ConversationId, payload.SceneStartedAt, payload.SceneEndedAt, from.UtcDateTime, to.UtcDateTime, ct);
         var scene = LinkPrompt.Scene(lines);
         var run = new LinkRun(payload.ConversationId, payload.SceneStartedAt, day, LinkStore.Skipped, scene.Letters.Count, 0, 0);
         if (scene.Lines.Count < LinkPrompt.MinLines || scene.Letters.Count < 2 || scene.Letters.Count > LinkPrompt.MaxLetters)
         {
-            await links.SaveAsync(run, [], time.GetUtcNow(), ct);
+            await links.SaveAsync(run, [], time.GetUtcNow(), version, ct);
             LogSkipped(logger, scene.Lines.Count, scene.Letters.Count);
             return await AfterAsync(job, payload, ct);
         }
@@ -58,7 +61,7 @@ public sealed partial class LinkSpeakersHandler(
         }
 
         var pairs = LinkPrompt.Pairs(LlmJson.Parse<LinkAnswer>(raw), scene);
-        await links.SaveAsync(run with { Status = LinkStore.Done, PromptChars = LinkPrompt.System.Length + user.Length, AnswerChars = raw.Length }, pairs, time.GetUtcNow(), ct);
+        await links.SaveAsync(run with { Status = LinkStore.Done, PromptChars = LinkPrompt.System.Length + user.Length, AnswerChars = raw.Length }, pairs, time.GetUtcNow(), version, ct);
         LogAsked(logger, scene.Lines.Count, scene.Letters.Count, user.Length, raw.Length, pairs.Count);
         return await AfterAsync(job, payload, ct);
     }
@@ -69,7 +72,8 @@ public sealed partial class LinkSpeakersHandler(
         if (DigestDay.TryParse(payload.LocalDate, out var day))
         {
             await links.SaveAsync(
-                new LinkRun(payload.ConversationId, payload.SceneStartedAt, day, LinkStore.Failed, 0, 0, 0), [], time.GetUtcNow(), ct);
+                new LinkRun(payload.ConversationId, payload.SceneStartedAt, day, LinkStore.Failed, 0, 0, 0), [], time.GetUtcNow(),
+                (await derivations.CurrentAsync(DerivedLayers.Links, ct)).Current, ct);
             await AfterAsync(job, payload, ct);
         }
     }

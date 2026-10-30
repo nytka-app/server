@@ -1,3 +1,4 @@
+using Nytka.Server.Rethink;
 using Nytka.Storage;
 
 namespace Nytka.Server.Quality;
@@ -50,7 +51,12 @@ public sealed record QualityConversations(double? ShortShare, double PerDay);
 public sealed record QualityWindow(
     int Days, int AttributionDays, QualityAttribution? Attribution, QualityBoundary Boundary, QualityConversations Conversations);
 
-public sealed record QualityResponse(string TimeZone, string From, string To, IReadOnlyList<QualityDay> Days);
+/// <summary>
+/// <paramref name="Derivations"/> is the state of each derived layer now, not per day: its current version and how many days an older
+/// version made rows of (docs/explanation/features.md, Nightly re-think).
+/// </summary>
+public sealed record QualityResponse(
+    string TimeZone, string From, string To, IReadOnlyList<QualityDay> Days, IReadOnlyList<DerivationStatus> Derivations);
 
 /// <summary>Turns stored counts into the rates of <c>GET /api/v1/quality</c> and <c>get_quality</c>.</summary>
 public static class QualityReport

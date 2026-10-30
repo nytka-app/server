@@ -94,7 +94,7 @@ public sealed class LinkStore(NpgsqlDataSource dataSource)
     /// Replaces the scene's links by <paramref name="links"/> and records the run, in one transaction. A scene asked again
     /// (after a paid pass, say) never keeps an old answer next to a new one.
     /// </summary>
-    public async Task SaveAsync(LinkRun run, IReadOnlyList<NewTrackLink> links, DateTimeOffset now, CancellationToken ct)
+    public async Task SaveAsync(LinkRun run, IReadOnlyList<NewTrackLink> links, DateTimeOffset now, long derivation, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -105,27 +105,28 @@ public sealed class LinkStore(NpgsqlDataSource dataSource)
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into track_links (id, day, conversation_id, scene_started_at, kind, source, confidence, segments, other_segments, evidence, created_at)
-                values (@id, @Day, @ConversationId, @SceneStartedAt, @kind, @source, @Confidence, @segments, @otherSegments, @evidence, @now)
+                insert into track_links (id, day, conversation_id, scene_started_at, kind, source, confidence, segments, other_segments, evidence, created_at, derivation_id)
+                values (@id, @Day, @ConversationId, @SceneStartedAt, @kind, @source, @Confidence, @segments, @otherSegments, @evidence, @now, @derivation)
                 """,
                 new
                 {
                     id = Guid.NewGuid(), run.Day, run.ConversationId, run.SceneStartedAt, kind = link.Same ? TrackStore.AnswerSame : TrackStore.AnswerDifferent,
                     source = Meaning, link.Confidence, segments = link.Segments.ToArray(), otherSegments = link.OtherSegments.ToArray(),
-                    evidence = link.Evidence.ToArray(), now,
+                    evidence = link.Evidence.ToArray(), now, derivation,
                 },
                 transaction, cancellationToken: ct));
         }
 
         await connection.ExecuteAsync(new CommandDefinition(
             """
-            insert into track_link_runs (conversation_id, scene_started_at, day, status, letters, pairs, prompt_chars, answer_chars, at)
-            values (@ConversationId, @SceneStartedAt, @Day, @Status, @Letters, @pairs, @PromptChars, @AnswerChars, @now)
+            insert into track_link_runs (conversation_id, scene_started_at, day, status, letters, pairs, prompt_chars, answer_chars, at, derivation_id)
+            values (@ConversationId, @SceneStartedAt, @Day, @Status, @Letters, @pairs, @PromptChars, @AnswerChars, @now, @derivation)
             on conflict (conversation_id, scene_started_at) do update set
                 day = excluded.day, status = excluded.status, letters = excluded.letters, pairs = excluded.pairs,
-                prompt_chars = excluded.prompt_chars, answer_chars = excluded.answer_chars, at = excluded.at
+                prompt_chars = excluded.prompt_chars, answer_chars = excluded.answer_chars, at = excluded.at,
+                derivation_id = excluded.derivation_id
             """,
-            new { run.ConversationId, run.SceneStartedAt, run.Day, run.Status, run.Letters, pairs = links.Count, run.PromptChars, run.AnswerChars, now },
+            new { run.ConversationId, run.SceneStartedAt, run.Day, run.Status, run.Letters, pairs = links.Count, run.PromptChars, run.AnswerChars, now, derivation },
             transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
     }

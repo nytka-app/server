@@ -1,6 +1,7 @@
 using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Quality;
+using Nytka.Server.Rethink;
 using Nytka.Server.Settings;
 using Nytka.Storage;
 
@@ -20,18 +21,19 @@ public static class QualityEndpoints
     }
 
     private static async Task<IResult> GetAsync(
-        string? from, string? to, QualityStore quality, SettingsService settings, TimeProvider time, CancellationToken ct)
+        string? from, string? to, QualityStore quality, DerivationService derivations, SettingsService settings, TimeProvider time, CancellationToken ct)
     {
-        var (response, errors) = await ReadAsync(from, to, quality, settings, time, ct);
+        var (response, errors) = await ReadAsync(from, to, quality, derivations, settings, time, ct);
         return response is null ? Results.ValidationProblem(errors) : Results.Ok(response);
     }
 
     /// <summary>
     /// <paramref name="from"/> and <paramref name="to"/> are local dates, both inclusive, <paramref name="to"/> today at the latest;
-    /// by default the last <see cref="DefaultDays"/> days. Only measured days are listed. Null with the errors by parameter.
+    /// by default the last <see cref="DefaultDays"/> days. Only measured days are listed. The derived layers' state is the present one. Null with the errors by parameter.
     /// </summary>
     public static async Task<(QualityResponse? Response, Dictionary<string, string[]> Errors)> ReadAsync(
-        string? from, string? to, QualityStore quality, SettingsService settings, TimeProvider time, CancellationToken ct)
+        string? from, string? to, QualityStore quality, DerivationService derivations, SettingsService settings, TimeProvider time,
+        CancellationToken ct)
     {
         var zone = UserTimeZone.Resolve(settings);
         var today = DigestDay.Today(time.GetUtcNow(), zone);
@@ -71,6 +73,6 @@ public static class QualityEndpoints
 
         var rows = await quality.ListAsync(DigestDay.Text(first.AddDays(1 - QualityReport.WindowDays)), DigestDay.Text(last), ct);
         var days = rows.Where(r => string.CompareOrdinal(r.LocalDate, DigestDay.Text(first)) >= 0).Select(r => QualityReport.Day(r, rows)).ToList();
-        return (new QualityResponse(UserTimeZone.Name(zone), DigestDay.Text(first), DigestDay.Text(last), days), errors);
+        return (new QualityResponse(UserTimeZone.Name(zone), DigestDay.Text(first), DigestDay.Text(last), days, await derivations.StatusAsync(ct)), errors);
     }
 }

@@ -100,7 +100,8 @@ public sealed class SituationStore(NpgsqlDataSource dataSource)
     /// gets the next version; one that no longer exists goes with its lines.
     /// </summary>
     public async Task<SituationSave> SaveDayAsync(
-        DateOnly day, string stage, IReadOnlyDictionary<Guid, IReadOnlyList<SituationSpan>> spans, DateTimeOffset now, CancellationToken ct)
+        DateOnly day, string stage, IReadOnlyDictionary<Guid, IReadOnlyList<SituationSpan>> spans, DateTimeOffset now, long derivation,
+        CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
@@ -168,6 +169,10 @@ public sealed class SituationStore(NpgsqlDataSource dataSource)
                 new { w.Id, segments = w.Span.SegmentIds.ToArray() }, transaction, cancellationToken: ct));
         }
 
+        // Every row of the day, an unchanged one too, is now what this version makes of the day.
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update situations set derivation_id = @derivation where day = @day and derivation_id is distinct from @derivation",
+            new { day, derivation }, transaction, cancellationToken: ct));
         await connection.ExecuteAsync(new CommandDefinition(
             """
             insert into situation_days (day, stage, built_at) values (@day, @stage, @now)
@@ -293,17 +298,18 @@ public sealed class SituationStore(NpgsqlDataSource dataSource)
     /// False when the situation is gone or its lines changed since: the next run reads them again.
     /// </summary>
     public async Task<bool> StoreEnrichmentAsync(
-        Guid id, string linesHash, string status, string? title, string? summary, string? message, DateTimeOffset now, CancellationToken ct)
+        Guid id, string linesHash, string status, string? title, string? summary, string? message, DateTimeOffset now, long derivation,
+        CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             """
             update situations
             set title = @title, summary = @summary, ai_status = @status, ai_message = @message, ai_lines_hash = @linesHash,
-                ai_failures = 0, ai_updated_at = @now
+                ai_failures = 0, ai_updated_at = @now, ai_derivation_id = @derivation
             where id = @id and lines_hash = @linesHash
             """,
-            new { id, linesHash, status, title, summary, message, now }, cancellationToken: ct)) > 0;
+            new { id, linesHash, status, title, summary, message, now, derivation }, cancellationToken: ct)) > 0;
     }
 
     /// <summary>Records a round of failed attempts.</summary>
