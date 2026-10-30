@@ -18,7 +18,11 @@ create table speaker_tracks (
     built_at      timestamptz not null
 );
 
+-- The table was created in this migration and is empty.
+-- squawk-ignore require-concurrent-index-creation
 create index speaker_tracks_day on speaker_tracks (day);
+-- The table was created in this migration and is empty.
+-- squawk-ignore require-concurrent-index-creation
 create index speaker_tracks_person on speaker_tracks (person_id) where person_id is not null;
 
 -- The line's track. Readers follow it only while the applied tracks.enabled (tracks_state) is true.
@@ -51,6 +55,8 @@ create table track_prints (
     primary key (segment_id, idx)
 );
 
+-- The table was created in this migration and is empty.
+-- squawk-ignore require-concurrent-index-creation
 create index track_prints_batch on track_prints (batch_id);
 
 -- The owner's own answers about two lines: the same voice or two voices. They are must-link and cannot-link constraints on every
@@ -64,6 +70,8 @@ create table track_answers (
     check (segment_id < other_segment_id)
 );
 
+-- The table was created in this migration and is empty.
+-- squawk-ignore require-concurrent-index-creation
 create index track_answers_other on track_answers (other_segment_id);
 
 -- A track that sounds like a person's voiceprint (kind 'person') or like a track of an earlier day (kind 'track'): a suggestion until
@@ -82,5 +90,9 @@ create table track_suggestions (
         or (kind = 'track' and other_track_id is not null and person_id is null))
 );
 
+-- The table was created in this migration and is empty.
+-- squawk-ignore require-concurrent-index-creation
 create unique index track_suggestions_person on track_suggestions (track_id, person_id) where kind = 'person';
+-- The table was created in this migration and is empty.
+-- squawk-ignore require-concurrent-index-creation
 create unique index track_suggestions_track on track_suggestions (track_id, other_track_id) where kind = 'track';
