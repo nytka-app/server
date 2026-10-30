@@ -3,6 +3,7 @@ using Nytka.Server.Auth;
 using Nytka.Server.Digests;
 using Nytka.Server.Privacy;
 using Nytka.Server.Settings;
+using Nytka.Server.Situations;
 using Nytka.Storage;
 
 namespace Nytka.Server.Api;
@@ -42,6 +43,16 @@ public static class TodayEndpoints
     public sealed record TimelineSpanResponse(string Date, IReadOnlyList<TimelineSpanScene> Scenes);
 
     /// <summary>
+    /// A situation with <c>situations.enabled</c> on: the fields of a scene plus <c>version</c>, which counts the changes of the stored
+    /// situation (0 for a conversation whose day is not built yet, shown as the scenes it would be cut into).
+    /// </summary>
+    public sealed record TimelineSituation(
+        string Id, Guid ConversationId, DateTime StartedAt, DateTime? EndedAt, string? Title, string? Summary, IReadOnlyList<ScenePerson> People,
+        string? Place, bool Noise, string? Sensitivity, IReadOnlyList<DayItem> Items, string StartsWith, int Version);
+
+    public sealed record TimelineSituationResponse(string Date, IReadOnlyList<TimelineSituation> Scenes);
+
+    /// <summary>
     /// The items worth a look on the day, at most <see cref="TodayPick.Max"/>, oldest first: what is vital, every open commitment
     /// with a named person or a due date, everything owed to the wearer, due or overdue tasks first. Nothing with a sensitivity.
     /// </summary>
@@ -65,7 +76,8 @@ public static class TodayEndpoints
 
     /// <summary>The conversations that started on <c>date</c> (default today), oldest first, each with all its live items in any salience.</summary>
     private static async Task<IResult> TimelineAsync(
-        string? date, string? tz, TodayStore store, SettingsService settings, SensitivityScope sensitivity, TimeProvider time, CancellationToken ct)
+        string? date, string? tz, TodayStore store, SituationStore situations, SettingsService settings, SensitivityScope sensitivity, TimeProvider time,
+        CancellationToken ct)
     {
         if (!Zone(tz, settings, out var zone, out var problem))
         {
@@ -85,6 +97,17 @@ public static class TodayEndpoints
 
         var (from, to) = DigestDay.Bounds(day, zone);
         var scenes = await store.TimelineAsync(from.UtcDateTime, to.UtcDateTime, now, sensitivity.Hidden, ct);
+        if (SituationSettings.Enabled(settings))
+        {
+            var ids = scenes.Select(s => s.Id).ToArray();
+            var stored = await situations.ForConversationsAsync(ids, ct);
+            var unbuilt = ids.Where(id => !stored.Contains(id)).ToArray();
+            var spans = unbuilt.Length == 0 ? new Dictionary<Guid, ConversationSpans>() : (await store.SpansAsync(unbuilt, ct)).ToDictionary();
+            return Results.Ok(new TimelineSituationResponse(
+                DigestDay.Text(day),
+                [.. scenes.SelectMany(s => stored.Contains(s.Id) ? Situations(s, [.. stored[s.Id]]) : Unbuilt(Spans(s, spans[s.Id])))]));
+        }
+
         if (TimelineSettings.Scenes(settings))
         {
             var spans = await store.SpansAsync([.. scenes.Select(s => s.Id)], ct);
@@ -117,6 +140,28 @@ public static class TodayEndpoints
                 scene.Summary, scene.People, null, scene.Noise, scene.Sensitivity, items, part.StartsWith);
         }
     }
+
+    /// <summary>
+    /// A conversation's stored situations: each holds the people who spoke in it and the items said in its span (an item with no time in
+    /// the conversation goes to the first), under its own title and summary once it has them, else the conversation's. The id is the situation's.
+    /// </summary>
+    private static IEnumerable<TimelineSituation> Situations(Scene scene, IReadOnlyList<SituationView> views)
+    {
+        for (var i = 0; i < views.Count; i++)
+        {
+            var view = views[i];
+            var last = i == views.Count - 1;
+            var items = scene.Items.Where(item => (i == 0 || item.At >= view.StartedAt) && (last || item.At < view.EndedAt)).ToList();
+            yield return new TimelineSituation(
+                view.Id.ToString(), scene.Id, view.StartedAt, last ? scene.EndedAt : view.EndedAt, view.Title ?? scene.Title, view.Summary ?? scene.Summary,
+                view.People, view.Place, view.Noise || scene.Noise, scene.Sensitivity, items, view.StartsWith, view.Version);
+        }
+    }
+
+    /// <summary>The scenes of a conversation whose day is not built (today, say) as situations of version 0.</summary>
+    private static IEnumerable<TimelineSituation> Unbuilt(IEnumerable<TimelineSpanScene> spans) =>
+        spans.Select(s => new TimelineSituation(
+            s.Id, s.ConversationId, s.StartedAt, s.EndedAt, s.Title, s.Summary, s.People, s.Place, s.Noise, s.Sensitivity, s.Items, s.StartsWith, 0));
 
     private static bool Zone(string? tz, SettingsService settings, out TimeZoneInfo zone, out IResult? problem)
     {

@@ -70,7 +70,7 @@ public sealed class SettingsApiTests(PostgresFixture db) : IAsyncLifetime, IClas
                 "timeline.scenes", "calendar.icsUrl", "calendar.briefMinutes",
                 "speech.mode", "speech.mediaThreshold",
                 "stt.prices", "stt.monthlyBudgetUsd", "stt.budgetWarningPercent", "stt.budgetModel",
-                "insights.trustedAfterDays", "tracks.enabled", "tracks.threshold", "tracks.meaning",
+                "insights.trustedAfterDays", "tracks.enabled", "tracks.threshold", "tracks.meaning", "situations.enabled",
                 "nudges.enabled", "nudges.quietFrom", "nudges.quietTo",
                 "labeling.keepClips", "eval.goldenDays",
                 "stt.batch.minSeconds", "stt.batch.maxSeconds", "stt.batch.hardMaxSeconds", "stt.batch.longSilenceSeconds",

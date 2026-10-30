@@ -1294,3 +1294,67 @@ A scene's `startedAt` and `endedAt` are the bounds of its span: each scene ends 
 with the conversation. An item with no time in the conversation goes to the first scene.
 
 With `timeline.scenes` off, the Timeline is unchanged: one scene per conversation, with no `startsWith`.
+
+## Situations
+
+A situation is a stretch of one conversation in which the same people were present: the unit the app shows, stored instead of cut
+on every read. With `Nytka__Situations__Enabled` on (default off), the scheduler queues `build-situations` (Audio lane, no model call)
+for every local day that has ended, whose conversations are all closed and none waiting for its summary (the cut reads the topic
+boundaries of that summary, so conversation enrichment stays as it was and keeps the tasks, facts and tags). A conversation brings
+no situation before its day ends; the Timeline shows its scenes as situations of `version` 0 until then.
+
+The cut (`SituationSplit`, pure) starts from the [scenes](#scenes) and adds a cut where the set of present speaker tracks changes: a
+[track](#speaker-tracks) is present from its first line to its last, once it has 10 s of speech in the conversation (a starting value to
+calibrate on the golden boundary answers); the wearer's lines and media never count. A track that joins cuts at its first line
+(`startsWith: person_joined`); one that leaves cuts at its last line's end (`person_left`), unless neither the wearer nor another
+present track speaks after it. At one instant a scene cut wins over a join, a join over a leave. A fragment under 60 s with no speech
+(no line outside media with words) joins the one before it (the first one, the one after it); a conversation that is such a fragment
+alone is `noise`. Each situation records its start and end (the last reaches the last line, which may follow the conversation's
+recorded end), the tracks present, `activity` (`conversation`, `media` from a media share of 0.8, or `noise`), the media share and its
+lines (`situation_segments`: every line, media included, is in exactly one). `place` stays null until the server knows places.
+Without tracks (`Nytka__Tracks__Enabled` off) the cut is the scenes alone.
+
+The same input gives the same rows: a situation's id is a hash of its conversation and start, a rebuild writes no row whose content is
+unchanged, and one that changed keeps its summary and gets the next `version`; a change of tracks alone does not cost a new summary.
+What counts as a change is the end, `startsWith`, the media share, the tracks present or the set of lines.
+
+**One round of refinement.** With `Nytka__Tracks__Meaning` on, the first cut of a day leaves it at the stage `cut` and queues
+`link-speakers` for every situation not asked yet, so the model reads one situation at a time and a link never reaches across the people
+who came and went. When the last answer is in, the day's tracks are built again (the links count as in [links by meaning](#speaker-tracks))
+and the day is cut once more; that cut asks for nothing and makes the day `final`. With `Nytka__Situations__Enabled` on, a build of the
+tracks does not ask for links by scene any more, and queues the cut of its day. A day left at `cut` with no job of its own queued is
+cut once more by the scan.
+
+**Summaries.** `enrich-situation` (Ai lane) runs for a situation of a final day whose lines no summary was made from, and not for noise.
+One call over the situation's own lines (media shown as one `Media` line, a longer one in windows with a merging call) answers a title
+(80 characters) and a summary (1,200). A situation with fewer than 20 spoken words costs no call. A failed round comes back an hour
+later, three rounds at most. The conversation keeps its own title and summary and its items; the Timeline puts an item in the situation
+whose span it was said in, as it does for scenes.
+
+Off, nothing is cut, summarized or queued and the Timeline is byte for byte what it was.
+
+**Measuring it.** The golden `boundary` answers (see [Labelling](#labelling)) say where a situation ends. The quality job scores the
+system's boundaries as "another conversation, or a topic shift"; to score the stored situations against the same answers, build the golden
+days (`POST /api/v1/situations/build`) and run, in `psql`, a query that takes the answers of `golden_labels` (the later line is
+`segment_id`, the earlier `other_segment_id`) and compares the two rules:
+
+```sql
+with b as (
+  select g.answer = 'new-situation' as truth,
+         a.conversation_id <> x.conversation_id or x.id = any(c.topic_boundaries) as before,
+         a.conversation_id <> x.conversation_id or sa.situation_id is distinct from sx.situation_id as after
+  from golden_labels g
+  join segments x on x.id = g.segment_id join segments a on a.id = g.other_segment_id
+  join conversations c on c.id = x.conversation_id
+  join situation_segments sx on sx.segment_id = x.id join situation_segments sa on sa.segment_id = a.id
+  where g.kind = 'boundary'
+), n as (
+  select 'before' as run, count(*) filter (where before and truth) as tp, count(*) filter (where before and not truth) as fp,
+         count(*) filter (where not before and truth) as fn from b
+  union all
+  select 'after', count(*) filter (where after and truth), count(*) filter (where after and not truth),
+         count(*) filter (where not after and truth) from b)
+select run, tp, fp, fn, round(2.0 * tp / nullif(2 * tp + fp + fn, 0), 3) as f1 from n;
+```
+
+The join to `situation_segments` leaves out an answer on a line of a day not built yet, for both rules.

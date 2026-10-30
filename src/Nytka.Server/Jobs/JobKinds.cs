@@ -35,10 +35,12 @@ public static class JobKinds
     public const string BuildTracks = "build-tracks";
     public const string LinkSpeakers = "link-speakers";
     public const string NameTracks = "name-tracks";
+    public const string BuildSituations = "build-situations";
+    public const string EnrichSituation = "enrich-situation";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling,
-    /// recompute-events, build-tracks, name-tracks and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
+    /// recompute-events, build-tracks, name-tracks, build-situations and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
     {
@@ -57,6 +59,7 @@ public static class JobKinds
         [ClassifyMemories] = JobLane.Ai,
         [ClassifyConversations] = JobLane.Ai,
         [LinkSpeakers] = JobLane.Ai,
+        [EnrichSituation] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };
@@ -105,6 +108,11 @@ public static class JobKinds
         $"{LinkSpeakers}:{conversation}:{sceneStartedAt.ToUniversalTime().Ticks}";
     /// <summary>One naming per local date at a time.</summary>
     public static string NameTracksKey(string localDate) => $"{NameTracks}:{localDate}";
+
+    /// <summary>One build per local date at a time; the recut after the links has a key of its own, so a build already waiting never swallows it.</summary>
+    public static string BuildSituationsKey(string localDate, bool recut = false) => $"{BuildSituations}:{localDate}" + (recut ? ":recut" : "");
+
+    public static string EnrichSituationKey(Guid situation) => $"{EnrichSituation}:{situation}";
 
     /// <summary>One recompute per local date at a time.</summary>
     public static string RecomputeEventsKey(string localDate) => $"{RecomputeEvents}:{localDate}";

@@ -4,6 +4,7 @@ using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
 using Nytka.Server.Settings;
+using Nytka.Server.Situations;
 using Nytka.Storage;
 
 namespace Nytka.Server.Tracks;
@@ -75,16 +76,25 @@ public sealed partial class LinkSpeakersHandler(
 
     /// <summary>
     /// The last scene of the day builds the day again, when a link the rebuild follows exists. The build has a key of its own: the
-    /// day's ordinary build may be running, and a job queued under its key would then be dropped.
+    /// day's ordinary build may be running, and a job queued under its key would then be dropped. With <c>situations.enabled</c> on that
+    /// build queues the day's last cut; with no link to follow, the cut is queued here.
     /// </summary>
     private async Task<JobOutcome> AfterAsync(JobRecord job, LinkSpeakersPayload payload, CancellationToken ct)
     {
-        if (await links.PendingJobsAsync(payload.LocalDate, job.Id, ct) == 0
-            && DigestDay.TryParse(payload.LocalDate, out var day)
-            && (await links.DayLinksAsync(day, ct)).Any(l => l.Confidence >= TrackPlanner.MeaningConfidence))
+        if (await links.PendingJobsAsync(payload.LocalDate, job.Id, ct) == 0 && DigestDay.TryParse(payload.LocalDate, out var day))
         {
-            await queue.EnqueueAsync(
-                JobKinds.BuildTracks, new TracksPayload(payload.LocalDate), JobKinds.BuildTracksAfterLinksKey(payload.LocalDate), time.GetUtcNow(), ct);
+            if ((await links.DayLinksAsync(day, ct)).Any(l => l.Confidence >= TrackPlanner.MeaningConfidence))
+            {
+                await queue.EnqueueAsync(
+                    JobKinds.BuildTracks, new TracksPayload(payload.LocalDate, AfterLinks: true), JobKinds.BuildTracksAfterLinksKey(payload.LocalDate),
+                    time.GetUtcNow(), ct);
+            }
+            else if (SituationSettings.Enabled(settings))
+            {
+                await queue.EnqueueAsync(
+                    JobKinds.BuildSituations, new SituationsPayload(payload.LocalDate, Recut: true), JobKinds.BuildSituationsKey(payload.LocalDate, recut: true),
+                    time.GetUtcNow(), ct);
+            }
         }
 
         return JobOutcome.Done;
