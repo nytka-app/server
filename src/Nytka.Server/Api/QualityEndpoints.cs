@@ -69,7 +69,8 @@ public static class QualityEndpoints
             return (null, errors);
         }
 
-        var rows = await quality.ListAsync(DigestDay.Text(first), DigestDay.Text(last), ct);
-        return (new QualityResponse(UserTimeZone.Name(zone), DigestDay.Text(first), DigestDay.Text(last), rows.Select(QualityReport.Day).ToList()), errors);
+        var rows = await quality.ListAsync(DigestDay.Text(first.AddDays(1 - QualityReport.WindowDays)), DigestDay.Text(last), ct);
+        var days = rows.Where(r => string.CompareOrdinal(r.LocalDate, DigestDay.Text(first)) >= 0).Select(r => QualityReport.Day(r, rows)).ToList();
+        return (new QualityResponse(UserTimeZone.Name(zone), DigestDay.Text(first), DigestDay.Text(last), days), errors);
     }
 }

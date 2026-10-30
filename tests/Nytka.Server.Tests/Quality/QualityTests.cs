@@ -4,6 +4,8 @@ using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using Nytka.Server.Jobs;
+using Nytka.Server.Quality;
+using Nytka.Storage;
 
 namespace Nytka.Server.Tests.Quality;
 
@@ -57,7 +59,7 @@ public sealed class QualityTests(PostgresFixture db) : IAsyncLifetime, IClassFix
         await Line(talk, Day.AddHours(10).AddSeconds(9), "someone", "speaker = 'SPEAKER_1', voice_checked = true, voice_similarity = 0.1, voice_is_user = false");
         await Line(talk, Day.AddHours(10).AddSeconds(12), "  ");
         var film = await Conversation(Day.AddHours(12), TimeSpan.FromSeconds(30));
-        await Line(film, Day.AddHours(12), "dialogue", "speech_guess = 'media'", seconds: 30);
+        await Line(film, Day.AddHours(12), "dialogue", "speech_guess = 'media', speech_kind = 'media'", seconds: 30);
         await Conversation(Day.AddHours(14), TimeSpan.FromMinutes(20), aiTitle: "Silent");
         await Conversation(Day.AddDays(-3).AddHours(9), TimeSpan.FromMinutes(2), title: "Earlier");
 
@@ -111,6 +113,55 @@ public sealed class QualityTests(PostgresFixture db) : IAsyncLifetime, IClassFix
         Assert.Equal(JsonValueKind.Null, days[0].GetProperty("voiceGroups").ValueKind);
         Assert.Equal(1, days[0].GetProperty("conversations").GetInt32());
         Assert.Equal(JsonValueKind.Null, days[1].GetProperty("fragmentRate").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_fixture_day_has_exact_attribution_classes_labels_and_a_seven_day_value()
+    {
+        await SeedAsync();
+
+        await _server.Get<Scheduler>().TickAsync(default);
+        await _server.RunJobsAsync();
+        var quality = await _server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>("/api/v1/quality");
+        var days = quality.GetProperty("days").EnumerateArray().ToList();
+        var day = days[3];
+
+        // One line each: the wearer's 2 s, a person's 2 s, a raw label's 2 s and media's 30 s; the blank line counts for none.
+        void Attribution(JsonElement a, double unmappedMinutes)
+        {
+            var share = a.GetProperty("classShare");
+            Assert.Equal(new double[] { 0.25, 0.25, 0.25, 0.25, 0 }, new[] { "wearer", "person", "label", "media", "none" }.Select(k => share.GetProperty(k).GetDouble()));
+            var seconds = a.GetProperty("speechSeconds");
+            Assert.Equal(new double[] { 2, 2, 2, 30, 0 }, new[] { "wearer", "person", "label", "media", "none" }.Select(k => seconds.GetProperty(k).GetDouble()));
+            var labels = a.GetProperty("labelsPerConversation");
+            Assert.Equal((1d, 0, 2), (labels.GetProperty("mean").GetDouble(), labels.GetProperty("p50").GetInt32(), labels.GetProperty("p90").GetInt32()));
+            Assert.Equal(unmappedMinutes, a.GetProperty("unmappedMinutes").GetDouble());
+        }
+
+        Attribution(day.GetProperty("attribution"), 0.0333);
+        var conversations = day.GetProperty("conversationStats");
+        Assert.Equal((0.3333, 3d), (conversations.GetProperty("shortShare").GetDouble(), conversations.GetProperty("perDay").GetDouble()));
+
+        // The 25th to the 28th are measured: 4 conversations in 4 days, one of them short, and the 28th's lines are all the lines.
+        var week = day.GetProperty("last7Days");
+        Assert.Equal((4, 4), (week.GetProperty("days").GetInt32(), week.GetProperty("attributionDays").GetInt32()));
+        Attribution(week.GetProperty("attribution"), 0.0083);
+        Assert.Equal((0.25, 1d), (week.GetProperty("conversations").GetProperty("shortShare").GetDouble(), week.GetProperty("conversations").GetProperty("perDay").GetDouble()));
+
+        // A day without lines has no shares but still has its conversations; the 26th's window holds only the 25th and itself.
+        Assert.Equal(JsonValueKind.Null, days[1].GetProperty("attribution").GetProperty("classShare").GetProperty("wearer").ValueKind);
+        Assert.Equal(2, days[1].GetProperty("last7Days").GetProperty("days").GetInt32());
+    }
+
+    [Fact]
+    public void A_day_measured_before_the_metrics_has_no_attribution()
+    {
+        var counts = new QualityCounts(1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, null, null, null, null, null, null, null, null, null, null, null);
+        var day = QualityReport.Day(new QualityRow("2026-09-28", counts, DateTime.UnixEpoch), []);
+
+        Assert.Null(day.Attribution);
+        Assert.Null(day.Last7Days.Attribution);
+        Assert.Equal(1d, day.ConversationStats.PerDay);
     }
 
     [Fact]
