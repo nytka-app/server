@@ -60,6 +60,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<NudgeStore>();
         services.AddSingleton<DayEventStore>();
         services.AddSingleton<TrackStore>();
+        services.AddSingleton<LinkStore>();
 
         return services;
     }

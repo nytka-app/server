@@ -291,6 +291,22 @@ hold whatever the distances say:
 - Cannot link: two lines that overlap by more than 100 ms; a line the [label rule](#your-voice) calls yours and one it calls someone
   else's; and your `different` answers. A link that would break one is dropped, so your answers win over the provider's labels.
 
+**Links by meaning.** Off by default (`Nytka__Tracks__Meaning`, needs tracks on and a language model). What is said can tell two voices
+apart or together where the sound cannot: a sentence one voice leaves unfinished and another finishes, "as I said", an answer to a question
+nobody else asked, or a name or a "you" that addresses the other side. After a build, `link-speakers` (Ai lane) runs once per scene of the
+day's conversations (a scene is a span between day events and topic shifts, see [scenes](#scenes)): one small-model call over the scene's
+lines (media left out) with a **letter per voice unit**, the lines one provider label gave within one request, never a name. A unit is the
+smallest thing a build already keeps together, so a "different" can separate units a track holds. The model answers with pairs of letters, `same`
+or `different`, a confidence and the ids of the lines that justify it; a pair without a cited line, with a confidence under 0.5, or answered
+both ways is dropped. The pairs are stored as `track_links` rows (`source = meaning`, with the lines of both letters), and the day is built again
+when the last scene is done. A rebuild reads them as **soft constraints**: a `different` of 0.8 or more is a cannot-link; a `same` of 0.8 or
+more joins two units only if their mean fingerprints are also at least `Nytka__Tracks__Threshold` minus 0.15 alike, so words can bridge a small
+gap in the sound and never a large one. Your own `same` and `different` answers beat a link, so do the overlap and wearer constraints, and a link
+only ever holds lines of one local day: a scene's prompt is cut at midnight, and nothing is linked across days on meaning alone.
+A scene is asked once. One with fewer than 4 lines or fewer than 2 letters is recorded as `skipped`, one whose call failed its three attempts
+as `failed`; nothing asks again until the scene's row in `track_link_runs` is deleted. Each row holds the characters sent and received, which is
+the cost of the call (the endpoint's answer carries no token count). Turning the setting off sends nothing and ignores the stored links.
+
 `POST /api/v1/tracks/answers` records an answer about two lines (`same` or `different`); it holds on every later build, also after a paid
 pass replaced the lines. A line is in the track most of its fingerprints are in. A rebuild replaces the day's tracks but a track keeps its id,
 person, dismissal and skip when it holds most of an old track's speech (by seconds), one new track per old one; the day's tracks are
