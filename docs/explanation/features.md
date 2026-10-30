@@ -266,6 +266,52 @@ people apart in Ukrainian and Russian is unmeasured until you run it, so the swi
 No voiceprint, group centroid or fingerprint appears in an API answer, export, webhook, MCP answer or
 log; `pg_dump` holds them.
 
+## Speaker tracks
+
+Off by default (`Nytka__Tracks__Enabled`). The provider numbers its speakers per request (a batch of at most 45 s), so one voice
+is `SPEAKER_0` in one batch and `SPEAKER_1` in the next. A speaker track is one voice for one local day: the same voice in every batch
+and every conversation of the day. With tracks on, "Voice n" is the track's number within its day, a named track names every line in it,
+and the [voice-group cards](#voice-grouping) ask about tracks instead of one-pass groups.
+
+**Fingerprints.** With tracks on, every line of 1 s or more (`Nytka__Voice__MinSegmentSeconds`) gets a fingerprint when it is
+transcribed, whether or not your voice is enrolled; a line over 30 s gets one per 10 s window, since it may hold several voices. They
+live in `track_prints` and die with the batch's speech audio, as every fingerprint does. Lines kept from before tracks were turned on use
+the fingerprint `segment_fingerprints` holds, while it does.
+
+**Building a day.** The scheduler queues `build-tracks` (Audio lane, no model call) for every local day that has ended and has a
+fingerprinted line with no track, 7 days a tick, oldest first; `POST /api/v1/tracks/build` builds any day, today too. A build clusters the
+day's fingerprints (media lines left out) by agglomerative clustering with average linkage: two clusters merge while the average cosine
+similarity of their fingerprints is at least `Nytka__Tracks__Threshold` (0.37). That is the method and the cut the voice bench measured on
+TitaNet-small (nytka-app/research PR 9, `voice-bench/day_cluster.py`, threshold 0.3666): clustering the stored per-batch labels of three days took labels
+per conversation from 62 to 15 and kept 88% of your labelled time in one track, with none of 27 other labelled lines in it. Constraints
+hold whatever the distances say:
+
+- Must link: lines with the same provider label in the same request (the paid pass, else the batch), except lines over 30 s; and your
+  `same` answers.
+- Cannot link: two lines that overlap by more than 100 ms; a line the [label rule](#your-voice) calls yours and one it calls someone
+  else's; and your `different` answers. A link that would break one is dropped, so your answers win over the provider's labels.
+
+`POST /api/v1/tracks/answers` records an answer about two lines (`same` or `different`); it holds on every later build, also after a paid
+pass replaced the lines. A line is in the track most of its fingerprints are in. A rebuild replaces the day's tracks but a track keeps its id,
+person, dismissal and skip when it holds most of an old track's speech (by seconds), one new track per old one; the day's tracks are
+numbered by their first line again. A line whose fingerprint is gone stays in its old track while that track has any line.
+
+**Suggestions, never merges.** A track of 10 s or more that no person owns and that is not mostly yours gets a suggestion for the person
+whose voiceprint it reaches `Nytka__People__VoiceThreshold` with, and one for the earlier day's track it reaches it with. Nothing links
+by itself: `GET /api/v1/tracks?day=` lists them and `POST /api/v1/tracks/suggestions/{id}` accepts or rejects one (accepting sets the person
+on the track).
+
+**The label rule.** Where [People](#people) gives a line a name, first match wins: the line's own person, the person its provider voice
+was named after, the person its track was named after, then `Voice n`. A card names a track the way it names a group: the person is set on
+the track and the track's centroid joins the person's voiceprint (weighted by the track's lines); "not a person" dismisses the track,
+skipping hides it for 7 days. Turning tracks off puts every reader back as it was: the stored tracks stay, and no query follows them (the
+scheduler records the effective setting within a minute).
+
+**What it keeps.** A track's centroid (192 numbers) stays after its audio is gone, as a person's voiceprint does, so a later day can be
+compared with it; `DELETE /api/v1/people/voiceprints` and forgetting a person delete the tracks that hold the voice. The quality job
+counts a track as the speaker (instead of the raw label) in `labelsPerConversation` and in the golden `fragmentation`, so the effect shows in
+[Quality metrics](#quality-metrics).
+
 ## Speech kind
 
 The pendant records everything near it. Some of that is not a person talking to you: a TV, a video, a
@@ -800,7 +846,7 @@ so a regression shows up the next morning. One row per local day in `Nytka__User
   applied speech kind), `person` (a person resolves, from the line or its voice), `label` (only the provider's
   raw `SPEAKER_n`) or `none`. `attribution.classShare` is the share of lines per class and `speechSeconds` their
   speech time. `labelsPerConversation` is the mean, p50 and p90 (nearest rank) of the distinct raw labels in each
-  conversation with a line. `unmappedMinutes` is the speech minutes of the `label` class. `conversationStats.shortShare`
+  conversation with a line (the distinct [speaker tracks](#speaker-tracks) while they are on). `unmappedMinutes` is the speech minutes of the `label` class. `conversationStats.shortShare`
   is the share of conversations under 60 s (the fragment rate) and `perDay` their count. `last7Days` holds the same
   values for the day and the six before it, pooled over the measured days among them (`days`, and `attributionDays`
   for those with attribution): shares and percentiles from the summed lines and lists, `perDay` and `unmappedMinutes`

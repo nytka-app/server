@@ -55,7 +55,8 @@ public sealed record PassBatch(long Id, DateTime StartedAt, DateTime EndedAt);
 
 /// <summary>One paid line, ready to be stored.</summary>
 public sealed record PaidSegment(
-    DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker, string? SpeakerId, SegmentVoice? Voice);
+    DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker, string? SpeakerId, SegmentVoice? Voice,
+    SegmentPrints? Prints = null);
 
 public enum SwapStatus
 {
@@ -301,6 +302,11 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
                     VoiceChecked = p.Voice is not null, VoiceSimilarity = p.Voice?.Similarity, VoiceIsUser = p.Voice?.IsUser,
                 },
                 transaction, cancellationToken: ct));
+            if (p.Prints is { } prints)
+            {
+                await VoiceStore.InsertPrintsAsync(connection, transaction, newIds[i], BatchOf(batches, p.StartedAt.ToUnixTimeMilliseconds()), prints, ct);
+            }
+
             if (p.Voice?.Fingerprint is { } fingerprint && await VoiceModelAsync(connection, transaction, ct) is { } model)
             {
                 await VoiceStore.InsertFingerprintAsync(connection, transaction, newIds[i], BatchOf(batches, p.StartedAt.ToUnixTimeMilliseconds()), model, fingerprint, ct);
@@ -319,6 +325,15 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
             var oldIds = replacedIds.Select(d => d.Id).ToArray();
             var newFor = replacedIds.Select(d => newIds[map.Replaced[d.Id]]).ToArray();
             await RepointAsync(connection, transaction, conversationId, oldIds, newFor, ct);
+
+            // A paid line sits in the track of the draft it replaces until the day's tracks are built again.
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                update segments n set track_id = o.track_id
+                from unnest(@oldIds, @newFor) as m (old_id, new_id) join segments o on o.id = m.old_id
+                where n.id = m.new_id and o.track_id is not null
+                """,
+                new { oldIds, newFor }, transaction, cancellationToken: ct));
             await connection.ExecuteAsync(new CommandDefinition(
                 """
                 insert into segment_drafts (id, conversation_id, pass_id, started_at, ended_at, text, engine)
@@ -428,6 +443,7 @@ public sealed class TranscriptPassStore(NpgsqlDataSource dataSource)
     {
         var map = oldIds.Zip(newIds).ToDictionary(p => p.First, p => p.Second);
         long Move(long id) => map.GetValueOrDefault(id, id);
+        await TrackStore.RepointAnswersAsync(connection, transaction, oldIds, newIds, ct);
         long[] MoveAll(long[] ids) => [.. ids.Select(Move).Distinct()];
 
         var suggestions = (await connection.QueryAsync<SuggestionRow>(new CommandDefinition(

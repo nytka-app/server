@@ -212,9 +212,11 @@ public sealed class TranscribeConversationHandler(
         var segments = TranscribeHandler.ToSegments(result, map, start, end);
 
         audio ??= await CutAsync(pass, ct);
-        var match = audio is null ? null : await voice.MatchAsync(audio.Wav, TranscribeHandler.WavSpans(result, map), ct);
+        var spans = TranscribeHandler.WavSpans(result, map);
+        var match = audio is null ? null : await voice.MatchAsync(audio.Wav, spans, ct);
+        var prints = audio is null ? null : match?.Prints ?? await voice.PrintsAsync(audio.Wav, spans, ct);
         var paid = segments
-            .Select((s, i) => new PaidSegment(s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, match?.Segments[i]))
+            .Select((s, i) => new PaidSegment(s.StartedAt, s.EndedAt, s.Text, s.Speaker, s.SpeakerId, match?.Segments[i], prints?[i]))
             .ToList();
         var enrich = llm.IsConfigured;
         var now = time.GetUtcNow();

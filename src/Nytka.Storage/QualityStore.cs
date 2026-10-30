@@ -9,7 +9,7 @@ namespace Nytka.Storage;
 /// The attribution fields (docs/explanation/features.md, Quality metrics) are null on a day measured before they existed: a line
 /// falls in one class, first match wins: wearer (<see cref="WearerLines"/>), media, person (a person resolves), label (only the
 /// provider's raw label), none; the seconds are their speech time. <paramref name="LabelsPerConversation"/> holds the distinct raw
-/// labels of each conversation with a line, ascending. <paramref name="Golden"/> is the system's score against the golden labels when
+/// labels (speaker tracks while <c>tracks.enabled</c> is on) of each conversation with a line, ascending. <paramref name="Golden"/> is the system's score against the golden labels when
 /// the row was measured: null on a backfilled day and while no golden label exists.
 /// </summary>
 public sealed record QualityCounts(
@@ -70,7 +70,7 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
             from conversations where started_at >= @from and started_at < @to
         ), l as (
             select s.conversation_id, coalesce({SpeakerLabel.IsUser}, false) as wearer, {SpeakerLabel.PersonId} as person_id,
-                   s.voice_similarity, s.speaker, s.speech_guess, {SpeakerLabel.Column} as label,
+                   s.voice_similarity, s.speaker, trk.id as track, s.speech_guess, {SpeakerLabel.Column} as label,
                    coalesce({SpeechKinds.IsMedia}, false) as media,
                    extract(epoch from s.ended_at - s.started_at)::float8 as seconds
             from segments s join c on c.id = s.conversation_id {SpeakerLabel.Joins}
@@ -123,7 +123,7 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
             coalesce((select sum(seconds) from lk where class = 'media'), 0) as MediaSeconds,
             coalesce((select sum(seconds) from lk where class = 'none'), 0) as NoneSeconds,
             coalesce((select array_agg(n order by n) from (
-                select count(distinct nullif(btrim(speaker), ''))::int as n from l group by conversation_id) x), array[]::int[]) as LabelsPerConversation,
+                select count(distinct coalesce(track::text, nullif(btrim(speaker), '')))::int as n from l group by conversation_id) x), array[]::int[]) as LabelsPerConversation,
             cast(null as int) as GoldenLines, cast(null as int) as GoldenCorrect, cast(null as int) as GoldenPersons,
             cast(null as float8) as GoldenFragmentation, cast(null as int) as GoldenBoundaries, cast(null as int) as GoldenBoundaryTp,
             cast(null as int) as GoldenBoundaryFp, cast(null as int) as GoldenBoundaryFn,

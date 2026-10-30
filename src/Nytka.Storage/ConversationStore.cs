@@ -82,9 +82,9 @@ public sealed class SegmentRow
     /// <summary>Whether a bookmark falls within <see cref="BookmarkStore.MarkReach"/> of the line: the wearer marked it as mattering.</summary>
     public bool Marked { get; init; }
 
-    /// <summary>What a model reads as the speaker: <c>Media</c> for a media line, else the wearer, else the person's name, else the provider's label.</summary>
+    /// <summary>What a model reads as the speaker: <c>Media</c> for a media line, else the wearer, else the person's name, else the voice (a speaker track's number, else the provider's label).</summary>
     public string? Label() =>
-        SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? SpeakerLabel.Display(Speaker);
+        SpeechKind == SpeechKinds.Media ? "Media" : IsUser == true ? SpeakerLabel.Wearer : PersonName ?? Voice ?? SpeakerLabel.Display(Speaker);
 }
 
 /// <summary>What <c>/status</c> reports about the AI runs: how many wait, and the newest failed and finished ones.</summary>

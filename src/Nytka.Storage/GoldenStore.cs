@@ -23,7 +23,7 @@ public sealed record GoldenProgress(string Date, int Lines, int Answered, int Bo
 /// <summary>An answered golden speaker line, as the owner said it.</summary>
 public sealed record GoldenSpeakerLabel(long SegmentId, string Answer, Guid? PersonId, long? OtherSegmentId);
 
-/// <summary>A line as the system shows it: its class (<see cref="QualityStore.LineClass"/>), person and track (a voice group, else the batch's raw label).</summary>
+/// <summary>A line as the system shows it: its class (<see cref="QualityStore.LineClass"/>), person and track (a speaker track, else a voice group, else the batch's raw label).</summary>
 public sealed record GoldenLine(long Id, DateTime StartedAt, string Class, Guid? PersonId, string Track);
 
 /// <summary>An answered golden boundary and whether the system puts a boundary there (another conversation, or a topic shift).</summary>
@@ -278,7 +278,7 @@ public sealed class GoldenStore(NpgsqlDataSource dataSource)
             with l as (
                 select s.id, s.started_at, coalesce({SpeakerLabel.IsUser}, false) as wearer, {SpeakerLabel.PersonId} as person_id, s.speaker,
                        coalesce({SpeechKinds.IsMedia}, false) as media,
-                       coalesce('g:' || f.group_id::text,
+                       coalesce('t:' || trk.id::text, 'g:' || f.group_id::text,
                                 case when coalesce(nullif(btrim(s.speaker_id), ''), nullif(btrim(s.speaker), '')) is not null
                                      then 'b:' || coalesce(s.batch_id::text, '') || ':' || coalesce(nullif(btrim(s.speaker_id), ''), btrim(s.speaker)) end,
                                 'none') as track

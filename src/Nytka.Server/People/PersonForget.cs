@@ -76,6 +76,19 @@ public sealed class PersonForget(NpgsqlDataSource dataSource, JobQueue queue, IL
         await Run("update segment_fingerprints set grouped = false where group_id = any(@groups)", new { groups });
         var voiceGroups = await Run("delete from voice_groups where id = any(@groups)", new { groups });
 
+        // A speaker track's centroid is a mean that holds the person's voice, as a group's does: the tracks of the person's lines go,
+        // with the window fingerprints of those lines (the other lines of a track are clustered again by the next build).
+        voiceprints += await Run(
+            """
+            delete from track_prints
+            where segment_id = any(@lines)
+               or segment_id in (select s.id from segments s join speaker_tracks t on t.id = s.track_id where t.person_id = @id)
+            """,
+            new { id, lines });
+        voiceGroups += await Run(
+            "delete from speaker_tracks where person_id = @id or id in (select track_id from segments where id = any(@lines) and track_id is not null)",
+            new { id, lines });
+
         await Run("update segments set person_id = null where person_id = @id");
         await Run("delete from person_voices where person_id = @id");
         await Run("update related_moments set person_ids = array_remove(person_ids, @id) where @id = any (person_ids)");

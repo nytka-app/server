@@ -25,11 +25,13 @@ public static class SpeakerLabel
         + "when s.is_user is not null then 'provider' end";
 
     /// <summary>
-    /// SQL for the provider's label of a segment aliased <c>s</c> as a reader sees it: <c>SPEAKER_n</c> becomes <c>Voice n+1</c>, so
-    /// a raw label never reaches a prompt, an MCP client or an export; any other label as stored, null for none.
+    /// SQL for the provider's label of a segment aliased <c>s</c> as a reader sees it, after <see cref="Joins"/>: <c>SPEAKER_n</c> becomes
+    /// <c>Voice n+1</c>, so a raw label never reaches a prompt, an MCP client or an export; any other label as stored, null for none. A
+    /// line in a live speaker track (<see cref="Joins"/>) is <c>Voice n</c> of its track instead, numbered within the track's day.
     /// </summary>
     public const string Voice =
-        "case when s.speaker ~ '^SPEAKER_[0-9]{1,6}$' then 'Voice ' || (substring(s.speaker from 9)::int + 1) else s.speaker end";
+        "case when trk.id is not null then 'Voice ' || trk.ordinal "
+        + "when s.speaker ~ '^SPEAKER_[0-9]{1,6}$' then 'Voice ' || (substring(s.speaker from 9)::int + 1) else s.speaker end";
 
     /// <summary>
     /// SQL for how sure the rule is that a segment aliased <c>s</c> is the wearer's, from 0 to 1: 1 or 0 for the wearer's own
@@ -42,9 +44,9 @@ public static class SpeakerLabel
     /// <summary>
     /// SQL for the label of a segment aliased <c>s</c>, after <see cref="Joins"/>, following docs/specs/people.md (Which
     /// label wins): the wearer, else the person set on the segment, else the person the voice was named after, else the
-    /// provider's own label as <see cref="Voice"/> shows it.
+    /// person its speaker track was named after (<c>tracks.enabled</c> only), else the provider's own label as <see cref="Voice"/> shows it.
     /// </summary>
-    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(sp.name, p.name, {Voice}) end";
+    public const string Column = $"case when {IsUser} then '{Wearer}' else coalesce(sp.name, p.name, trp.name, {Voice}) end";
 
     /// <summary>The C# twin of <see cref="Voice"/>.</summary>
     public static string? Display(string? speaker) =>
@@ -54,17 +56,23 @@ public static class SpeakerLabel
             : speaker;
 
     /// <summary>SQL for the id of the person a segment aliased <c>s</c> belongs to, after <see cref="Joins"/>; null when none.</summary>
-    public const string PersonId = "coalesce(s.person_id, pv.person_id)";
+    public const string PersonId = "coalesce(s.person_id, pv.person_id, trk.person_id)";
 
     /// <summary>SQL for the name of that person, after <see cref="Joins"/>.</summary>
-    public const string PersonName = "coalesce(sp.name, p.name)";
+    public const string PersonName = "coalesce(sp.name, p.name, trp.name)";
 
     /// <summary>SQL for whether that person has a name (false for one known only by role), after <see cref="Joins"/>; true when there is no person.</summary>
-    public const string PersonNamed = "coalesce(sp.named, p.named, true)";
+    public const string PersonNamed = "coalesce(sp.named, p.named, trp.named, true)";
 
+    /// <summary>
+    /// The joins every other member needs. <c>trk</c> is the line's speaker track (and <c>trp</c> its person), only while the applied <c>tracks.enabled</c> is
+    /// true (<c>tracks_state</c>, kept by the scheduler): with it off every reader sees what it saw before tracks existed.
+    /// </summary>
     public const string Joins =
         "left join person_voices pv on pv.speaker_id = s.speaker_id left join people p on p.id = pv.person_id "
-        + "left join people sp on sp.id = s.person_id";
+        + "left join people sp on sp.id = s.person_id "
+        + "left join speaker_tracks trk on trk.id = s.track_id and (select ts.enabled from tracks_state ts where ts.id = 1) "
+        + "left join people trp on trp.id = trk.person_id";
 }
 
 /// <summary>

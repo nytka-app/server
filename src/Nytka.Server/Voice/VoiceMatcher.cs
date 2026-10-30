@@ -2,6 +2,7 @@ using Nytka.Audio.Decoding;
 using Nytka.Audio.Voice;
 using Nytka.Audio.Wav;
 using Nytka.Server.Settings;
+using Nytka.Server.Tracks;
 using Nytka.Storage;
 
 namespace Nytka.Server.Voice;
@@ -12,12 +13,16 @@ public readonly record struct WavSpan(double Start, double End)
     public double Seconds => End - Start;
 }
 
-/// <summary>What one batch's matching found: a verdict per segment (null where Nytka did not check it) and what it teaches.</summary>
-public sealed record VoiceMatch(IReadOnlyList<SegmentVoice?> Segments, BatchVoice Batch);
+/// <summary>
+/// What one batch's matching found: a verdict per segment (null where Nytka did not check it) and what it teaches.
+/// <paramref name="Prints"/> is each segment's window fingerprints for speaker tracks (null for a segment too short to fingerprint), and
+/// null as a whole unless <see cref="VoiceRules.Prints"/> asked for them.
+/// </summary>
+public sealed record VoiceMatch(IReadOnlyList<SegmentVoice?> Segments, BatchVoice Batch, IReadOnlyList<SegmentPrints?>? Prints = null);
 
-/// <summary>The thresholds of one run, read from the settings once.</summary>
+/// <summary>The thresholds of one run, read from the settings once. <paramref name="Prints"/> also keeps every window's fingerprint, for speaker tracks.</summary>
 public sealed record VoiceRules(
-    double MinSegmentSeconds, float UserThreshold, float LearnThreshold, bool Learn, float NewPrintBelow, int MaxPrints)
+    double MinSegmentSeconds, float UserThreshold, float LearnThreshold, bool Learn, float NewPrintBelow, int MaxPrints, bool Prints = false)
 {
     /// <summary>Longer segments are usually a whole batch from a provider without segments, often several voices: they are fingerprinted in windows.</summary>
     public const double MaxSegmentSeconds = 30;
@@ -48,7 +53,8 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
 
             var rules = new VoiceRules(
                 VoiceSettings.MinSegmentSeconds(settings), VoiceSettings.UserThreshold(settings), VoiceSettings.LearnThreshold(settings),
-                VoiceSettings.Learns(settings), VoiceSettings.NewPrintBelow(settings), VoiceSettings.MaxPrints(settings));
+                VoiceSettings.Learns(settings), VoiceSettings.NewPrintBelow(settings), VoiceSettings.MaxPrints(settings),
+                TrackSettings.Enabled(settings));
             return Match(embedder, profile, WavReader.Read(wav), spans, rules);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -60,6 +66,74 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
             LogFailed(logger, error.GetType().Name);
             return null;
         }
+    }
+
+    /// <summary>
+    /// The window fingerprints of the segments for speaker tracks, when <see cref="MatchAsync"/> made none: with <c>tracks.enabled</c> on
+    /// and no wearer voiceprint to match against. Null while it is off or the model is not loaded; it never fails a transcription
+    /// (a throw logs its type only and gives null).
+    /// </summary>
+    public async Task<IReadOnlyList<SegmentPrints?>?> PrintsAsync(byte[] wav, IReadOnlyList<WavSpan> spans, CancellationToken ct)
+    {
+        try
+        {
+            if (spans.Count == 0 || !TrackSettings.Enabled(settings) || model.Embedder is not { } embedder || model.Id is not { } id)
+            {
+                return null;
+            }
+
+            return Prints(embedder, id, WavReader.Read(wav), spans, VoiceSettings.MinSegmentSeconds(settings));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            LogFailed(logger, error.GetType().Name);
+            return null;
+        }
+    }
+
+    /// <summary>A segment of <paramref name="minSegmentSeconds"/> or more has a fingerprint per window (one for a segment of 30 s or less); a shorter one has none.</summary>
+    public static IReadOnlyList<SegmentPrints?> Prints(
+        ISpeakerEmbedder embedder, string modelId, WavAudio wav, IReadOnlyList<WavSpan> spans, double minSegmentSeconds)
+    {
+        if (wav.Channels != 1 || wav.SampleRate != Timeline.SampleRate)
+        {
+            throw new InvalidDataException("The batch WAV is not 16 kHz mono.");
+        }
+
+        var minSamples = (int)Math.Ceiling(minSegmentSeconds * wav.SampleRate);
+        var prints = new List<SegmentPrints?>(spans.Count);
+        foreach (var span in spans)
+        {
+            var from = Math.Clamp((int)Math.Round(span.Start * wav.SampleRate), 0, wav.Samples.Length);
+            var to = Math.Clamp((int)Math.Round(span.End * wav.SampleRate), from, wav.Samples.Length);
+            if (span.Seconds < minSegmentSeconds || to - from < minSamples)
+            {
+                prints.Add(null);
+                continue;
+            }
+
+            var windows = new List<float[]>();
+            if (span.Seconds > VoiceRules.MaxSegmentSeconds)
+            {
+                var window = (int)(VoiceRules.WindowSeconds * wav.SampleRate);
+                for (var start = from; to - start >= minSamples; start += window)
+                {
+                    windows.Add(Embed(embedder, wav, start, Math.Min(start + window, to)));
+                }
+            }
+            else
+            {
+                windows.Add(Embed(embedder, wav, from, to));
+            }
+
+            prints.Add(new SegmentPrints(modelId, windows));
+        }
+
+        return prints;
     }
 
     /// <summary>
@@ -75,6 +149,7 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
 
         var minSamples = (int)Math.Ceiling(rules.MinSegmentSeconds * wav.SampleRate);
         var verdicts = new List<SegmentVoice?>(spans.Count);
+        var prints = rules.Prints ? new List<SegmentPrints?>(spans.Count) : null;
         var learn = new List<float[]>();
         foreach (var span in spans)
         {
@@ -83,14 +158,20 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
             if (span.Seconds < rules.MinSegmentSeconds || to - from < minSamples)
             {
                 verdicts.Add(new SegmentVoice(null, null, null));
+                prints?.Add(null);
                 continue;
             }
 
             var windowed = span.Seconds > VoiceRules.MaxSegmentSeconds;
+            var windows = rules.Prints ? new List<float[]>() : null;
             var (fingerprint, similarity) = windowed
-                ? Weakest(embedder, profile, wav, from, to, minSamples)
+                ? Weakest(embedder, profile, wav, from, to, minSamples, windows)
                 : Score(embedder, profile, wav, from, to);
             verdicts.Add(new SegmentVoice(similarity, similarity >= rules.UserThreshold, fingerprint));
+            if (windows is not null)
+            {
+                prints!.Add(new SegmentPrints(profile.Model, windowed ? windows : [fingerprint]));
+            }
 
             // A long segment may hold several voices, so it never teaches the voiceprint.
             if (!windowed && rules.Learn && span.Seconds >= VoiceRules.LearnMinSeconds && similarity >= rules.LearnThreshold)
@@ -99,7 +180,7 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
             }
         }
 
-        return new VoiceMatch(verdicts, new BatchVoice(profile.Model, learn, rules.NewPrintBelow, rules.MaxPrints));
+        return new VoiceMatch(verdicts, new BatchVoice(profile.Model, learn, rules.NewPrintBelow, rules.MaxPrints), prints);
     }
 
     /// <summary>
@@ -107,13 +188,14 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
     /// line costs more than a missed one (docs/specs/your-voice.md, Matching).
     /// </summary>
     private static (float[] Fingerprint, float Similarity) Weakest(
-        ISpeakerEmbedder embedder, VoiceProfile profile, WavAudio wav, int from, int to, int minSamples)
+        ISpeakerEmbedder embedder, VoiceProfile profile, WavAudio wav, int from, int to, int minSamples, List<float[]>? windows)
     {
         var window = (int)(VoiceRules.WindowSeconds * wav.SampleRate);
         (float[] Fingerprint, float Similarity)? weakest = null;
         for (var start = from; to - start >= minSamples; start += window)
         {
             var scored = Score(embedder, profile, wav, start, Math.Min(start + window, to));
+            windows?.Add(scored.Fingerprint);
             if (weakest is null || scored.Similarity < weakest.Value.Similarity)
             {
                 weakest = scored;
@@ -125,14 +207,19 @@ public sealed partial class VoiceMatcher(VoiceStore voices, SpeakerModel model, 
 
     private static (float[] Fingerprint, float Similarity) Score(ISpeakerEmbedder embedder, VoiceProfile profile, WavAudio wav, int from, int to)
     {
+        var fingerprint = Embed(embedder, wav, from, to);
+        return (fingerprint, profile.Prints.Max(p => SpeakerEmbedder.Cosine(fingerprint, p.Embedding)));
+    }
+
+    private static float[] Embed(ISpeakerEmbedder embedder, WavAudio wav, int from, int to)
+    {
         var samples = new float[to - from];
         for (var i = 0; i < samples.Length; i++)
         {
             samples[i] = wav.Samples[from + i] / 32768f;
         }
 
-        var fingerprint = embedder.Embed(samples);
-        return (fingerprint, profile.Prints.Max(p => SpeakerEmbedder.Cosine(fingerprint, p.Embedding)));
+        return embedder.Embed(samples);
     }
 
     [LoggerMessage(LogLevel.Warning, "Voice: matching failed ({ExceptionType}); the batch's segments stay unchecked.")]
