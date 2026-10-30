@@ -233,13 +233,14 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
     }
 
     /// <summary>
-    /// Replaces the day's tracks in one transaction: the lines of <paramref name="tracks"/> get their tracks (a track in it keeps its row
+    /// Replaces the day's tracks in one transaction, each stamped with the <paramref name="derivation"/> that made it: the lines of <paramref name="tracks"/> get their tracks (a track in it keeps its row
     /// when its id is an old one's), an old track left with no line goes (its pending suggestions with it), the day's tracks are numbered
     /// by their first line again, and the day's pending suggestions are replaced by <paramref name="suggestions"/>. A decided suggestion
     /// stays. A line the plan did not take (its fingerprint is gone) stays in its old track while that track lives.
     /// </summary>
     public async Task ReplaceDayAsync(
-        DateOnly day, string model, IReadOnlyList<NewTrack> tracks, IReadOnlyList<NewTrackSuggestion> suggestions, DateTimeOffset now, CancellationToken ct)
+        DateOnly day, string model, IReadOnlyList<NewTrack> tracks, IReadOnlyList<NewTrackSuggestion> suggestions, DateTimeOffset now, long derivation,
+        CancellationToken ct)
     {
         var date = day;
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -252,16 +253,16 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
         {
             await connection.ExecuteAsync(new CommandDefinition(
                 """
-                insert into speaker_tracks (id, day, model, centroid, seconds, segments, ordinal, person_id, dismissed, skipped_until, built_at)
-                values (@Id, @date, @model, @centroid, @Seconds, @segments, 0, @PersonId, @Dismissed, @SkippedUntil, @now)
+                insert into speaker_tracks (id, day, model, centroid, seconds, segments, ordinal, person_id, dismissed, skipped_until, built_at, derivation_id)
+                values (@Id, @date, @model, @centroid, @Seconds, @segments, 0, @PersonId, @Dismissed, @SkippedUntil, @now, @derivation)
                 on conflict (id) do update set
                     model = excluded.model, centroid = excluded.centroid, seconds = excluded.seconds, segments = excluded.segments,
-                    built_at = excluded.built_at
+                    built_at = excluded.built_at, derivation_id = excluded.derivation_id
                 """,
                 new
                 {
                     track.Id, date, model, centroid = VoiceStore.Encode(track.Centroid), track.Seconds, segments = track.SegmentIds.Count,
-                    track.PersonId, track.Dismissed, track.SkippedUntil, now,
+                    track.PersonId, track.Dismissed, track.SkippedUntil, now, derivation,
                 },
                 transaction, cancellationToken: ct));
             await connection.ExecuteAsync(new CommandDefinition(

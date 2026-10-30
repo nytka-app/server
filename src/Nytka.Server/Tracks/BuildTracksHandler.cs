@@ -4,6 +4,7 @@ using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Rethink;
 using Nytka.Server.Settings;
 using Nytka.Server.Situations;
 using Nytka.Server.Voice;
@@ -22,7 +23,7 @@ namespace Nytka.Server.Tracks;
 /// </summary>
 public sealed partial class BuildTracksHandler(
     TrackStore tracks, LinkStore links, LinkQueue linkQueue, JobQueue queue, VoiceGroupStore groups, SpeakerModel model, SettingsService settings,
-    TimeProvider time, ILogger<BuildTracksHandler> logger)
+    DerivationService derivations, TimeProvider time, ILogger<BuildTracksHandler> logger)
     : IJobHandler
 {
     /// <summary>
@@ -41,6 +42,8 @@ public sealed partial class BuildTracksHandler(
             return JobOutcome.Done;
         }
 
+        // The version is read before the rows are, so a setting changed during the run never stamps rows it did not shape.
+        var version = await derivations.CurrentAsync(DerivedLayers.Tracks, ct);
         var (from, to) = DigestDay.Bounds(day, UserTimeZone.Resolve(settings));
         var lines = await tracks.DayLinesAsync(modelId, from, to, ct);
         if (lines.Count == 0)
@@ -57,7 +60,7 @@ public sealed partial class BuildTracksHandler(
             [.. plan.Tracks.Select(t => new LinkableTrack(t.Id, t.Centroid, t.Seconds, t.PersonId, plan.WearerShare[t.Id]))],
             await groups.VoiceprintsAsync(modelId, ct), await tracks.EarlierTracksAsync(modelId, day, EarlierTracks, ct),
             PeopleSettings.VoiceThreshold(settings));
-        await tracks.ReplaceDayAsync(day, modelId, plan.Tracks, suggestions, time.GetUtcNow(), ct);
+        await tracks.ReplaceDayAsync(day, modelId, plan.Tracks, suggestions, time.GetUtcNow(), version.Current, ct);
         LogBuilt(logger, lines.Count, plan.Tracks.Count, suggestions.Count);
         var situations = SituationSettings.Enabled(settings);
         if (meaning && !situations)

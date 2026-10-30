@@ -37,10 +37,11 @@ public static class JobKinds
     public const string NameTracks = "name-tracks";
     public const string BuildSituations = "build-situations";
     public const string EnrichSituation = "enrich-situation";
+    public const string Rethink = "rethink";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling,
-    /// recompute-events, build-tracks, name-tracks, build-situations and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
+    /// recompute-events, build-tracks, name-tracks, build-situations, rethink and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
     {
@@ -113,6 +114,9 @@ public static class JobKinds
     public static string BuildSituationsKey(string localDate, bool recut = false) => $"{BuildSituations}:{localDate}" + (recut ? ":recut" : "");
 
     public static string EnrichSituationKey(Guid situation) => $"{EnrichSituation}:{situation}";
+
+    /// <summary>One re-think per night at a time, the night being the local date on which the quiet hours began.</summary>
+    public static string RethinkKey(string night) => $"{Rethink}:{night}";
 
     /// <summary>One recompute per local date at a time.</summary>
     public static string RecomputeEventsKey(string localDate) => $"{RecomputeEvents}:{localDate}";

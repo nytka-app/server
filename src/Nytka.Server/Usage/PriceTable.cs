@@ -16,6 +16,15 @@ public sealed record EnginePrice(
         RequestTokens * TextInUsdPerMillionTokens / 1_000_000m,
         AudioTokensPerHour / 3_600_000m * AudioUsdPerMillionTokens / 1_000_000m,
         TextCharsPerToken > 0 ? TextOutUsdPerMillionTokens / 1_000_000m / TextCharsPerToken : 0);
+
+    /// <summary>
+    /// What a text model charges for a call of <paramref name="inputChars"/> characters sent and <paramref name="outputChars"/> received:
+    /// tokens are counted at <see cref="TextCharsPerToken"/> characters each, since a model endpoint reports none. 0 where the price names
+    /// no characters per token.
+    /// </summary>
+    public decimal TextUsd(long inputChars, long outputChars) => TextCharsPerToken > 0
+        ? (inputChars * TextInUsdPerMillionTokens + outputChars * TextOutUsdPerMillionTokens) / TextCharsPerToken / 1_000_000m
+        : 0;
 }
 
 /// <summary>
@@ -43,6 +52,9 @@ public sealed class PriceTable(IReadOnlyDictionary<string, EnginePrice> engines)
     public static PriceTable Empty { get; } = new(new Dictionary<string, EnginePrice>());
 
     public UsageRate RateOf(string engine) => engines.TryGetValue(engine, out var price) ? price.Rate : default;
+
+    /// <summary>The engine's price, or null when the table does not name it.</summary>
+    public EnginePrice? PriceOf(string engine) => engines.TryGetValue(engine, out var price) ? price : null;
 
     public static string? Validate(string json) => TryParse(json, out _);
 

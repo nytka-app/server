@@ -3,6 +3,7 @@ using Nytka.Server.Ai;
 using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Rethink;
 using Nytka.Server.Settings;
 using Nytka.Server.Tracks;
 using Nytka.Storage;
@@ -18,8 +19,8 @@ namespace Nytka.Server.Situations;
 /// rebuild changes no row it need not. The log carries counts only.
 /// </summary>
 public sealed partial class BuildSituationsHandler(
-    SituationStore situations, TodayStore today, LinkQueue linkQueue, SettingsService settings, TimeProvider time,
-    ILogger<BuildSituationsHandler> logger)
+    SituationStore situations, TodayStore today, LinkQueue linkQueue, SettingsService settings, DerivationService derivations,
+    TimeProvider time, ILogger<BuildSituationsHandler> logger)
     : IJobHandler
 {
     public string Kind => JobKinds.BuildSituations;
@@ -32,6 +33,7 @@ public sealed partial class BuildSituationsHandler(
             return JobOutcome.Done;
         }
 
+        var version = (await derivations.CurrentAsync(DerivedLayers.Situations, ct)).Current;
         var (from, to) = DigestDay.Bounds(day, UserTimeZone.Resolve(settings));
         var conversations = await situations.ConversationsAsync(from.UtcDateTime, to.UtcDateTime, ct);
         var ids = conversations.Select(c => c.Id).ToArray();
@@ -45,7 +47,7 @@ public sealed partial class BuildSituationsHandler(
                 c.StartedAt, c.EndedAt, spans[c.Id].Events, spans[c.Id].Boundaries, lines.GetValueOrDefault(c.Id) ?? []));
 
         var linking = !payload.Recut && TrackSettings.Meaning(settings);
-        var saved = await situations.SaveDayAsync(day, linking ? SituationStore.StageCut : SituationStore.StageFinal, cut, time.GetUtcNow(), ct);
+        var saved = await situations.SaveDayAsync(day, linking ? SituationStore.StageCut : SituationStore.StageFinal, cut, time.GetUtcNow(), version, ct);
         var asked = linking ? await linkQueue.QueueSituationsAsync(day, ct) : 0;
         if (linking && asked == 0)
         {

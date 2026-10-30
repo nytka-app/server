@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Nytka.Server.Ai;
 using Nytka.Server.Jobs;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Rethink;
 using Nytka.Server.Settings;
 using Nytka.Storage;
 
@@ -17,7 +18,7 @@ namespace Nytka.Server.Situations;
 /// </summary>
 public sealed partial class EnrichSituationHandler(
     SituationStore situations, ConversationStore conversations, ILlmClient llm, IOptionsMonitor<LlmOptions> options, SettingsService settings,
-    TimeProvider time, ILogger<EnrichSituationHandler> logger)
+    DerivationService derivations, TimeProvider time, ILogger<EnrichSituationHandler> logger)
     : IJobHandler
 {
     private static readonly TimeSpan RateLimitWait = TimeSpan.FromMinutes(1);
@@ -32,12 +33,13 @@ public sealed partial class EnrichSituationHandler(
             return JobOutcome.Done;
         }
 
+        var version = (await derivations.CurrentAsync(DerivedLayers.Enrichment, ct)).Current;
         var held = found.Segments.ToHashSet();
         var segments = (await conversations.SegmentsAsync(found.ConversationId, ct)).Where(s => held.Contains(s.Id)).ToList();
         if (EnrichConversationHandler.SpokenWords(segments) < EnrichConversationHandler.MinWords)
         {
             await situations.StoreEnrichmentAsync(
-                id, found.LinesHash, SituationStore.AiSkipped, null, null, EnrichConversationHandler.TooShort, time.GetUtcNow(), ct);
+                id, found.LinesHash, SituationStore.AiSkipped, null, null, EnrichConversationHandler.TooShort, time.GetUtcNow(), version, ct);
             return JobOutcome.Done;
         }
 
@@ -79,7 +81,7 @@ public sealed partial class EnrichSituationHandler(
         var summary = ConversationPrompt.Cut(answer.Summary, SituationPrompt.MaxSummary);
         var stored = await situations.StoreEnrichmentAsync(
             id, found.LinesHash, SituationStore.AiDone, title.Length == 0 ? null : title, summary.Length == 0 ? null : summary, null,
-            time.GetUtcNow(), ct);
+            time.GetUtcNow(), version, ct);
         LogEnriched(logger, segments.Count, stored);
         return JobOutcome.Done;
     }

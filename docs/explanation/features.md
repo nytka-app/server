@@ -1358,3 +1358,49 @@ select run, tp, fp, fn, round(2.0 * tp / nullif(2 * tp + fp + fn, 0), 3) as f1 f
 ```
 
 The join to `situation_segments` leaves out an answer on a line of a day not built yet, for both rules.
+
+## Nightly re-think
+
+The past improves by itself: a better model, prompt, rule or setting is applied to the days already built, in the quiet hours, within a
+spend cap. It rests on **versions**: a derived layer is made by a model, a prompt (or, for a layer with no model call, a revision of its
+rules) and settings, and every derived row records the version that made it.
+
+| Layer | Rows | Model | Settings it reads | Follows |
+|---|---|---|---|---|
+| `tracks` | `speaker_tracks` | the speaker model | `tracks.threshold`, `tracks.meaning`, `people.voiceThreshold` | `links`, while `tracks.meaning` is on |
+| `links` | `track_links`, `track_link_runs` | the text model | | |
+| `names` | `track_name_runs` and the call and meeting [suggestions](#names-from-context) | | `people.callNames`, `people.calendarNames` | `tracks` |
+| `situations` | `situations` | | `tracks.enabled`, `tracks.meaning` | `tracks`, and `links` while `tracks.meaning` is on |
+| `enrichment` | the title and summary of a situation | the text model | `llm.outputLanguage` | |
+
+- **Versions.** `derivation_versions` holds one row per combination of four hashes: the model, the prompt, the settings and the current
+  versions of the layers it follows. The scheduler's scan records the current version of every layer, and a job records it before it
+  writes: a changed hash is a new row, and the newest row is the layer's current version. Changing `tracks.threshold` is a new version of
+  `tracks` and, through the hash of what they follow, of `names` and `situations`; changing the text model is a new version of `links`,
+  `enrichment`, and so of `tracks` (while `tracks.meaning` is on), `names` and `situations`. `enrichment` follows nothing: a situation
+  whose lines changed is summarized again anyway, and a track change that leaves the lines alone leaves the summary right. A layer that
+  is off has no stale days. Rows written before this existed carry no version and count as the layer's first.
+- **Stale.** A day is stale for a layer when a row of the day carries an older version than the layer's current. A day of tracks whose
+  fingerprints were deleted with the speech audio cannot change and is not counted. A summary is stale only if it exists.
+- **The job.** With `Nytka__Rethink__Enabled` on (default off), the scheduler queues `rethink` (Audio lane, no model call of its own) in
+  the quiet hours, the nudges' (`nudges.quietFrom` to `nudges.quietTo`, 22:00 to 08:00 by default; equal means any time). The night is
+  the local date the quiet hours began on. Each run takes the oldest stale days first, skips today and the days of an open conversation,
+  and queues the rebuild of each at its lowest stale layer, which brings the layers after it up to date through their own jobs: `tracks`
+  queues `build-tracks` (which queues the cut of the day while situations are on), `links` forgets the day's scene runs and queues
+  `link-speakers` for each scene (the last answer queues the build of the day's tracks), `names` queues `name-tracks`, `situations`
+  queues `build-situations` and `enrichment` queues `enrich-situation` for the stale summaries (the old title and summary stay until the
+  new ones replace them). It waits a minute at a time for the jobs it queued, then looks again. A layer and day is queued once a night.
+- **The caps.** Before it queues a layer and day, the job reserves its estimated cost in `rethink_days`, and it stops, finishing the
+  night as `capped`, at the first one that would pass `Nytka__Rethink__MaxUsdPerNight` (default 0.50, the issue's number; the owner's to
+  confirm) or `Nytka__Rethink__MaxDaysPerNight` (the CPU budget: layer-days a night, default 7, a starting value). A model endpoint
+  answers in text, so the estimate is characters at the [price table](../specs/usage.md)'s rate for the model (`Nytka__Stt__Prices`, the
+  entry named like `Nytka__Llm__Model`; a model the table does not name costs nothing): for `links`, the characters of the day's earlier
+  runs; for `enrichment`, the characters of the stale situations' lines plus the prompt, and the longest answer each. A night ends `idle`
+  (nothing stale) or `settled` (everything left had been queued already, and is still stale).
+- **What it never touches.** Segments, audio, the owner's answers (`track_answers`, which every rebuild reads as must-link and
+  cannot-link constraints), the people and decisions on tracks, and golden labels. A manual `same` answer survives every rebuild.
+- **Read it.** `GET /api/v1/quality` (and `get_quality`) has `derivations`: per layer, whether it is on, what it follows, its current
+  `version`, and `staleDays` with the `oldestStale` and `newestStale` day.
+- **A new layer.** Implement `IDerivedLayer` (its name, what it follows, its inputs, its stale days, an estimate and a rebuild), register
+  it as a singleton in `AddNytkaRethink`, and have its job stamp its rows with `DerivationService.CurrentAsync(name)`. Versions, the
+  report and the nightly job take it in. Facts (nytka-app/server#305) will be one.

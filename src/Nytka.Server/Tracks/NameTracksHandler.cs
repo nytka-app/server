@@ -5,6 +5,7 @@ using Nytka.Server.Digests;
 using Nytka.Server.Jobs;
 using Nytka.Server.People;
 using Nytka.Server.Pipeline;
+using Nytka.Server.Rethink;
 using Nytka.Server.Settings;
 using Nytka.Storage;
 
@@ -17,8 +18,8 @@ namespace Nytka.Server.Tracks;
 /// context). It applies nothing. The log carries counts only.
 /// </summary>
 public sealed partial class NameTracksHandler(
-    TrackNameStore names, ContextRangeStore ranges, CalendarStore calendar, SettingsService settings, TimeProvider time,
-    ILogger<NameTracksHandler> logger)
+    TrackNameStore names, ContextRangeStore ranges, CalendarStore calendar, SettingsService settings, DerivationService derivations,
+    TimeProvider time, ILogger<NameTracksHandler> logger)
     : IJobHandler
 {
     public string Kind => JobKinds.NameTracks;
@@ -33,6 +34,7 @@ public sealed partial class NameTracksHandler(
             return JobOutcome.Done;
         }
 
+        var version = (await derivations.CurrentAsync(DerivedLayers.Names, ct)).Current;
         var (from, to) = DigestDay.Bounds(day, UserTimeZone.Resolve(settings));
         var (tracks, lines) = await names.DayAsync(day, ct);
         var suggestions = TrackNaming.Suggest(
@@ -40,7 +42,7 @@ public sealed partial class NameTracksHandler(
             calls ? await ranges.OverlappingAsync(from, to, ct) : [],
             meetings ? await calendar.OverlappingAsync(from, to, ct) : [],
             await names.PeopleAsync(ct));
-        await names.ReplaceAsync(day, suggestions, time.GetUtcNow(), ct);
+        await names.ReplaceAsync(day, suggestions, time.GetUtcNow(), version, ct);
         LogNamed(logger, tracks.Count, suggestions.Count);
         return JobOutcome.Done;
     }

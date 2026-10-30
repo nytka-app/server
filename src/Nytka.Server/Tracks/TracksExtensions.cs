@@ -11,7 +11,7 @@ public static class TracksExtensions
         services.AddSingleton<ISettingsGroup, TrackSettings>();
         services.AddSingleton<TrackQueue>();
         services.AddScoped<IJobHandler, BuildTracksHandler>();
-        services.AddScoped<LinkQueue>();
+        services.AddSingleton<LinkQueue>();
         services.AddScoped<IJobHandler, LinkSpeakersHandler>();
         services.AddScoped<IJobHandler, NameTracksHandler>();
         return services;
