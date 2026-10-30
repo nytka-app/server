@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.36.9](https://github.com/nytka-app/server/compare/v0.36.8...v0.36.9) (2026-10-30)
+
+
+### Features
+
+* **labeling:** golden labels for who-spoke and boundaries ([#313](https://github.com/nytka-app/server/issues/313)) ([3f23713](https://github.com/nytka-app/server/commit/3f2371354cf5dfe17922fa89e36a462febd602d0))
+* **quality:** nightly attribution metrics, short share and conversations per day ([#311](https://github.com/nytka-app/server/issues/311)) ([6225e7d](https://github.com/nytka-app/server/commit/6225e7dd344ecf09607b0ae15c1548e4b03a355d))
+* **rethink:** derivation versions and the nightly re-think of derived layers ([#306](https://github.com/nytka-app/server/issues/306)) ([#318](https://github.com/nytka-app/server/issues/318)) ([4d89910](https://github.com/nytka-app/server/commit/4d899107d16c702bbee8ebff340ac12bd21df785))
+* **situations:** stored situations, built per day, summarized one by one ([#304](https://github.com/nytka-app/server/issues/304)) ([#317](https://github.com/nytka-app/server/issues/317)) ([ca2340a](https://github.com/nytka-app/server/commit/ca2340a99547d6e47391d903375e0c5e3ddb156c))
+* **tracks:** link speakers by meaning (link-speakers, track_links, tracks.meaning) ([#316](https://github.com/nytka-app/server/issues/316)) ([2e615d6](https://github.com/nytka-app/server/commit/2e615d6483b4ee35bda2c702c56df571bfefb612))
+* **tracks:** name tracks from phone calls and the calendar ([#315](https://github.com/nytka-app/server/issues/315)) ([75c06b2](https://github.com/nytka-app/server/commit/75c06b267c3e243677d0cb274e60b5c87a25873b))
+* **tracks:** speaker tracks stable across a day ([#314](https://github.com/nytka-app/server/issues/314)) ([16fae37](https://github.com/nytka-app/server/commit/16fae377f377b8bd1307297855fb040bf8f9ef0c))
+
 ## [0.36.8](https://github.com/nytka-app/server/compare/v0.36.7...v0.36.8) (2026-10-29)
 
 
