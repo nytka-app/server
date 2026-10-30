@@ -9,7 +9,8 @@ namespace Nytka.Storage;
 /// The attribution fields (docs/explanation/features.md, Quality metrics) are null on a day measured before they existed: a line
 /// falls in one class, first match wins: wearer (<see cref="WearerLines"/>), media, person (a person resolves), label (only the
 /// provider's raw label), none; the seconds are their speech time. <paramref name="LabelsPerConversation"/> holds the distinct raw
-/// labels of each conversation with a line, ascending.
+/// labels of each conversation with a line, ascending. <paramref name="Golden"/> is the system's score against the golden labels when
+/// the row was measured: null on a backfilled day and while no golden label exists.
 /// </summary>
 public sealed record QualityCounts(
     int Conversations, int Fragments, int Untitled, int NonEmpty, int Lines, int WearerLines, int WearerConversations,
@@ -17,7 +18,16 @@ public sealed record QualityCounts(
     int MediaLineConversations, int TaggedConversations, int ItemsVital, int ItemsOrdinary, int ItemsNoise, int ItemsUnrated,
     int UnconfirmedMemories, int? VoiceGroups, int? SingletonGroups,
     int? PersonLines, int? LabelLines, int? MediaLines, int? NoneLines, double? WearerSeconds, double? PersonSeconds, double? LabelSeconds,
-    double? MediaSeconds, double? NoneSeconds, int[]? LabelsPerConversation);
+    double? MediaSeconds, double? NoneSeconds, int[]? LabelsPerConversation, GoldenCounts? Golden = null);
+
+/// <summary>
+/// The counts behind the golden scores (docs/explanation/features.md, Quality metrics): <paramref name="Correct"/> of
+/// <paramref name="Lines"/> answered speaker lines match what the system shows; <paramref name="Fragmentation"/> is the mean distinct
+/// tracks per golden person and day over <paramref name="Persons"/> such person-days; the boundary counts are over
+/// <paramref name="Boundaries"/> answered boundaries.
+/// </summary>
+public sealed record GoldenCounts(
+    int Lines, int Correct, int Persons, double? Fragmentation, int Boundaries, int BoundaryTp, int BoundaryFp, int BoundaryFn);
 
 /// <summary>A stored day: <paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>.</summary>
 public sealed record QualityRow(string LocalDate, QualityCounts Counts, DateTime MeasuredAt);
@@ -36,14 +46,21 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
         + "raw_label_lines, stored_raw_label_lines, media_conversations, media_line_conversations, tagged_conversations, "
         + "items_vital, items_ordinary, items_noise, items_unrated, unconfirmed_memories, voice_groups, singleton_groups, "
         + "class_person_lines, class_label_lines, class_media_lines, class_none_lines, class_wearer_secs, class_person_secs, "
-        + "class_label_secs, class_media_secs, class_none_secs, labels_per_conversation";
+        + "class_label_secs, class_media_secs, class_none_secs, labels_per_conversation, golden_lines, golden_correct, golden_persons, "
+        + "golden_fragmentation, golden_boundaries, golden_boundary_tp, golden_boundary_fp, golden_boundary_fn";
 
     private const string Values =
         "@Conversations, @Fragments, @Untitled, @NonEmpty, @Lines, @WearerLines, @WearerConversations, @VoiceScoredLines, @UnknownLines, "
         + "@RawLabelLines, @StoredRawLabelLines, @MediaConversations, @MediaLineConversations, @TaggedConversations, "
         + "@ItemsVital, @ItemsOrdinary, @ItemsNoise, @ItemsUnrated, @UnconfirmedMemories, @VoiceGroups, @SingletonGroups, "
         + "@PersonLines, @LabelLines, @MediaLines, @NoneLines, @WearerSeconds, @PersonSeconds, "
-        + "@LabelSeconds, @MediaSeconds, @NoneSeconds, @LabelsPerConversation";
+        + "@LabelSeconds, @MediaSeconds, @NoneSeconds, @LabelsPerConversation, @GoldenLines, @GoldenCorrect, @GoldenPersons, "
+        + "@GoldenFragmentation, @GoldenBoundaries, @GoldenBoundaryTp, @GoldenBoundaryFp, @GoldenBoundaryFn";
+
+    /// <summary>SQL for the class of a line from the columns <c>wearer</c>, <c>media</c>, <c>person_id</c> and <c>speaker</c>, first match wins.</summary>
+    public const string LineClass =
+        "case when wearer then 'wearer' when media then 'media' when person_id is not null then 'person' "
+        + "when coalesce(btrim(speaker), '') <> '' then 'label' else 'none' end";
 
     // Conversations by start, items by creation. A line is unknown when it is not the wearer's and has no person; its
     // raw label is the provider's SPEAKER_n, as a reader would see it (must stay 0) and as stored.
@@ -60,8 +77,7 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
             where btrim(s.text) <> ''
         ), lk as (
             select conversation_id, seconds,
-                   case when wearer then 'wearer' when media then 'media' when person_id is not null then 'person'
-                        when coalesce(btrim(speaker), '') <> '' then 'label' else 'none' end as class
+                   {LineClass} as class
             from l
         ), lc as (
             select conversation_id, bool_or(wearer) as wearer, bool_or(speech_guess = 'media') as any_media,
@@ -108,6 +124,9 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
             coalesce((select sum(seconds) from lk where class = 'none'), 0) as NoneSeconds,
             coalesce((select array_agg(n order by n) from (
                 select count(distinct nullif(btrim(speaker), ''))::int as n from l group by conversation_id) x), array[]::int[]) as LabelsPerConversation,
+            cast(null as int) as GoldenLines, cast(null as int) as GoldenCorrect, cast(null as int) as GoldenPersons,
+            cast(null as float8) as GoldenFragmentation, cast(null as int) as GoldenBoundaries, cast(null as int) as GoldenBoundaryTp,
+            cast(null as int) as GoldenBoundaryFp, cast(null as int) as GoldenBoundaryFn,
             now() as MeasuredAt
         """;
 
@@ -124,6 +143,15 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
     public async Task SaveAsync(string localDate, QualityCounts counts, DateTimeOffset measuredAt, CancellationToken ct)
     {
         var args = new DynamicParameters(counts);
+        var golden = counts.Golden;
+        args.Add("GoldenLines", golden?.Lines);
+        args.Add("GoldenCorrect", golden?.Correct);
+        args.Add("GoldenPersons", golden?.Persons);
+        args.Add("GoldenFragmentation", golden?.Fragmentation);
+        args.Add("GoldenBoundaries", golden?.Boundaries);
+        args.Add("GoldenBoundaryTp", golden?.BoundaryTp);
+        args.Add("GoldenBoundaryFp", golden?.BoundaryFp);
+        args.Add("GoldenBoundaryFn", golden?.BoundaryFn);
         args.Add("localDate", localDate);
         args.Add("measuredAt", measuredAt.ToUniversalTime());
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -142,7 +170,9 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
         int MediaLineConversations, int TaggedConversations, int ItemsVital, int ItemsOrdinary, int ItemsNoise, int ItemsUnrated,
         int UnconfirmedMemories, int? VoiceGroups, int? SingletonGroups,
         int? PersonLines, int? LabelLines, int? MediaLines, int? NoneLines, double? WearerSeconds, double? PersonSeconds, double? LabelSeconds,
-        double? MediaSeconds, double? NoneSeconds, Array? LabelsPerConversation, DateTime MeasuredAt)
+        double? MediaSeconds, double? NoneSeconds, Array? LabelsPerConversation, int? GoldenLines, int? GoldenCorrect, int? GoldenPersons,
+        double? GoldenFragmentation, int? GoldenBoundaries, int? GoldenBoundaryTp, int? GoldenBoundaryFp, int? GoldenBoundaryFn,
+        DateTime MeasuredAt)
     {
         public QualityRow ToRow() => new(
             LocalDate,
@@ -150,7 +180,12 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
                 Conversations, Fragments, Untitled, NonEmpty, Lines, WearerLines, WearerConversations, VoiceScoredLines, UnknownLines,
                 RawLabelLines, StoredRawLabelLines, MediaConversations, MediaLineConversations, TaggedConversations, ItemsVital,
                 ItemsOrdinary, ItemsNoise, ItemsUnrated, UnconfirmedMemories, VoiceGroups, SingletonGroups, PersonLines, LabelLines,
-                MediaLines, NoneLines, WearerSeconds, PersonSeconds, LabelSeconds, MediaSeconds, NoneSeconds, LabelsPerConversation as int[]),
+                MediaLines, NoneLines, WearerSeconds, PersonSeconds, LabelSeconds, MediaSeconds, NoneSeconds, LabelsPerConversation as int[],
+                GoldenLines is { } lines && GoldenBoundaries is { } boundaries
+                    ? new GoldenCounts(
+                        lines, GoldenCorrect ?? 0, GoldenPersons ?? 0, GoldenFragmentation, boundaries, GoldenBoundaryTp ?? 0, GoldenBoundaryFp ?? 0,
+                        GoldenBoundaryFn ?? 0)
+                    : null),
             MeasuredAt);
     }
 
@@ -171,7 +206,10 @@ public sealed class QualityStore(NpgsqlDataSource dataSource)
                    class_person_lines as PersonLines, class_label_lines as LabelLines, class_media_lines as MediaLines,
                    class_none_lines as NoneLines, class_wearer_secs as WearerSeconds, class_person_secs as PersonSeconds,
                    class_label_secs as LabelSeconds, class_media_secs as MediaSeconds, class_none_secs as NoneSeconds,
-                   labels_per_conversation as LabelsPerConversation, measured_at as MeasuredAt
+                   labels_per_conversation as LabelsPerConversation, golden_lines as GoldenLines, golden_correct as GoldenCorrect,
+                   golden_persons as GoldenPersons, golden_fragmentation as GoldenFragmentation, golden_boundaries as GoldenBoundaries,
+                   golden_boundary_tp as GoldenBoundaryTp, golden_boundary_fp as GoldenBoundaryFp, golden_boundary_fn as GoldenBoundaryFn,
+                   measured_at as MeasuredAt
             from quality_days
             where local_date between cast(@first as date) and cast(@last as date)
             order by local_date

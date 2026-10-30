@@ -139,6 +139,9 @@ public sealed class QualityTests(PostgresFixture db) : IAsyncLifetime, IClassFix
         }
 
         Attribution(day.GetProperty("attribution"), 0.0333);
+        Assert.Equal(JsonValueKind.Null, day.GetProperty("attribution").GetProperty("goldenAccuracy").ValueKind);
+        Assert.Equal(JsonValueKind.Null, day.GetProperty("attribution").GetProperty("fragmentation").ValueKind);
+        Assert.Equal(JsonValueKind.Null, day.GetProperty("boundary").GetProperty("goldenF1").ValueKind);
         var conversations = day.GetProperty("conversationStats");
         Assert.Equal((0.3333, 3d), (conversations.GetProperty("shortShare").GetDouble(), conversations.GetProperty("perDay").GetDouble()));
 
@@ -151,6 +154,41 @@ public sealed class QualityTests(PostgresFixture db) : IAsyncLifetime, IClassFix
         // A day without lines has no shares but still has its conversations; the 26th's window holds only the 25th and itself.
         Assert.Equal(JsonValueKind.Null, days[1].GetProperty("attribution").GetProperty("classShare").GetProperty("wearer").ValueKind);
         Assert.Equal(2, days[1].GetProperty("last7Days").GetProperty("days").GetInt32());
+    }
+
+    [Fact]
+    public async Task With_golden_labels_the_snapshot_days_score_the_system_against_them()
+    {
+        await SeedAsync();
+
+        // The 28th: the owner says mine is the wearer's (right), hers is Anna (right), someone is a new voice (right) and the film is
+        // Anna (wrong, it is media); Anna's two lines sit on two tracks. Hers follows mine in one situation (right), the film starts a
+        // new one (the system splits there, right) and someone does too (the system does not, a miss).
+        var ids = (await db.QueryAsync<(string Text, long Id)>("select text, id from segments")).ToDictionary(r => r.Text, r => r.Id);
+        var anna = await db.ScalarAsync<Guid>("select id from people where name = 'Anna'");
+        await db.ExecuteAsync(
+            """
+            insert into golden_labels (kind, segment_id, answer, person_id, other_segment_id, answered_at) values
+                ('speaker', @mine, 'wearer', null, null, now()), ('speaker', @hers, 'person', @anna, null, now()),
+                ('speaker', @someone, 'new-voice', null, null, now()), ('speaker', @film, 'person', @anna, null, now()),
+                ('boundary', @hers, 'same-situation', null, @mine, now()), ('boundary', @film, 'new-situation', null, @someone, now()),
+                ('boundary', @someone, 'new-situation', null, @hers, now())
+            """,
+            new { mine = ids["mine"], hers = ids["hers"], someone = ids["someone"], film = ids["dialogue"], anna });
+        await _server.Get<Scheduler>().TickAsync(default);
+        await _server.RunJobsAsync();
+
+        var days = (await _server.CreateAuthorizedClient().GetFromJsonAsync<JsonElement>("/api/v1/quality")).GetProperty("days").EnumerateArray().ToList();
+        var attribution = days.Last().GetProperty("attribution");
+        Assert.Equal((0.75, 4), (attribution.GetProperty("goldenAccuracy").GetDouble(), attribution.GetProperty("goldenLines").GetInt32()));
+        Assert.Equal((2d, 1), (attribution.GetProperty("fragmentation").GetDouble(), attribution.GetProperty("goldenPersons").GetInt32()));
+        var boundary = days.Last().GetProperty("boundary");
+        Assert.Equal((0.6667, 3), (boundary.GetProperty("goldenF1").GetDouble(), boundary.GetProperty("goldenBoundaries").GetInt32()));
+        Assert.Equal(0.6667, days.Last().GetProperty("last7Days").GetProperty("boundary").GetProperty("goldenF1").GetDouble());
+
+        // A backfilled day is not a snapshot of the system, so it has no golden score.
+        Assert.Equal(JsonValueKind.Null, days[0].GetProperty("attribution").GetProperty("goldenAccuracy").ValueKind);
+        Assert.Equal(JsonValueKind.Null, days[0].GetProperty("boundary").GetProperty("goldenF1").ValueKind);
     }
 
     [Fact]

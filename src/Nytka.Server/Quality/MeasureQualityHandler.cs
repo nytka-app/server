@@ -10,9 +10,10 @@ namespace Nytka.Server.Quality;
 
 /// <summary>
 /// The <c>measure-quality</c> job: counts one local day from stored rows, with no model call, and replaces its row. The voice
-/// groups are counted only for today and yesterday, the days whose groups the table still shows.
+/// groups and the golden scores are counted only for today and yesterday: the groups are a snapshot of now, and so is the system the
+/// golden labels are scored against.
 /// </summary>
-public sealed class MeasureQualityHandler(QualityStore quality, SettingsService settings, TimeProvider time) : IJobHandler
+public sealed class MeasureQualityHandler(QualityStore quality, GoldenStore golden, SettingsService settings, TimeProvider time) : IJobHandler
 {
     public string Kind => JobKinds.MeasureQuality;
 
@@ -27,7 +28,13 @@ public sealed class MeasureQualityHandler(QualityStore quality, SettingsService 
         var now = time.GetUtcNow();
         var zone = UserTimeZone.Resolve(settings);
         var (from, to) = DigestDay.Bounds(date, zone);
-        var counts = await quality.MeasureAsync(from, to, date >= DigestDay.Today(now, zone).AddDays(-1), ct);
+        var snapshot = date >= DigestDay.Today(now, zone).AddDays(-1);
+        var counts = await quality.MeasureAsync(from, to, snapshot, ct);
+        if (snapshot)
+        {
+            counts = counts with { Golden = GoldenScore.Of(await golden.DataAsync(ct), at => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(at, zone))) };
+        }
+
         await quality.SaveAsync(payload.LocalDate, counts, now, ct);
         return JobOutcome.Done;
     }

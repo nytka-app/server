@@ -37,6 +37,7 @@ public static partial class LabelingEndpoints
         labeling.MapPost("/{id:long}", AnswerAsync);
         labeling.MapGet("/labels", LabelsAsync);
         labeling.MapDelete("/labels/{labelId:long}", DeleteAsync);
+        labeling.MapGet("/golden/progress", GoldenProgressAsync);
         labeling.MapGet("/voice/pending", PendingAsync);
         labeling.MapPost("/voice/confirm", ConfirmAsync);
         labeling.MapPost("/import", ImportAsync);
@@ -62,9 +63,12 @@ public static partial class LabelingEndpoints
 
     public sealed record AnswerBody(
         string? ClientId, string[]? Source, string? DeviceType, string? Content, string? Transcript, string[]? Flags, string? Language,
-        string? PersonId, string? Correction, string? Overlap, bool? LinesDiffer, bool? Skipped, int? ListenedMs, string? AnsweredWith);
+        string? PersonId, string? Correction, string? Overlap, bool? LinesDiffer, bool? Skipped, int? ListenedMs, string? AnsweredWith,
+        string? Answer = null, long? SameAsSegmentId = null);
 
     public sealed record Answered(long? LabelId, long? Superseded);
+
+    public sealed record GoldenProgressList(IReadOnlyList<GoldenProgress> Days);
 
     public sealed record Verdict(long SegmentId, bool? VoiceIsUser, float? VoiceSimilarity, string? SpeechGuess, float? SpeechScore);
 
@@ -87,21 +91,39 @@ public static partial class LabelingEndpoints
 
     public sealed record ImportResult(int Imported, int Skipped);
 
-    /// <summary>Each task with its open items and current labels; <c>device</c> has the detector's ship gate as its goal.</summary>
-    private static async Task<IResult> TasksAsync(LabelStore labels, CancellationToken ct) =>
-        Results.Ok(new TaskList([.. (await labels.TaskCountsAsync(ct)).Select(t => t.Task == LabelingTasks.Device
+    /// <summary>
+    /// Each task with its open items and current labels; <c>device</c> has the detector's ship gate as its goal. The golden tasks follow
+    /// while <c>eval.goldenDays</c> names a day, counted over those days.
+    /// </summary>
+    private static async Task<IResult> TasksAsync(LabelStore labels, GoldenStore golden, SettingsService settings, TimeProvider time, CancellationToken ct)
+    {
+        List<TaskItem> tasks = [.. (await labels.TaskCountsAsync(ct)).Select(t => t.Task == LabelingTasks.Device
             ? new TaskItem(t.Task, LabelingTasks.Ask(t.Task), t.Open, t.Labelled, 100, "not-device lines", t.Progress)
-            : new TaskItem(t.Task, LabelingTasks.Ask(t.Task), t.Open, t.Labelled, null, null, null))]));
+            : new TaskItem(t.Task, LabelingTasks.Ask(t.Task), t.Open, t.Labelled, null, null, null))];
+        if (EvalSettings.GoldenDays(settings) is { Count: > 0 } days)
+        {
+            await golden.EnsureItemsAsync(days, time.GetUtcNow(), ct);
+            tasks.AddRange((await golden.CountsAsync(days, ct)).Select(t => new TaskItem(t.Task, LabelingTasks.Ask(t.Task), t.Open, t.Labelled, null, null, null)));
+        }
+
+        return Results.Ok(new TaskList(tasks));
+    }
 
     /// <summary>
     /// Leases up to <c>limit</c> items of <c>task</c> (or <c>mixed</c>) for 30 minutes. While a lease of the same task is open it returns
     /// that lease's items not yet answered.
     /// </summary>
-    private static async Task<IResult> NextAsync(string? task, int? limit, LabelStore labels, TimeProvider time, CancellationToken ct)
+    private static async Task<IResult> NextAsync(
+        string? task, int? limit, LabelStore labels, GoldenStore golden, SettingsService settings, TimeProvider time, CancellationToken ct)
     {
-        if (task is null || (task != LabelingTasks.Mixed && !LabelingTasks.All.Contains(task)))
+        if (task is null || (task != LabelingTasks.Mixed && !LabelingTasks.All.Contains(task) && !LabelingTasks.IsGolden(task)))
         {
             return Bad("task", "unknown task");
+        }
+
+        if (LabelingTasks.IsGolden(task))
+        {
+            return await NextGoldenAsync(task, limit, labels, golden, settings, time, ct);
         }
 
         var now = time.GetUtcNow();
@@ -121,6 +143,36 @@ public static partial class LabelingEndpoints
         return Results.Ok(new Session(session, until.UtcDateTime, Items(await labels.ItemsAsync(taken, context, ct))));
     }
 
+    /// <summary>
+    /// A golden task's session: the open items of the golden days, the longest speech first, with no mix. With no golden day set, no
+    /// items.
+    /// </summary>
+    private static async Task<IResult> NextGoldenAsync(
+        string task, int? limit, LabelStore labels, GoldenStore golden, SettingsService settings, TimeProvider time, CancellationToken ct)
+    {
+        var days = EvalSettings.GoldenDays(settings);
+        if (days.Count == 0)
+        {
+            return Results.Ok(new Session(Guid.NewGuid(), null, []));
+        }
+
+        var now = time.GetUtcNow();
+        await golden.EnsureItemsAsync(days, now, ct);
+        var context = TimeSpan.FromSeconds(MaxContextSeconds);
+        bool OnGoldenDay(LabelStore.ItemView v) => days.Any(d => v.StartedAt >= d.From && v.StartedAt < d.To);
+        if (await labels.OpenLeaseAsync(task, now, ct) is { } lease)
+        {
+            return Results.Ok(new Session(
+                lease.Session, lease.Until, Items([.. (await labels.ItemsAsync(lease.Ids, context, ct)).Where(OnGoldenDay)])));
+        }
+
+        var open = await golden.OpenAsync(task, days, Math.Clamp(limit ?? DefaultNext, 1, MaxNext), now, ct);
+        var session = Guid.NewGuid();
+        var until = now + LabelStore.Lease;
+        var taken = await labels.TakeAsync(open, task, session, until, now, ct);
+        return Results.Ok(new Session(session, until.UtcDateTime, Items(await labels.ItemsAsync(taken, context, ct))));
+    }
+
     private static List<Item> Items(IReadOnlyList<LabelStore.ItemView> views) =>
         [.. views.Select(v => new Item(
             v.Id, v.Task, LabelingTasks.Ask(v.Task), v.Reason, v.ConversationId, v.StartedAt, (int)(v.EndedAt - v.StartedAt).TotalMilliseconds,
@@ -131,7 +183,8 @@ public static partial class LabelingEndpoints
     /// The item's span and <c>context</c> seconds either side (0 to 4) as <c>audio/ogg</c>, at most 20 s, cut by capture time as a review
     /// clip is. Once the audio is gone, the clip kept with its label (<c>labeling.keepClips</c>), without context; else 404.
     /// </summary>
-    private static async Task<IResult> ClipAsync(long id, int? context, LabelStore labels, BatchStore batches, HttpResponse response, CancellationToken ct)
+    private static async Task<IResult> ClipAsync(
+        long id, int? context, LabelStore labels, GoldenStore golden, BatchStore batches, HttpResponse response, CancellationToken ct)
     {
         if (await labels.ItemSpanAsync(id, ct) is not { } span)
         {
@@ -140,6 +193,11 @@ public static partial class LabelingEndpoints
 
         response.Headers.CacheControl = "no-store";
         var pad = TimeSpan.FromSeconds(Math.Clamp(context ?? 0, 0, MaxContextSeconds));
+        if (await golden.BoundaryLinesAsync(id, ct) is [var first, var second])
+        {
+            return await BoundaryClipAsync(id, first, second, pad, batches, ct);
+        }
+
         var (from, until) = (span.StartedAt - pad, span.EndedAt + pad);
         if (until - from > ReviewStore.MaxClip)
         {
@@ -156,12 +214,36 @@ public static partial class LabelingEndpoints
     }
 
     /// <summary>
+    /// The clip of a boundary item: the last half of <see cref="ReviewStore.MaxClip"/> of the first line and the first half of the second,
+    /// so the junction plays whatever the gap between them (the two may lie in different conversations).
+    /// </summary>
+    private static async Task<IResult> BoundaryClipAsync(
+        long id, (Guid ConversationId, DateTime StartedAt, DateTime EndedAt) first, (Guid ConversationId, DateTime StartedAt, DateTime EndedAt) second,
+        TimeSpan pad, BatchStore batches, CancellationToken ct)
+    {
+        var half = ReviewStore.MaxClip / 2;
+        var from = (first.EndedAt - half > first.StartedAt ? first.EndedAt - half : first.StartedAt) - pad;
+        var until = (second.StartedAt + half < second.EndedAt ? second.StartedAt + half : second.EndedAt) + pad;
+        var bodies = new List<byte[]>(await batches.SpeechAudioBodiesAsync(
+            first.ConversationId, new DateTimeOffset(from, TimeSpan.Zero), new DateTimeOffset(until, TimeSpan.Zero), ct));
+        if (second.ConversationId != first.ConversationId)
+        {
+            bodies.AddRange(await batches.SpeechAudioBodiesAsync(
+                second.ConversationId, new DateTimeOffset(from, TimeSpan.Zero), new DateTimeOffset(until, TimeSpan.Zero), ct));
+        }
+
+        return CardClip.Cut(bodies, from, until, (uint)id, (int)ReviewStore.MaxClip.TotalMilliseconds) is { } clip
+            ? Results.File(clip, AudioEndpoints.OggMediaType, enableRangeProcessing: true)
+            : NotFound("The item's audio is gone.");
+    }
+
+    /// <summary>
     /// Stores an answer: <c>200 { labelId, superseded }</c>. The same <c>clientId</c> again returns the first answer's label and changes
     /// nothing; <c>skipped</c> returns the item to the queue and stores nothing. A label's source writes through to the lines' marks.
     /// </summary>
     private static async Task<IResult> AnswerAsync(
-        long id, HttpRequest http, LabelStore labels, PeopleStore people, BatchStore batches, SettingsService settings, TimeProvider time,
-        CancellationToken ct)
+        long id, HttpRequest http, LabelStore labels, GoldenStore golden, PeopleStore people, BatchStore batches, SettingsService settings,
+        TimeProvider time, CancellationToken ct)
     {
         var body = await TokenEndpoints.ReadBodyAsync<AnswerBody>(http, ct);
         if (body is null)
@@ -177,6 +259,11 @@ public static partial class LabelingEndpoints
         if (body.Skipped == true)
         {
             return await labels.SkipAsync(id, ct) ? Results.Ok(new Answered(null, null)) : NotFound("No such item.");
+        }
+
+        if (await golden.ItemAsync(id, ct) is { } goldenItem)
+        {
+            return await AnswerGoldenAsync(id, goldenItem, body, clientId, golden, people, settings, time, ct);
         }
 
         if (await labels.ItemLineCountAsync(id, ct) is not { } lineCount)
@@ -227,6 +314,76 @@ public static partial class LabelingEndpoints
         }
 
         return Results.Ok(new Answered(answer.LabelId, answer.Superseded));
+    }
+
+    /// <summary>
+    /// A golden item's answer (<c>answer</c>, with <c>personId</c> for <c>person</c> and <c>sameAsSegmentId</c> for <c>same-as</c>) is a row of
+    /// <c>golden_labels</c> and nothing else: no label, no mark, no voiceprint. <c>200 { labelId: null, superseded: null }</c>.
+    /// </summary>
+    private static async Task<IResult> AnswerGoldenAsync(
+        long id, GoldenItem item, AnswerBody body, Guid clientId, GoldenStore golden, PeopleStore people, SettingsService settings,
+        TimeProvider time, CancellationToken ct)
+    {
+        if (body.Answer is null)
+        {
+            return Bad("answer", "required");
+        }
+
+        if (!(item.Task == GoldenStore.Speaker ? GoldenStore.SpeakerAnswers : GoldenStore.BoundaryAnswers).Contains(body.Answer))
+        {
+            return Bad("answer", "unknown value");
+        }
+
+        Guid? personId = null;
+        long? sameAs = null;
+        if (body.Answer == "person")
+        {
+            if (body.PersonId is null)
+            {
+                return Bad("personId", "required");
+            }
+
+            if (!Guid.TryParse(body.PersonId, out var person) || await people.GetAsync(person, ct) is null)
+            {
+                return Bad("personId", "unknown person");
+            }
+
+            personId = person;
+        }
+        else if (body.Answer == "same-as")
+        {
+            if (body.SameAsSegmentId is not { } other)
+            {
+                return Bad("sameAsSegmentId", "required");
+            }
+
+            if (other == item.SegmentIds[0] || !await golden.IsGoldenSegmentAsync(other, EvalSettings.GoldenDays(settings), ct))
+            {
+                return Bad("sameAsSegmentId", "not another golden line");
+            }
+
+            sameAs = other;
+        }
+
+        try
+        {
+            return (await golden.AnswerAsync(id, new GoldenAnswer(clientId, body.Answer, personId, sameAs), time.GetUtcNow(), ct)).Found
+                ? Results.Ok(new Answered(null, null))
+                : NotFound("No such item.");
+        }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            // The same client id raced itself: the answer it made stands.
+            return Results.Ok(new Answered(null, null));
+        }
+    }
+
+    /// <summary>Per golden day (<c>eval.goldenDays</c>): the lines with text and the speaker answers among them, the boundary items and their answers.</summary>
+    private static async Task<IResult> GoldenProgressAsync(GoldenStore golden, SettingsService settings, TimeProvider time, CancellationToken ct)
+    {
+        var days = EvalSettings.GoldenDays(settings);
+        await golden.EnsureItemsAsync(days, time.GetUtcNow(), ct);
+        return Results.Ok(new GoldenProgressList(await golden.ProgressAsync(days, ct)));
     }
 
     /// <summary>With <c>labeling.keepClips</c> on, keeps the item's clip without context beside the label, so it outlives the audio.</summary>
