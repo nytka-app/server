@@ -14,7 +14,7 @@ public sealed record PendingBatch(long Id, Guid ConversationId, DateTime Started
 /// <summary><paramref name="IsUser"/> is the provider's; <paramref name="Voice"/> is Nytka's look at the segment, null when it did not check it.</summary>
 public sealed record NewSegment(
     DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Text, string? Speaker = null, string? SpeakerId = null, bool? IsUser = null,
-    SegmentVoice? Voice = null);
+    SegmentVoice? Voice = null, SegmentPrints? Prints = null);
 
 /// <summary>Where transcription stands. <paramref name="LastError"/> is set only while it is current: no batch has finished since.</summary>
 public sealed record BatchOutcomes(string? LastError, DateTime? LastErrorAt, DateTime? LastSuccessAt);
@@ -113,6 +113,11 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
             {
                 await VoiceStore.InsertFingerprintAsync(connection, transaction, segmentId, id, voice.Model, fingerprint, ct);
             }
+
+            if (s.Prints is { } prints)
+            {
+                await VoiceStore.InsertPrintsAsync(connection, transaction, segmentId, id, prints, ct);
+            }
         }
 
         if (voice is not null)
@@ -126,6 +131,7 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
                 """
                 delete from speech_audio where batch_id = @id;
                 delete from segment_fingerprints where batch_id = @id;
+                delete from track_prints where batch_id = @id;
                 """,
                 new { id }, transaction, cancellationToken: ct));
         }
@@ -257,7 +263,7 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
 
     /// <summary>
     /// Deletes speech audio of finished batches that ended before <paramref name="before"/>, and the fingerprints of every
-    /// batch that loses audio: a fingerprint never outlives its audio, nor does a voice group left without one. Similarities and
+    /// batch that loses audio (the window fingerprints of speaker tracks too): a fingerprint never outlives its audio, nor does a voice group left without one. Similarities and
     /// verdicts stay on the segments. The draft lines a paid pass replaced go with the audio (<c>segment_drafts</c>).
     /// </summary>
     public async Task<int> DeleteSpeechAudioEndedBeforeAsync(DateTimeOffset before, CancellationToken ct)
@@ -272,6 +278,8 @@ public sealed class BatchStore(NpgsqlDataSource dataSource)
                 where ended_at < @before
                   and batch_id in (select id from transcription_batches where status = 'done')
                 returning batch_id),
+            prints as (
+                delete from track_prints where batch_id in (select batch_id from audio)),
             fingerprints as (
                 delete from segment_fingerprints where batch_id in (select batch_id from audio)
                 returning segment_id, group_id),

@@ -246,7 +246,9 @@ Your voice's rule stays for `isUser`. For the name of a non-wearer segment, firs
 
 1. `segments.person_id`: a confirmed suggestion, card, match or manual mark on the segment.
 2. The person who owns the segment's `speaker_id` (`person_voices`, v0.6).
-3. The provider's `speaker`, read as `Voice n+1` for a raw `SPEAKER_n` (`SpeakerLabel.Voice`), so no raw label reaches a
+3. While `tracks.enabled` is on: the person who owns the segment's speaker track (`speaker_tracks.person_id`), and the voice is then
+   `Voice n` of the track, numbered within its day.
+4. The provider's `speaker`, read as `Voice n+1` for a raw `SPEAKER_n` (`SpeakerLabel.Voice`), so no raw label reaches a
    prompt, an MCP answer or the Markdown export. The REST `speaker` field and the JSON export keep the stored label.
 
 `SpeakerLabel.Joins` and `Column`, `ConversationStore`'s segment query and `ExportStore`'s segment

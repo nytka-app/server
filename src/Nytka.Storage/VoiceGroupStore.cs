@@ -41,7 +41,8 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
     /// <summary>
     /// The owners cards may be made from, after the filters <c>@kind</c>, <c>@id</c> (each may be null) and <c>@visibleAt</c>
     /// (null counts skipped ones too): every group heard in <c>@minConversations</c> conversations (any group when one is asked
-    /// for by id), and every pending match whose person still exists.
+    /// for by id), and every pending match whose person still exists. While the applied <c>tracks.enabled</c> is true the groups are
+    /// the day's speaker tracks that no person owns and the owner did not dismiss (kind and id work as for a group).
     /// </summary>
     private const string CardOwners =
         """
@@ -49,11 +50,21 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
             select 'group'::text as kind, g.id as id, cast(null as uuid) as person_id, cast(null as text) as person_name,
                    cast(null as real) as similarity
             from voice_groups g
-            where (cast(@kind as text) is null or @kind = 'group') and (cast(@id as uuid) is null or g.id = @id)
+            where not coalesce((select ts.enabled from tracks_state ts where ts.id = 1), false)
+              and (cast(@kind as text) is null or @kind = 'group') and (cast(@id as uuid) is null or g.id = @id)
               and (cast(@id as uuid) is not null or (
                     select count(distinct s.conversation_id) from segment_fingerprints f join segments s on s.id = f.segment_id
                     where f.group_id = g.id) >= @minConversations)
               and (cast(@visibleAt as timestamptz) is null or g.skipped_until is null or g.skipped_until <= @visibleAt)
+            union all
+            select 'group'::text, t.id, cast(null as uuid), cast(null as text), cast(null as real)
+            from speaker_tracks t
+            where coalesce((select ts.enabled from tracks_state ts where ts.id = 1), false) and t.person_id is null
+              and (cast(@kind as text) is null or @kind = 'group') and (cast(@id as uuid) is null or t.id = @id)
+              and (cast(@id as uuid) is not null or (
+                    not t.dismissed
+                    and (select count(distinct s.conversation_id) from segments s where s.track_id = t.id) >= @minConversations))
+              and (cast(@visibleAt as timestamptz) is null or t.skipped_until is null or t.skipped_until <= @visibleAt)
             union all
             select 'match'::text, m.id, m.person_id, p.name, m.similarity
             from voice_matches m join people p on p.id = m.person_id
@@ -76,6 +87,8 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
     private sealed record CentroidRow(Guid Id, byte[] Centroid);
 
     private sealed record VectorRow(byte[] Centroid, int Count, string Model);
+
+    private sealed record TrackVector(byte[] Centroid, int Count, string Model);
 
     private sealed record HeldRow(long SegmentId, byte[] Fingerprint, string Model);
 
@@ -248,6 +261,11 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
     public static async Task<VoiceConfirm> ConfirmGroupAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid groupId, Guid personId, DateTimeOffset now, CancellationToken ct)
     {
+        if (await ConfirmTrackAsync(connection, transaction, groupId, personId, now, ct) is { } confirmed)
+        {
+            return confirmed;
+        }
+
         var group = await connection.QuerySingleOrDefaultAsync<VectorRow>(new CommandDefinition(
             "select centroid as Centroid, count as Count, model as Model from voice_groups where id = @groupId for update",
             new { groupId }, transaction, cancellationToken: ct));
@@ -267,6 +285,34 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// A speaker track is named (the card of a track while <c>tracks.enabled</c> is on): the person is set on the track, which names every
+    /// line in it, and the track's centroid joins the person's voiceprint, weighted by the track's lines. Null when <paramref name="trackId"/>
+    /// is not a track.
+    /// </summary>
+    private static async Task<VoiceConfirm?> ConfirmTrackAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid trackId, Guid personId, DateTimeOffset now, CancellationToken ct)
+    {
+        var track = await connection.QuerySingleOrDefaultAsync<TrackVector>(new CommandDefinition(
+            "select centroid as Centroid, segments as Count, model as Model from speaker_tracks where id = @trackId for update",
+            new { trackId }, transaction, cancellationToken: ct));
+        if (track is null)
+        {
+            return null;
+        }
+
+        if (!await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "select exists (select 1 from people where id = @personId)", new { personId }, transaction, cancellationToken: ct)))
+        {
+            return VoiceConfirm.NoPerson;
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(
+            "update speaker_tracks set person_id = @personId where id = @trackId", new { personId, trackId }, transaction, cancellationToken: ct));
+        await BlendVoiceprintAsync(connection, transaction, personId, track.Model, [VoiceStore.Decode(track.Centroid)], Math.Max(1, track.Count), now, ct);
+        return VoiceConfirm.Ok;
     }
 
     /// <summary>
@@ -323,23 +369,34 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
         var vectors = held.Where(h => h.Model == model).Select(h => VoiceStore.Decode(h.Fingerprint)).ToList();
         if (model is not null && vectors.Count > 0)
         {
-            var current = await connection.QuerySingleOrDefaultAsync<VectorRow>(new CommandDefinition(
-                "select centroid as Centroid, count as Count, model as Model from person_voiceprints where person_id = @personId for update",
-                new { personId }, transaction, cancellationToken: ct));
-            var same = current is not null && current.Model == model;
-            var centroid = same ? VoiceStore.Blend(VoiceStore.Decode(current!.Centroid), current.Count, vectors) : VoiceStore.Mean(vectors);
-            await connection.ExecuteAsync(new CommandDefinition(
-                """
-                insert into person_voiceprints (person_id, model, centroid, count, updated_at)
-                values (@personId, @model, @centroid, @count, @now)
-                on conflict (person_id) do update set
-                    model = excluded.model, centroid = excluded.centroid, count = excluded.count, updated_at = excluded.updated_at
-                """,
-                new { personId, model, centroid = VoiceStore.Encode(centroid), count = (same ? current!.Count : 0) + vectors.Count, now },
-                transaction, cancellationToken: ct));
+            await BlendVoiceprintAsync(connection, transaction, personId, model, vectors, vectors.Count, now, ct);
         }
 
         return VoiceConfirm.Ok;
+    }
+
+    /// <summary>
+    /// Blends <paramref name="vectors"/>, counted as <paramref name="count"/> samples, into the person's voiceprint (weighted by count,
+    /// replacing one made by another model).
+    /// </summary>
+    private static async Task BlendVoiceprintAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid personId, string model, IReadOnlyList<float[]> vectors, int count,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        var current = await connection.QuerySingleOrDefaultAsync<VectorRow>(new CommandDefinition(
+            "select centroid as Centroid, count as Count, model as Model from person_voiceprints where person_id = @personId for update",
+            new { personId }, transaction, cancellationToken: ct));
+        var same = current is not null && current.Model == model;
+        var centroid = same ? VoiceStore.Blend(VoiceStore.Decode(current!.Centroid), current.Count, vectors) : VoiceStore.Mean(vectors);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            insert into person_voiceprints (person_id, model, centroid, count, updated_at)
+            values (@personId, @model, @centroid, @count, @now)
+            on conflict (person_id) do update set
+                model = excluded.model, centroid = excluded.centroid, count = excluded.count, updated_at = excluded.updated_at
+            """,
+            new { personId, model, centroid = VoiceStore.Encode(centroid), count = (same ? current!.Count : 0) + count, now },
+            transaction, cancellationToken: ct));
     }
 
     /// <summary>
@@ -407,6 +464,8 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
                 select o.kind, o.id as owner, f.segment_id as segment_id
                 from owners o join segment_fingerprints f on o.kind = 'group' and f.group_id = o.id
                 union all
+                select o.kind, o.id, s.id from owners o join segments s on o.kind = 'group' and s.track_id = o.id
+                union all
                 select o.kind, o.id, sid
                 from owners o join voice_matches m on o.kind = 'match' and m.id = o.id
                 cross join lateral unnest(m.segment_ids) as sid),
@@ -443,21 +502,22 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             kind == GroupKind
-                ? "update voice_groups set skipped_until = @until where id = @id"
+                ? "update voice_groups set skipped_until = @until where id = @id; update speaker_tracks set skipped_until = @until where id = @id"
                 : "update voice_matches set skipped_until = @until where id = @id and status = 'pending'",
             new { id, until }, cancellationToken: ct)) == 1;
     }
 
     /// <summary>
     /// "Not a person" for a group, "not them" for a pending match. A group is deleted (its fingerprints stay marked grouped, so
-    /// they are never grouped again); a match is kept as rejected, so it never comes back. False when there is none.
+    /// they are never grouped again), a speaker track is kept as dismissed, so no card asks about it again; a match is kept as rejected,
+    /// so it never comes back. False when there is none.
     /// </summary>
     public async Task<bool> RejectCardAsync(string kind, Guid id, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         return await connection.ExecuteAsync(new CommandDefinition(
             kind == GroupKind
-                ? "delete from voice_groups where id = @id"
+                ? "delete from voice_groups where id = @id; update speaker_tracks set dismissed = true where id = @id"
                 : "update voice_matches set status = 'rejected', decided_at = @now where id = @id and status = 'pending'",
             new { id, now }, cancellationToken: ct)) == 1;
     }
@@ -472,6 +532,10 @@ public sealed class VoiceGroupStore(NpgsqlDataSource dataSource)
             delete from voice_groups;
             delete from person_voiceprints;
             delete from voice_matches where status = 'pending';
+            update segments s set person_id = t.person_id
+            from speaker_tracks t where s.track_id = t.id and s.person_id is null and t.person_id is not null;
+            delete from speaker_tracks;
+            delete from track_prints;
             """,
             transaction: transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);

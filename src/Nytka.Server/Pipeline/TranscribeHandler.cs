@@ -31,10 +31,17 @@ public sealed class TranscribeHandler(
         var segments = ToSegments(result, map, batch.StartedAt, batch.EndedAt);
 
         // Fingerprints cut the WAV by the provider's own times, before the offset map makes them capture times.
-        var match = await voice.MatchAsync(batch.Wav, WavSpans(result, map), ct);
+        var spans = WavSpans(result, map);
+        var match = await voice.MatchAsync(batch.Wav, spans, ct);
         if (match is not null)
         {
             segments = segments.Select((s, i) => s with { Voice = match.Segments[i] }).ToList();
+        }
+
+        // Window fingerprints for speaker tracks: made with the verdicts when a voiceprint exists, else on their own; none while tracks are off.
+        if ((match?.Prints ?? await voice.PrintsAsync(batch.Wav, spans, ct)) is { } prints)
+        {
+            segments = segments.Select((s, i) => s with { Prints = prints[i] }).ToList();
         }
 
         await batches.CompleteAsync(batchId, result.RawJson, segments, match?.Batch, options.Value.Audio.RetentionDays == 0, ct,

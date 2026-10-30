@@ -32,10 +32,11 @@ public static class JobKinds
     public const string ClassifyMemories = "classify-memories";
     public const string ClassifyConversations = "classify-conversations";
     public const string RecomputeEvents = "recompute-events";
+    public const string BuildTracks = "build-tracks";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling,
-    /// recompute-events and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
+    /// recompute-events, build-tracks and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
     {
@@ -89,6 +90,9 @@ public static class JobKinds
     public static string MeasureInsightsKey(string localDate) => $"{MeasureInsights}:{localDate}";
 
     public static string DeliverWebhookKey(Guid delivery) => $"{DeliverWebhook}:{delivery}";
+
+    /// <summary>One build per local date at a time.</summary>
+    public static string BuildTracksKey(string localDate) => $"{BuildTracks}:{localDate}";
 
     /// <summary>One recompute per local date at a time.</summary>
     public static string RecomputeEventsKey(string localDate) => $"{RecomputeEvents}:{localDate}";

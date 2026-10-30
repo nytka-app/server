@@ -17,6 +17,12 @@ public sealed record VoiceProfile(string Model, IReadOnlyList<VoicePrint> Prints
 /// </summary>
 public sealed record SegmentVoice(float? Similarity, bool? IsUser, float[]? Fingerprint);
 
+/// <summary>
+/// A segment's fingerprints for speaker tracks, one per window (a line over 30 s is cut into windows, any other is one), by
+/// <paramref name="Model"/>; kept until the batch's audio goes, as <see cref="SegmentVoice.Fingerprint"/> is.
+/// </summary>
+public sealed record SegmentPrints(string Model, IReadOnlyList<float[]> Windows);
+
 /// <summary>What the API may say about the voiceprint: counts and times, never a vector. <paramref name="CentroidCount"/> is every
 /// centroid's line count summed (the learned total); <paramref name="PrintCount"/> is how many centroids exist.</summary>
 public sealed record VoiceStatus(DateTime EnrolledAt, DateTime UpdatedAt, int EnrolledCount, int CentroidCount, int PrintCount);
@@ -386,6 +392,21 @@ public sealed class VoiceStore(NpgsqlDataSource dataSource)
     private const string UncheckedWithAudio =
         "not s.voice_checked and s.text <> '' and s.batch_id is not null and s.ended_at - s.started_at > interval '30 seconds' "
         + "and exists (select 1 from speech_audio a where a.batch_id = s.batch_id)";
+
+    /// <summary>Stores a segment's window fingerprints for speaker tracks inside the caller's transaction.</summary>
+    public static async Task InsertPrintsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long segmentId, long batchId, SegmentPrints prints, CancellationToken ct)
+    {
+        for (var i = 0; i < prints.Windows.Count; i++)
+        {
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                insert into track_prints (segment_id, idx, batch_id, model, fingerprint, created_at)
+                values (@segmentId, @idx, @batchId, @model, @fingerprint, now())
+                """,
+                new { segmentId, idx = (short)i, batchId, model = prints.Model, fingerprint = Encode(prints.Windows[i]) }, transaction, cancellationToken: ct));
+        }
+    }
 
     /// <summary>Stores a segment's fingerprint inside the caller's transaction.</summary>
     public static Task InsertFingerprintAsync(

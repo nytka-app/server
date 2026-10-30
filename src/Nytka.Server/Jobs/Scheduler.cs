@@ -15,6 +15,7 @@ using Nytka.Server.Settings;
 using Nytka.Server.Speech;
 using Nytka.Server.Tags;
 using Nytka.Server.Topics;
+using Nytka.Server.Tracks;
 using Nytka.Server.Voice;
 using Nytka.Storage;
 
@@ -23,14 +24,14 @@ namespace Nytka.Server.Jobs;
 /// <summary>
 /// Queues the jobs nothing else queues: closing idle conversations, retention, another look at
 /// every session that still holds chunk audio (speech waiting for more audio, or for the session
-/// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the calendar's sync and briefs, the
+/// to go idle), another try at failed transcription batches, the conversations that need a run of the model, the day's digest, a voice rescore, the grouping of other people's voices, the speaker tracks of ended days, the calendar's sync and briefs, the
 /// labelling candidates, the quality metrics, the "Over time" insights, the speech kinds' follow-up of their settings, the topic pages with conversations to
 /// fold in, the rollups of the periods that just closed and the "Earlier" links of conversations whose vector or tags changed. Dedupe keys make every call safe to repeat.
 /// </summary>
 public sealed class Scheduler(
     JobQueue queue, ChunkStore chunks, ConversationStore conversations, EnrichmentQueue enrichments, ILlmClient llm,
     IOptionsMonitor<LlmOptions> llmOptions, SettingsService settings, DigestStore digests, VoiceStore voices, VoiceGroupStore voiceGroups,
-    CalendarQueue calendar, QualityQueue quality, InsightQueue insights, SpeechStore speech, BatchRetryQueue batchRetries,
+    CalendarQueue calendar, QualityQueue quality, InsightQueue insights, TrackQueue trackQueue, SpeechStore speech, BatchRetryQueue batchRetries,
     SpeakerModel speaker, TagStore tags, TopicStore topics, RollupStore rollups, RelatedStore related, EmbeddingState embeddings, TimeProvider time)
 {
     /// <summary>The most conversations one tick queues; a backlog drains over a few ticks.</summary>
@@ -74,6 +75,7 @@ public sealed class Scheduler(
         await QueueRescoreAsync(now, ct);
         await QueueRematchAsync(now, ct);
         await QueueGroupVoicesAsync(now, ct);
+        await trackQueue.QueueAsync(now, ct);
         await calendar.QueueAsync(now, ct);
         await QueueApplySpeechAsync(now, ct);
         await QueueClassifySpeechAsync(now, ct);
