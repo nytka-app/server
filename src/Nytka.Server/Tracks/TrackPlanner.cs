@@ -19,8 +19,28 @@ public static class TrackPlanner
     /// </summary>
     public static readonly TimeSpan MinOverlap = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>A link by meaning counts from this confidence (nytka-app/server#303); the model's lower ones are stored and ignored.</summary>
+    public const double MeaningConfidence = 0.8;
+
+    /// <summary>
+    /// A "same" by meaning joins two voice units only when their acoustic similarity is above <c>threshold - MeaningSlack</c>: what is
+    /// said can bridge a small acoustic gap, never a large one. The issue's figure; tune it on the golden days.
+    /// </summary>
+    public const float MeaningSlack = 0.15f;
+
+    /// <summary>
+    /// The most lines of a letter a "different" is written against: a unit's lines are linked by the provider's label, so a few of
+    /// them stand for it, and a letter of 400 lines against another of 400 would be 160,000 pairs.
+    /// </summary>
+    public const int MaxAnchors = 20;
+
+    /// <summary>
+    /// <paramref name="links"/> are the links by meaning of the day (<c>tracks.meaning</c>; none while it is off). They are soft: a "same" is
+    /// dropped by the clusterer when it would break a constraint, and a link that contradicts an owner's answer is not used.
+    /// </summary>
     public static TrackPlan Plan(
-        IReadOnlyList<TrackLine> lines, IReadOnlyList<TrackAnswer> answers, IReadOnlyList<OldTrack> old, float threshold, Func<Guid> newId)
+        IReadOnlyList<TrackLine> lines, IReadOnlyList<TrackAnswer> answers, IReadOnlyList<OldTrack> old, float threshold, Func<Guid> newId,
+        IReadOnlyList<TrackLink>? links = null)
     {
         // One item per fingerprint; a line's first item stands for it in an answer or a provider label.
         var items = new List<ClusterItem>();
@@ -55,6 +75,11 @@ public static class TrackPlanner
         {
             var members = group.Select(x => firstItem[x.Index]).ToList();
             mustLink.AddRange(members.Skip(1).Select(m => (members[0], m)));
+        }
+
+        if (links is { Count: > 0 })
+        {
+            AddMeaning(links, answers, lines, lineOf, firstItem, threshold, mustLink, cannotLink);
         }
 
         // Lines are in time order: each is compared with the later ones that start before it ends.
@@ -106,6 +131,83 @@ public static class TrackPlanner
         }
 
         return new TrackPlan(tracks, share);
+    }
+
+    /// <summary>
+    /// The constraints of the links by meaning that are sure enough. A link whose lines are not all of this day's is cut to the lines that
+    /// are, and a letter with none left drops the link, so a link never joins two days. A link against an owner's answer about the same two
+    /// letters is not used.
+    /// </summary>
+    private static void AddMeaning(
+        IReadOnlyList<TrackLink> links, IReadOnlyList<TrackAnswer> answers, IReadOnlyList<TrackLine> lines, Dictionary<long, int> lineOf,
+        int[] firstItem, float threshold, List<(int, int)> mustLink, List<(int, int)> cannotLink)
+    {
+        foreach (var link in links.Where(l => l.Confidence >= MeaningConfidence))
+        {
+            var a = link.Segments.Where(lineOf.ContainsKey).Select(s => lineOf[s]).Distinct().Order().ToList();
+            var b = link.OtherSegments.Where(lineOf.ContainsKey).Select(s => lineOf[s]).Distinct().Order().ToList();
+            if (a.Count == 0 || b.Count == 0 || a.Intersect(b).Any())
+            {
+                continue;
+            }
+
+            var (idsA, idsB) = (link.Segments.ToHashSet(), link.OtherSegments.ToHashSet());
+            if (answers.Any(x => x.Same != link.Same
+                && ((idsA.Contains(x.SegmentId) && idsB.Contains(x.OtherSegmentId)) || (idsB.Contains(x.SegmentId) && idsA.Contains(x.OtherSegmentId)))))
+            {
+                continue;
+            }
+
+            if (link.Same)
+            {
+                if (Similarity(lines, a, b) >= threshold - MeaningSlack)
+                {
+                    mustLink.Add((firstItem[Anchor(lines, a)], firstItem[Anchor(lines, b)]));
+                }
+
+                continue;
+            }
+
+            foreach (var x in Spread(a))
+            {
+                foreach (var y in Spread(b))
+                {
+                    cannotLink.Add((firstItem[x], firstItem[y]));
+                }
+            }
+        }
+    }
+
+    /// <summary>The line that stands for a letter in a "same": one the provider's label links to its unit (one window, within the limit), else the first.</summary>
+    private static int Anchor(IReadOnlyList<TrackLine> lines, List<int> members) =>
+        members.Cast<int?>().FirstOrDefault(i => lines[i!.Value].Prints.Count == 1 && lines[i.Value].Seconds <= VoiceRules.MaxSegmentSeconds) ?? members[0];
+
+    /// <summary>At most <see cref="MaxAnchors"/> of the lines, evenly spread.</summary>
+    private static IEnumerable<int> Spread(List<int> members) =>
+        members.Count <= MaxAnchors ? members : Enumerable.Range(0, MaxAnchors).Select(i => members[i * members.Count / MaxAnchors]);
+
+    /// <summary>The cosine of the two letters' mean fingerprints (each fingerprint of unit length, so a long line counts by its windows).</summary>
+    private static float Similarity(IReadOnlyList<TrackLine> lines, List<int> a, List<int> b) =>
+        SpeakerEmbedder.Cosine(Mean(lines, a), Mean(lines, b));
+
+    private static float[] Mean(IReadOnlyList<TrackLine> lines, List<int> members)
+    {
+        var sum = new float[lines[members[0]].Prints[0].Length];
+        foreach (var print in members.SelectMany(i => lines[i].Prints))
+        {
+            var norm = MathF.Sqrt(print.Sum(v => v * v));
+            if (norm == 0)
+            {
+                continue;
+            }
+
+            for (var k = 0; k < sum.Length; k++)
+            {
+                sum[k] += print[k] / norm;
+            }
+        }
+
+        return sum;
     }
 
     /// <summary>

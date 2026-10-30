@@ -122,6 +122,7 @@ services:
       Nytka__People__VoiceThreshold: "${Nytka__People__VoiceThreshold:-}"
       Nytka__Tracks__Enabled: "${Nytka__Tracks__Enabled:-}"
       Nytka__Tracks__Threshold: "${Nytka__Tracks__Threshold:-}"
+      Nytka__Tracks__Meaning: "${Nytka__Tracks__Meaning:-}"
       Nytka__Speech__Mode: "${Nytka__Speech__Mode:-}"
       Nytka__Speech__MediaThreshold: "${Nytka__Speech__MediaThreshold:-}"
     ports:

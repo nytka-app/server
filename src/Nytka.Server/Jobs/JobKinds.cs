@@ -33,6 +33,7 @@ public static class JobKinds
     public const string ClassifyConversations = "classify-conversations";
     public const string RecomputeEvents = "recompute-events";
     public const string BuildTracks = "build-tracks";
+    public const string LinkSpeakers = "link-speakers";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling,
@@ -54,6 +55,7 @@ public static class JobKinds
         [RelateConversation] = JobLane.Ai,
         [ClassifyMemories] = JobLane.Ai,
         [ClassifyConversations] = JobLane.Ai,
+        [LinkSpeakers] = JobLane.Ai,
         [SyncCalendar] = JobLane.Hooks,
         [DeliverWebhook] = JobLane.Hooks,
     };
@@ -93,6 +95,13 @@ public static class JobKinds
 
     /// <summary>One build per local date at a time.</summary>
     public static string BuildTracksKey(string localDate) => $"{BuildTracks}:{localDate}";
+
+    /// <summary>The build that follows the day's last <c>link-speakers</c> job; a key of its own, so a build already running never swallows it.</summary>
+    public static string BuildTracksAfterLinksKey(string localDate) => $"{BuildTracks}:{localDate}:links";
+
+    /// <summary>One job per scene, which a conversation's start identifies.</summary>
+    public static string LinkSpeakersKey(Guid conversation, DateTime sceneStartedAt) =>
+        $"{LinkSpeakers}:{conversation}:{sceneStartedAt.ToUniversalTime().Ticks}";
 
     /// <summary>One recompute per local date at a time.</summary>
     public static string RecomputeEventsKey(string localDate) => $"{RecomputeEvents}:{localDate}";

@@ -29,5 +29,11 @@ public sealed record QualityPayload(string LocalDate);
 /// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>build-tracks</c> builds.</summary>
 public sealed record TracksPayload(string LocalDate);
 
+/// <summary>
+/// The scene <c>link-speakers</c> reads: the conversation's lines from <paramref name="SceneStartedAt"/> to <paramref name="SceneEndedAt"/>
+/// (null for the conversation's last scene) that fall on the local day <paramref name="LocalDate"/> (<c>yyyy-MM-dd</c>).
+/// </summary>
+public sealed record LinkSpeakersPayload(Guid ConversationId, DateTime SceneStartedAt, DateTime? SceneEndedAt, string LocalDate);
+
 /// <summary><paramref name="LocalDate"/> is <c>yyyy-MM-dd</c>, the local day <c>measure-insights</c> measures.</summary>
 public sealed record InsightPayload(string LocalDate);
