@@ -796,6 +796,16 @@ so a regression shows up the next morning. One row per local day in `Nytka__User
   memories and notes created that day by salience (`vital`, `ordinary`, `noise`, or unrated), plus the
   unconfirmed memories. Voice groups and the singleton share are a snapshot when the row was measured,
   null on a backfilled day, since the table keeps no history.
+- **Attribution.** Each line falls in one class, first match wins: `wearer` (the wearer's), `media` (the
+  applied speech kind), `person` (a person resolves, from the line or its voice), `label` (only the provider's
+  raw `SPEAKER_n`) or `none`. `attribution.classShare` is the share of lines per class and `speechSeconds` their
+  speech time. `labelsPerConversation` is the mean, p50 and p90 (nearest rank) of the distinct raw labels in each
+  conversation with a line. `unmappedMinutes` is the speech minutes of the `label` class. `conversationStats.shortShare`
+  is the share of conversations under 60 s (the fragment rate) and `perDay` their count. `last7Days` holds the same
+  values for the day and the six before it, pooled over the measured days among them (`days`, and `attributionDays`
+  for those with attribution): shares and percentiles from the summed lines and lists, `perDay` and `unmappedMinutes`
+  as a mean per day. A day measured before these existed has `attribution: null` and counts out of the pooled value;
+  the nightly run fills yesterday and today only.
 - **Read it.** `GET /api/v1/quality?from=&to=` (admin) and the `get_quality` MCP tool (any token: counts
   and rates, never text). Rates run from 0 to 1, four decimals, null when their base is 0.
 - **Graph it.** There is no `/metrics` endpoint; point a Grafana Postgres data source at
