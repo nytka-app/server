@@ -34,10 +34,11 @@ public static class JobKinds
     public const string RecomputeEvents = "recompute-events";
     public const string BuildTracks = "build-tracks";
     public const string LinkSpeakers = "link-speakers";
+    public const string NameTracks = "name-tracks";
 
     /// <summary>
     /// The kinds that run outside the Audio lane. Every other kind, v0.1's four, transcribe-conversation, rescore-voice, rematch-voice, apply-speech, classify-speech, pick-labeling,
-    /// recompute-events, build-tracks and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
+    /// recompute-events, build-tracks, name-tracks and one nobody handles alike, runs in Audio, so an unknown kind still fails and gives up like any job.
     /// </summary>
     private static readonly Dictionary<string, JobLane> Claimed = new()
     {
@@ -102,6 +103,8 @@ public static class JobKinds
     /// <summary>One job per scene, which a conversation's start identifies.</summary>
     public static string LinkSpeakersKey(Guid conversation, DateTime sceneStartedAt) =>
         $"{LinkSpeakers}:{conversation}:{sceneStartedAt.ToUniversalTime().Ticks}";
+    /// <summary>One naming per local date at a time.</summary>
+    public static string NameTracksKey(string localDate) => $"{NameTracks}:{localDate}";
 
     /// <summary>One recompute per local date at a time.</summary>
     public static string RecomputeEventsKey(string localDate) => $"{RecomputeEvents}:{localDate}";

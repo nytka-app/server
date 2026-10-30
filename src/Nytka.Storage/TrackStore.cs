@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using Npgsql;
 
@@ -30,9 +31,14 @@ public sealed record NewTrack(
 /// <summary>A suggestion to store: <paramref name="PersonId"/> for a voiceprint, <paramref name="OtherTrackId"/> for an earlier track.</summary>
 public sealed record NewTrackSuggestion(Guid TrackId, Guid? PersonId, Guid? OtherTrackId, float Similarity);
 
-/// <summary>A pending suggestion on a track, for the list.</summary>
+/// <summary>
+/// A pending suggestion on a track, for the list. <paramref name="Similarity"/> is the cosine for a <c>person</c> or <c>track</c>
+/// suggestion and the confidence for a <c>call</c> or <c>meeting</c> one, which also carries the <paramref name="Name"/> it suggests
+/// (<paramref name="PersonId"/> is the person with that name, null for a new one) and the <paramref name="Evidence"/> it came from.
+/// </summary>
 public sealed record TrackSuggestionRow(
-    Guid Id, string Kind, Guid? PersonId, string? PersonName, Guid? OtherTrackId, DateOnly? OtherDay, int? OtherOrdinal, float Similarity);
+    Guid Id, string Kind, Guid? PersonId, string? PersonName, Guid? OtherTrackId, DateOnly? OtherDay, int? OtherOrdinal, float Similarity,
+    string? Name = null, JsonElement? Evidence = null);
 
 /// <summary>A track for the list; no vector.</summary>
 public sealed record TrackRow(
@@ -59,7 +65,8 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
     private sealed record ListRow(Guid Id, DateOnly Day, int Ordinal, double Seconds, int Segments, Guid? PersonId, string? PersonName, bool Dismissed);
 
     private sealed record SuggestionRow(
-        Guid Id, Guid TrackId, string Kind, Guid? PersonId, string? PersonName, Guid? OtherTrackId, DateOnly? OtherDay, int? OtherOrdinal, float Similarity);
+        Guid Id, Guid TrackId, string Kind, Guid? PersonId, string? PersonName, Guid? OtherTrackId, DateOnly? OtherDay, int? OtherOrdinal, float Similarity,
+        string? Name, string? Evidence);
 
     /// <summary>
     /// Records the effective <c>tracks.enabled</c> for the readers' SQL (<see cref="SpeakerLabel.Joins"/>); true when it changed.
@@ -238,7 +245,7 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await connection.ExecuteAsync(new CommandDefinition(
-            "delete from track_suggestions where status = 'pending' and track_id in (select id from speaker_tracks where day = @date)",
+            "delete from track_suggestions where status = 'pending' and kind in ('person', 'track') and track_id in (select id from speaker_tracks where day = @date)",
             new { date }, transaction, cancellationToken: ct));
 
         foreach (var track in tracks)
@@ -313,7 +320,8 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
         var suggestions = (await connection.QueryAsync<SuggestionRow>(new CommandDefinition(
             """
             select g.id as Id, g.track_id as TrackId, g.kind as Kind, g.person_id as PersonId, p.name as PersonName,
-                   g.other_track_id as OtherTrackId, o.day as OtherDay, o.ordinal as OtherOrdinal, g.similarity as Similarity
+                   g.other_track_id as OtherTrackId, o.day as OtherDay, o.ordinal as OtherOrdinal, g.similarity as Similarity,
+                   g.name as Name, g.evidence::text as Evidence
             from track_suggestions g
             join speaker_tracks t on t.id = g.track_id
             left join people p on p.id = g.person_id
@@ -325,20 +333,22 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
         return tracks.Select(t => new TrackRow(
             t.Id, t.Day, t.Ordinal, t.Seconds, t.Segments, t.PersonId, t.PersonName, t.Dismissed,
             [.. suggestions[t.Id].Select(s => new TrackSuggestionRow(
-                s.Id, s.Kind, s.PersonId, s.PersonName, s.OtherTrackId, s.OtherDay, s.OtherOrdinal, s.Similarity))])).ToList();
+                s.Id, s.Kind, s.PersonId, s.PersonName, s.OtherTrackId, s.OtherDay, s.OtherOrdinal, s.Similarity, s.Name,
+                s.Evidence is null ? null : JsonDocument.Parse(s.Evidence).RootElement.Clone()))])).ToList();
     }
 
     /// <summary>
     /// Accepts or rejects a pending suggestion. Accepting a person sets it on the track; accepting an earlier track gives this track
-    /// that track's person, and is <see cref="TrackDecision.NoPerson"/> while that track has none.
+    /// that track's person, and is <see cref="TrackDecision.NoPerson"/> while that track has none. Accepting a <c>call</c> or <c>meeting</c>
+    /// name gives the track the person with that name, or a new person of that name when there is none.
     /// </summary>
     public async Task<TrackDecision> DecideAsync(Guid id, bool accept, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
-        var suggestion = await connection.QuerySingleOrDefaultAsync<(Guid TrackId, Guid? PersonId, Guid? OtherPerson)?>(new CommandDefinition(
+        var suggestion = await connection.QuerySingleOrDefaultAsync<(Guid TrackId, Guid? PersonId, Guid? OtherPerson, string? Name)?>(new CommandDefinition(
             """
-            select g.track_id, g.person_id, o.person_id
+            select g.track_id, g.person_id, o.person_id, g.name
             from track_suggestions g left join speaker_tracks o on o.id = g.other_track_id
             where g.id = @id and g.status = 'pending' for update of g
             """,
@@ -351,6 +361,11 @@ public sealed class TrackStore(NpgsqlDataSource dataSource)
         if (accept)
         {
             var person = suggestion.Value.PersonId ?? suggestion.Value.OtherPerson;
+            if (person is null && suggestion.Value.Name is { } name)
+            {
+                person = await PeopleStore.FindOrCreateAsync(connection, transaction, name, now, ct);
+            }
+
             if (person is null)
             {
                 return TrackDecision.NoPerson;

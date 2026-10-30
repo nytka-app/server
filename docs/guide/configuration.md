@@ -108,6 +108,8 @@ text of each conversation goes to the endpoint you set and nowhere else
 | `Nytka__People__Facts` | `true` | edit | Facts about people |
 | `Nytka__People__VoiceMatching` | `false` | edit | Group and match other voices |
 | `Nytka__People__VoiceThreshold` | `0.7` | edit | Similarity to join a group |
+| `Nytka__People__CallNames` | `true` | edit | Name the other voice of a phone call after its contact (needs speaker tracks) |
+| `Nytka__People__CalendarNames` | `false` | edit | Suggest a calendar event's attendees as names of the voices heard in it (needs speaker tracks) |
 | `Nytka__Tags__Suggest` | `true` | edit | Model proposes tags |
 | `Nytka__Summary__Templates__Enabled` | `false` | edit | Summary template by tag (meeting, lecture, doctor, call, in that order) or kind |
 | `Nytka__Summary__Templates__Default`, `__Meeting`, `__Lecture`, `__Doctor`, `__Call` | built-in | edit | Text of a summary template |

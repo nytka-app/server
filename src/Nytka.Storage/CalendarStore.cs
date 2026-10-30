@@ -95,6 +95,15 @@ public sealed class CalendarStore(NpgsqlDataSource dataSource)
             new { now, until }, cancellationToken: ct))).Select(r => r.ToOccurrence()).ToList();
     }
 
+    /// <summary>The occurrences with attendees that overlap the span from <paramref name="from"/> to <paramref name="to"/>, soonest first.</summary>
+    public async Task<IReadOnlyList<CalendarOccurrence>> OverlappingAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        return (await connection.QueryAsync<EventRow>(new CommandDefinition(
+            $"{SelectEvent} where e.starts_at < @to and e.ends_at > @from and cardinality(e.attendees) > 0 order by e.starts_at, e.uid",
+            new { from, to }, cancellationToken: ct))).Select(r => r.ToOccurrence()).ToList();
+    }
+
     public async Task<CalendarOccurrence?> GetAsync(string uid, DateTimeOffset startsAt, CancellationToken ct)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);

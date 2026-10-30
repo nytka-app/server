@@ -331,7 +331,7 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime, IClass
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
-            ["id", "kind", "route", "started_at", "ended_at", "received_at", "detail"],
+            ["id", "kind", "route", "started_at", "ended_at", "received_at", "detail", "contact", "contact_hash"],
             await db.QueryAsync<string>("select column_name from information_schema.columns where table_name = 'context_ranges' order by ordinal_position"));
         Assert.DoesNotContain("example", await db.ScalarAsync<string>("select t::text from context_ranges t"), StringComparison.Ordinal);
     }
@@ -370,7 +370,7 @@ public sealed class ContextApiTests(PostgresFixture db) : IAsyncLifetime, IClass
         Assert.Equal([Id(2), Id(3)], window.Select(i => i.GetProperty("id").GetGuid()));
         Assert.Equal([Id(3), Id(4)], from.Select(i => i.GetProperty("id").GetGuid()));
         Assert.Equal([Id(5), Id(1)], before.Select(i => i.GetProperty("id").GetGuid()));
-        Assert.Equal(["id", "kind", "route", "startedAt", "endedAt", "detail"], window[0].EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "kind", "route", "startedAt", "endedAt", "detail", "contact", "contactHash"], window[0].EnumerateObject().Select(p => p.Name));
         Assert.Equal("call", window[0].GetProperty("kind").GetString());
         Assert.Equal("speaker", window[0].GetProperty("route").GetString());
         Assert.Equal("2026-09-29T04:00:00Z", window[0].GetProperty("startedAt").GetString());

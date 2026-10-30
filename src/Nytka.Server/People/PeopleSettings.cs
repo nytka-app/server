@@ -13,6 +13,8 @@ public sealed class PeopleSettings : ISettingsGroup
     public const string AutoApplyNamesKey = "people.autoApplyNames";
     public const string AutoApplyConfidenceKey = "people.autoApplyConfidence";
     public const string CardMinConversationsKey = "people.cardMinConversations";
+    public const string CallNamesKey = "people.callNames";
+    public const string CalendarNamesKey = "people.calendarNames";
 
     public IReadOnlyList<SettingDefinition> Definitions { get; } =
     [
@@ -23,6 +25,8 @@ public sealed class PeopleSettings : ISettingsGroup
         new(AutoApplyNamesKey, SettingType.Bool, "true", SettingValidators.Bool),
         new(AutoApplyConfidenceKey, SettingType.Number, "0.85", SettingValidators.Number(0.5, 1)),
         new(CardMinConversationsKey, SettingType.Int, "3", SettingValidators.Int(1, 50)),
+        new(CallNamesKey, SettingType.Bool, "true", SettingValidators.Bool),
+        new(CalendarNamesKey, SettingType.Bool, "false", SettingValidators.Bool),
     ];
 
     public static bool SuggestNames(SettingsService settings) => settings.Get(SuggestNamesKey) != "false";
@@ -39,6 +43,12 @@ public sealed class PeopleSettings : ISettingsGroup
     /// </summary>
     public static int CardMinConversations(SettingsService settings) =>
         int.Parse(settings.Get(CardMinConversationsKey)!, CultureInfo.InvariantCulture);
+
+    /// <summary>Whether the other voice of a phone call is suggested the contact's name (docs/explanation/features.md, Names from context).</summary>
+    public static bool CallNames(SettingsService settings) => settings.Get(CallNamesKey) != "false";
+
+    /// <summary>Off until the owner turns it on: a calendar event's attendees are only a guess at who spoke, so the guesses are not made unasked.</summary>
+    public static bool CalendarNames(SettingsService settings) => settings.Get(CalendarNamesKey) == "true";
 
     public static bool FactsEnabled(SettingsService settings) => settings.Get(FactsKey) != "false";
 
