@@ -22,6 +22,7 @@ public sealed class FakeSoniox
     private readonly List<Recorded> _requests = [];
     private readonly HashSet<string> _files = [];
     private readonly HashSet<string> _transcriptions = [];
+    private readonly Dictionary<string, string?> _fileOf = [];
     private int _next;
 
     /// <summary>The statuses polls answer in turn; the last one repeats.</summary>
@@ -65,6 +66,16 @@ public sealed class FakeSoniox
             {
                 return _transcriptions.Count;
             }
+        }
+    }
+
+    /// <summary>Forgets every transcription, as if the process had died before the submit reached Soniox.</summary>
+    public void DropTranscriptions()
+    {
+        lock (_lock)
+        {
+            _transcriptions.Clear();
+            _fileOf.Clear();
         }
     }
 
@@ -120,7 +131,14 @@ public sealed class FakeSoniox
                 case ("POST", ["v1", "transcriptions"]):
                     var transcriptionId = $"tr-{++_next}";
                     _transcriptions.Add(transcriptionId);
+                    _fileOf[transcriptionId] = body is null ? null : JsonDocument.Parse(body).RootElement.GetProperty("file_id").GetString();
                     return Json($$"""{"id":"{{transcriptionId}}","status":"queued"}""");
+                case ("GET", ["v1", "transcriptions"]):
+                    return Json(JsonSerializer.Serialize(new
+                    {
+                        transcriptions = _transcriptions.Select(t => new { id = t, status = "queued", file_id = _fileOf[t] }),
+                        next_page_cursor = (string?)null,
+                    }));
                 case ("GET", ["v1", "transcriptions", var id]) when _transcriptions.Contains(id):
                     var status = Statuses.Count > 1 ? Statuses[0] : Statuses[^1];
                     if (Statuses.Count > 1)
