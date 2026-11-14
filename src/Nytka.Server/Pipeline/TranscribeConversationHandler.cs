@@ -76,11 +76,24 @@ public sealed class TranscribeConversationHandler(
             return await PollAsync(pass, map, engine, ct);
         }
 
-        // Planned, or submitted but the run died before it kept the transcription id: a file stored without one is deleted, and the
-        // pass goes out again. The budget is read again, since the pass may have waited since it was planned.
+        // The run died with the file uploaded and no transcription id kept: adopt the transcription Soniox holds for the file, or create
+        // one from the file. Nothing is uploaded or billed twice. A transcription is created only if the budget, read again since the
+        // pass was planned, can carry it.
         if (pass.ExternalFileId is not null)
         {
-            await soniox.CleanUpAsync(pass.ExternalFileId, null);
+            var resumed = await soniox.ResumeAsync(
+                pass.ExternalFileId,
+                async () => await usage.CanAffordAsync(engine, map.TotalMs, await passes.DraftCharsAsync(pass.BatchIds, ct), ct),
+                ct);
+            if (resumed.Length == 0)
+            {
+                await soniox.CleanUpAsync(pass.ExternalFileId, null);
+                await passes.EndAsync(pass.Id, PassStatus.Waiting, BudgetSpent, time.GetUtcNow(), ct);
+                return JobOutcome.Done;
+            }
+
+            await passes.SubmittedAsync(pass.Id, engine, resumed, pass.ExternalFileId, time.GetUtcNow(), ct);
+            return JobOutcome.RunAgain(PollEvery);
         }
 
         audio ??= await CutAsync(pass, ct);

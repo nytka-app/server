@@ -558,22 +558,44 @@ public sealed class TranscriptPassTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
-    public async Task A_file_kept_without_its_transcription_id_is_deleted_before_the_pass_goes_out_again()
+    public async Task A_crash_after_the_submit_and_before_the_id_is_kept_adopts_the_transcription_instead_of_submitting_again()
     {
         var (conversation, _, _) = await DraftedAsync();
         Server.Soniox.Statuses = ["processing", "completed"];
         await UpgradeAsync(conversation);
         await Server.RunJobsAsync();
-        Assert.Equal(1, await Count("transcript_passes", "external_file_id is not null"));
+        var uploads = Server.Soniox.Calls.Count(c => c == "POST /v1/files");
+        var submits = Server.Soniox.Calls.Count(c => c == "POST /v1/transcriptions");
         // The run died before it kept the transcription id.
         await Db.ExecuteAsync("update transcript_passes set external_id = null");
 
         Server.Time.Advance(TimeSpan.FromSeconds(5));
         await Server.RunJobsAsync();
 
-        // The first pass's file is deleted (the batch's draft used file-1), and only the new one is left.
-        Assert.Contains("DELETE /v1/files/file-3", Server.Soniox.Calls);
-        Assert.Equal(1, Server.Soniox.StoredFiles);
+        Assert.Equal(uploads, Server.Soniox.Calls.Count(c => c == "POST /v1/files"));
+        Assert.Equal(submits, Server.Soniox.Calls.Count(c => c == "POST /v1/transcriptions"));
+        Assert.Equal(1, await Count("transcript_passes", "external_id is not null"));
+    }
+
+    [Fact]
+    public async Task A_crash_after_the_upload_and_before_the_submit_reuses_the_file_and_submits_once()
+    {
+        var (conversation, _, _) = await DraftedAsync();
+        Server.Soniox.Statuses = ["processing", "completed"];
+        await UpgradeAsync(conversation);
+        await Server.RunJobsAsync();
+        var uploads = Server.Soniox.Calls.Count(c => c == "POST /v1/files");
+        var submits = Server.Soniox.Calls.Count(c => c == "POST /v1/transcriptions");
+        // The run died after the upload: the file id is kept, the submit never happened.
+        Server.Soniox.DropTranscriptions();
+        await Db.ExecuteAsync("update transcript_passes set external_id = null");
+
+        Server.Time.Advance(TimeSpan.FromSeconds(5));
+        await Server.RunJobsAsync();
+
+        Assert.Equal(uploads, Server.Soniox.Calls.Count(c => c == "POST /v1/files"));
+        Assert.Equal(submits + 1, Server.Soniox.Calls.Count(c => c == "POST /v1/transcriptions"));
+        Assert.Equal(1, await Count("transcript_passes", "external_id is not null"));
     }
 
     [Fact]

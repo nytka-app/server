@@ -101,6 +101,51 @@ public sealed class SonioxClient(
         }
     }
 
+    /// <summary>
+    /// The retry of <see cref="SubmitAsync"/> after a run died with the file uploaded: adopts the transcription Soniox already holds
+    /// for <paramref name="fileId"/> (the run died after the submit and before it kept the id), or creates one from the file when
+    /// there is none. Never uploads again and never deletes the file; the caller still owns it.
+    /// </summary>
+    public async Task<string> ResumeAsync(string fileId, Func<Task<bool>> mayCreate, CancellationToken ct)
+    {
+        var stt = options.Value.Stt;
+        if (await FindTranscriptionAsync(stt, fileId, ct) is { } existing)
+        {
+            return existing;
+        }
+
+        return await mayCreate() ? await CreateAsync(stt, fileId, await ContextAsync(stt.Vocabulary, ct), ct) : "";
+    }
+
+    private async Task<string?> FindTranscriptionAsync(NytkaOptions.SttOptions stt, string fileId, CancellationToken ct)
+    {
+        string? cursor = null;
+        do
+        {
+            var path = cursor is null ? "v1/transcriptions" : $"v1/transcriptions?cursor={Uri.EscapeDataString(cursor)}";
+            using var response = await GetAsync(stt, path, ct);
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (document.RootElement.TryGetProperty("transcriptions", out var list))
+            {
+                foreach (var item in list.EnumerateArray())
+                {
+                    if (item.TryGetProperty("file_id", out var file) && file.ValueKind == JsonValueKind.String
+                        && file.GetString() == fileId && item.TryGetProperty("id", out var id) && id.GetString() is { Length: > 0 } found)
+                    {
+                        return found;
+                    }
+                }
+            }
+
+            cursor = document.RootElement.TryGetProperty("next_page_cursor", out var next) && next.ValueKind == JsonValueKind.String
+                ? next.GetString()
+                : null;
+        }
+        while (cursor is not null);
+
+        return null;
+    }
+
     /// <summary>One poll: true once the transcript is ready, false while Soniox works; an <c>error</c> status throws.</summary>
     public async Task<bool> IsCompletedAsync(string transcriptionId, CancellationToken ct)
     {
