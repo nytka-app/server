@@ -278,6 +278,32 @@ public sealed class ExtractMemoriesTests(PostgresFixture db) : MemoryTestBase(db
     }
 
     [Fact]
+    public async Task A_window_that_already_succeeded_is_not_asked_again_after_a_later_window_fails_and_retries()
+    {
+        using var small = new NytkaApiFactory(Db, Configure(s => s["Nytka:Llm:MaxInputChars"] = "40"), s => s.AddSingleton<ILlmClient>(Llm));
+        var failedOnce = false;
+        Llm.Respond = r =>
+        {
+            if (r.User.Contains("I run every morning", StringComparison.Ordinal) && !failedOnce)
+            {
+                failedOnce = true;
+                throw new LlmException("The language model endpoint answered 500.", 500);
+            }
+
+            return ScriptedLlm.Answer((r.User.Contains("Olena") ? "Sister in Lviv." : "Runs daily.", null));
+        };
+
+        await Publish(small);
+        await small.RunJobsAsync(); // attempt 1: the Olena window succeeds, the run window throws
+        small.Time.Advance(TimeSpan.FromSeconds(31));
+        await small.RunJobsAsync(); // attempt 2: the Olena window is cached, the run and filler windows are asked
+
+        Assert.Equal("done", await Db.ScalarAsync<string>("select status from memory_runs"));
+        Assert.Equal(1, Llm.Requests.Count(r => r.User.Contains("Olena", StringComparison.Ordinal)));
+        Assert.Equal(2, Llm.Requests.Count(r => r.User.Contains("I run every morning", StringComparison.Ordinal))); // the failed try and the retry
+    }
+
+    [Fact]
     public async Task A_run_over_speech_it_already_covers_ends_quietly_without_a_call()
     {
         await Extract();

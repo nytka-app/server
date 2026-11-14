@@ -65,6 +65,7 @@ public static class StorageServiceCollectionExtensions
         services.AddSingleton<SituationStore>();
         services.AddSingleton<DerivationStore>();
         services.AddSingleton<RethinkStore>();
+        services.AddSingleton<WindowCacheStore>();
 
         return services;
     }

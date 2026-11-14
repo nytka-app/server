@@ -26,6 +26,7 @@ public sealed class ExtractMemoriesHandler(
     MemoryStore memories,
     NpgsqlDataSource dataSource,
     IEventPublisher events,
+    WindowCacheStore windowCache,
     TimeProvider time,
     ILogger<ExtractMemoriesHandler> logger)
     : IJobHandler
@@ -35,6 +36,9 @@ public sealed class ExtractMemoriesHandler(
     public const int KnownMemories = 200;
     public const int MaxRounds = 3;
     public const string SchemaName = "memories";
+
+    /// <summary>Bumped by hand when the system prompt changes in a way its own text would not (<see cref="WindowCacheKey"/>).</summary>
+    public const int WindowPromptVersion = 1;
 
     public static readonly TimeSpan RetryAfter = TimeSpan.FromHours(1);
 
@@ -84,8 +88,9 @@ public sealed class ExtractMemoriesHandler(
             var covered = input.LastSegmentId is null || (!payload.Again && run?.ThroughSegmentId >= input.LastSegmentId);
             // A conversation too short for tasks has no lasting facts either (see EnrichConversationHandler.BriefWords).
             var brief = EnrichConversationHandler.IsBrief(input.Segments.Sum(s => EnrichConversationHandler.Words(s.Text)));
-            var candidates = covered || brief ? [] : await AskAsync(input, ct);
+            var candidates = covered || brief ? [] : await AskAsync(input, payload.Again, ct);
             await ApplyAsync(conversationId, candidates, covered ? run?.ThroughSegmentId : input.LastSegmentId, ct);
+            await windowCache.ClearAsync(conversationId, Kind, ct);
             return JobOutcome.Done;
         }
         catch (Exception error) when (job.Attempts + 1 >= JobRunner.MaxAttempts && !ct.IsCancellationRequested)
@@ -102,7 +107,7 @@ public sealed class ExtractMemoriesHandler(
     public Task OnGiveUpAsync(JobRecord job, Exception error, CancellationToken ct) => Task.CompletedTask;
 
     /// <summary>What the model proposes for each window of the transcript, pooled, cut to length and kept to five.</summary>
-    private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ExtractionInput input, CancellationToken ct)
+    private async Task<IReadOnlyList<MemoryCandidate>> AskAsync(ExtractionInput input, bool again, CancellationToken ct)
     {
         var lines = TranscriptText.Render(input.Segments.Where(s => !s.IsMedia).Select(s =>
             new TranscriptSegment(new DateTimeOffset(s.StartedAt, TimeSpan.Zero), s.Speaker, s.Text, s.Id)), UserTimeZone.Resolve(settings));
@@ -117,10 +122,10 @@ public sealed class ExtractMemoriesHandler(
 
         var from = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(new DateTimeOffset(input.StartedAt, TimeSpan.Zero), zone).DateTime);
         var pooled = new List<MemoryCandidate>();
-        foreach (var window in windows)
+        for (var i = 0; i < windows.Count; i++)
         {
-            var answer = LlmJson.Parse<Answer>(await llm.CompleteJsonAsync(
-                new LlmRequest(SchemaName, Schema, system, UserMessage(input, userName, known, window, zone)), ct));
+            var user = UserMessage(input, userName, known, windows[i], zone);
+            var answer = LlmJson.Parse<Answer>(await CompleteWindowAsync(input.ConversationId, i, again, system, user, ct));
             foreach (var candidate in answer.Memories)
             {
                 var text = Cut(candidate.Text);
@@ -140,6 +145,28 @@ public sealed class ExtractMemoriesHandler(
         }
 
         return pooled.Take(MaxMemoriesPerRun).ToList();
+    }
+
+    /// <summary>
+    /// One window of the transcript: reads a cached result unless <paramref name="again"/> asked for a fresh one, and
+    /// otherwise calls the model and stores the result before returning it, so a crash or a retry after this point
+    /// never pays for this window again.
+    /// </summary>
+    private async Task<string> CompleteWindowAsync(
+        Guid conversationId, int windowIndex, bool again, string system, string user, CancellationToken ct)
+    {
+        var hash = WindowCacheKey.Hash(system, user);
+        if (!again
+            && await windowCache.GetAsync(conversationId, Kind, windowIndex, WindowPromptVersion, hash, ct) is { } cached)
+        {
+            return cached;
+        }
+
+        var raw = await llm.CompleteJsonAsync(new LlmRequest(SchemaName, Schema, system, user), ct);
+        // A broken answer is never stored: a retry must ask again, not read the same broken text back.
+        _ = LlmJson.Parse<Answer>(raw);
+        await windowCache.StoreAsync(conversationId, Kind, windowIndex, WindowPromptVersion, hash, raw, time.GetUtcNow(), ct);
+        return raw;
     }
 
     /// <summary>The cited ids that are lines of the transcript, each once; the model's other ids are dropped.</summary>

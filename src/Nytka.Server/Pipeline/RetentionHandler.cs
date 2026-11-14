@@ -8,13 +8,20 @@ namespace Nytka.Server.Pipeline;
 
 public sealed class RetentionHandler(
     BatchStore batches, ChunkStore chunks, DiagnosticsStore diagnostics, ContextRangeStore contextRanges, LabelStore labels,
-    SettingsService settings, IOptions<NytkaOptions> options, TimeProvider time, ILogger<RetentionHandler> logger)
+    WindowCacheStore windowCache, SettingsService settings, IOptions<NytkaOptions> options, TimeProvider time,
+    ILogger<RetentionHandler> logger)
     : IJobHandler
 {
     public static readonly TimeSpan Every = TimeSpan.FromDays(1);
 
     /// <summary>Longer than the app keeps a chunk queued, so every retry still finds its row.</summary>
     public static readonly TimeSpan ChunkRowsKept = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Longer than an enrichment or memory-extraction job's own retries take (<see cref="Ai.EnrichConversationHandler.MaxFailedRounds"/>
+    /// or <see cref="Memories.ExtractMemoriesHandler.MaxRounds"/> rounds, an hour apart): a row still here is a job that gave up for good.
+    /// </summary>
+    public static readonly TimeSpan WindowResultsKept = TimeSpan.FromDays(1);
 
     /// <summary>Diagnostics samples are for looking back at link quality; a month is enough.</summary>
     public static readonly TimeSpan DiagnosticsKept = TimeSpan.FromDays(30);
@@ -35,13 +42,14 @@ public sealed class RetentionHandler(
         var ranges = await contextRanges.DeleteEndedBeforeAsync(cutoff, ct);
         var rows = await chunks.DeleteProcessedReceivedBeforeAsync(now - ChunkRowsKept, ct);
         var samples = await diagnostics.DeleteAtBeforeAsync(now - DiagnosticsKept, ct);
+        var windows = await windowCache.DeleteOlderThanAsync(now - WindowResultsKept, ct);
 
         // With labeling.keepClips off a labelled clip lives only as long as its speech audio, which the clip route cuts from.
         var clips = LabelingSettings.KeepClips(settings) ? 0 : await labels.DropClipBodiesAsync(ct);
 
         logger.LogInformation(
-            "Retention deleted {SpeechAudio} speech audio row(s), {ContextRanges} context range(s), {ChunkRows} chunk row(s), {Samples} diagnostics sample(s) and {Clips} kept clip(s).",
-            audio, ranges, rows, samples, clips);
+            "Retention deleted {SpeechAudio} speech audio row(s), {ContextRanges} context range(s), {ChunkRows} chunk row(s), {Samples} diagnostics sample(s), {Windows} cached LLM window result(s) and {Clips} kept clip(s).",
+            audio, ranges, rows, samples, windows, clips);
         return JobOutcome.RunAgain(Every);
     }
 

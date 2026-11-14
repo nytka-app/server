@@ -27,10 +27,14 @@ public sealed class EnrichConversationHandler(
     IOptionsMonitor<LlmOptions> options,
     SettingsService settings,
     IEventPublisher events,
+    WindowCacheStore windowCache,
     TimeProvider time,
     ILogger<EnrichConversationHandler> logger) : IJobHandler
 {
     public const int MaxWindows = 6;
+
+    /// <summary>Bumped by hand when the system prompt changes in a way its own text would not (<see cref="WindowCacheKey"/>).</summary>
+    public const int WindowPromptVersion = 1;
 
     public const int MinWords = 20;
 
@@ -102,9 +106,9 @@ public sealed class EnrichConversationHandler(
             // Up to 100 tag names go to the model, so none are read when proposals are off or the conversation is brief.
             var tagNames = suggestTags && !brief ? await tags.NamesInUseAsync(ConversationPrompt.MaxTagNames, ct) : [];
             answer = await AskAsync(
-                new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, brief,
+                conversationId, new DateTimeOffset(conversation.StartedAt), lines, options.CurrentValue, zone, brief,
                 people.Select(p => p.Name).ToList(), tagNames, suggestTags, mediaLines, template,
-                AsksTopicBoundaries(conversation.StartedAt, conversation.EndedAt, brief), ct);
+                AsksTopicBoundaries(conversation.StartedAt, conversation.EndedAt, brief), payload.Again, ct);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -134,6 +138,7 @@ public sealed class EnrichConversationHandler(
                 logger.LogInformation("Conversation {ConversationId} changed during its summary; running again.", conversationId);
                 return JobOutcome.RunAgain(Wait);
             case EnrichmentStore.Stored:
+                await windowCache.ClearAsync(conversationId, Kind, ct);
                 logger.LogInformation("Conversation {ConversationId} summarized from {Segments} segments.", conversationId, segments.Count);
                 break;
         }
@@ -150,9 +155,9 @@ public sealed class EnrichConversationHandler(
 
     /// <summary>One call for a transcript that fits a window; one per window and a merge call for a longer one.</summary>
     private async Task<ConversationAnswer> AskAsync(
-        DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
+        Guid conversationId, DateTimeOffset startedAt, IReadOnlyList<string> lines, LlmOptions llmOptions, TimeZoneInfo zone, bool brief,
         IReadOnlyList<string> people, IReadOnlyList<string> tagNames, bool suggestTags, bool mediaLines, TemplateChoice template,
-        bool topicBoundaries, CancellationToken ct)
+        bool topicBoundaries, bool again, CancellationToken ct)
     {
         if (!llm.IsConfigured)
         {
@@ -177,7 +182,8 @@ public sealed class EnrichConversationHandler(
         var parts = new List<ConversationAnswer>();
         for (var i = 0; i < windows.Count; i++)
         {
-            parts.Add(await CompleteAsync(schema, system, ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people, tagNames), ct));
+            var user = ConversationPrompt.User(startedAt, windows[i], i + 1, windows.Count, zone, people, tagNames);
+            parts.Add(await CompleteWindowAsync(conversationId, i, again, schema, system, user, ct));
         }
 
         var answer = parts.Count == 1
@@ -194,6 +200,28 @@ public sealed class EnrichConversationHandler(
     private async Task<ConversationAnswer> CompleteAsync(string schema, string system, string user, CancellationToken ct) =>
         LlmJson.Parse<ConversationAnswer>(
             await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, schema, system, user), ct));
+
+    /// <summary>
+    /// One window of the transcript: reads a cached result unless <paramref name="again"/> asked for a fresh one, and
+    /// otherwise calls the model and stores the result before returning it, so a crash or a retry after this point
+    /// never pays for this window again.
+    /// </summary>
+    private async Task<ConversationAnswer> CompleteWindowAsync(
+        Guid conversationId, int windowIndex, bool again, string schema, string system, string user, CancellationToken ct)
+    {
+        var hash = WindowCacheKey.Hash(system, user);
+        if (!again
+            && await windowCache.GetAsync(conversationId, Kind, windowIndex, WindowPromptVersion, hash, ct) is { } cached)
+        {
+            return LlmJson.Parse<ConversationAnswer>(cached);
+        }
+
+        var raw = await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, schema, system, user), ct);
+        // Parsed before it is stored: a broken answer is never kept, so a retry asks again instead of reading it back.
+        var parsed = LlmJson.Parse<ConversationAnswer>(raw);
+        await windowCache.StoreAsync(conversationId, Kind, windowIndex, WindowPromptVersion, hash, raw, time.GetUtcNow(), ct);
+        return parsed;
+    }
 
     /// <summary>
     /// The summary template for this run, read from the settings as they are now. A brief conversation takes none. With templates

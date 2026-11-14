@@ -628,6 +628,54 @@ public sealed class EnrichConversationTests(PostgresFixture db) : AiTestBase(db)
     }
 
     [Fact]
+    public async Task A_window_that_already_succeeded_is_not_asked_again_after_a_later_window_fails_and_retries()
+    {
+        StartServer(settings => settings["Nytka:Llm:MaxInputChars"] = "150");
+        var id = await Seed(Talk, Talk, Talk);
+        var failedOnce = false;
+        Llm.Respond = request =>
+        {
+            if (!request.User.Contains("Transcript:", StringComparison.Ordinal))
+            {
+                return FakeLlm.Answer("Merged title", "Merged summary", "Call Ben", "Buy milk");
+            }
+
+            if (request.User.Contains("part 2 of 3", StringComparison.Ordinal) && !failedOnce)
+            {
+                failedOnce = true;
+                throw new InvalidOperationException("window 2 failed once");
+            }
+
+            return FakeLlm.Answer("Part title", "Part summary", "Call Ben");
+        };
+
+        await TickAndRun();
+        await RunRemainingAttempts();
+
+        Assert.Equal("done", (await Ai(id)).AiStatus);
+        Assert.Equal(1, Llm.Requests.Count(r => r.User.Contains("part 1 of 3", StringComparison.Ordinal)));
+        Assert.Equal(2, Llm.Requests.Count(r => r.User.Contains("part 2 of 3", StringComparison.Ordinal))); // the failed try and the retry
+        Assert.Equal(1, Llm.Requests.Count(r => r.User.Contains("part 3 of 3", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task A_forced_rerun_never_reads_the_cache_even_though_the_earlier_run_cleared_it_only_on_success()
+    {
+        StartServer(settings => settings["Nytka:Llm:MaxInputChars"] = "150");
+        var id = await Seed(Talk, Talk, Talk);
+        Llm.Respond = request => request.User.Contains("Transcript:", StringComparison.Ordinal)
+            ? FakeLlm.Answer("Part title", "Part summary", "Call Ben")
+            : FakeLlm.Answer("Merged title", "Merged summary", "Call Ben", "Buy milk");
+        await TickAndRun();
+        var calls = Llm.Requests.Count;
+
+        await Server.Get<EnrichmentQueue>().QueueAsync(id, force: true, default);
+        await Server.RunJobsAsync();
+
+        Assert.Equal(calls * 2, Llm.Requests.Count); // force always asks every window again, cache or no cache
+    }
+
+    [Fact]
     public async Task More_than_six_windows_fail_the_run_without_a_call()
     {
         StartServer(settings => settings["Nytka:Llm:MaxInputChars"] = "150");
