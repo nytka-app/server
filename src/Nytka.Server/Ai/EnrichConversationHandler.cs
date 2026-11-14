@@ -217,8 +217,10 @@ public sealed class EnrichConversationHandler(
         }
 
         var raw = await llm.CompleteJsonAsync(new LlmRequest(ConversationPrompt.SchemaName, schema, system, user), ct);
+        // Parsed before it is stored: a broken answer is never kept, so a retry asks again instead of reading it back.
+        var parsed = LlmJson.Parse<ConversationAnswer>(raw);
         await windowCache.StoreAsync(conversationId, Kind, windowIndex, WindowPromptVersion, hash, raw, time.GetUtcNow(), ct);
-        return LlmJson.Parse<ConversationAnswer>(raw);
+        return parsed;
     }
 
     /// <summary>

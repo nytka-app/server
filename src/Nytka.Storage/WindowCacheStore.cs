@@ -24,7 +24,7 @@ public sealed class WindowCacheStore(NpgsqlDataSource dataSource)
             new { conversationId, handler, windowIndex, promptVersion, inputHash }, cancellationToken: ct));
     }
 
-    /// <summary>Stores a window's result, replacing a stale row of the same key (an explicit re-run asked for a fresh answer).</summary>
+    /// <summary>Stores a window's result, replacing a stale row of the same key (an explicit re-run asked for a fresh answer); a conversation deleted during the call stores nothing.</summary>
     public async Task StoreAsync(
         Guid conversationId, string handler, int windowIndex, int promptVersion, string inputHash, string result,
         DateTimeOffset now, CancellationToken ct)
@@ -33,7 +33,8 @@ public sealed class WindowCacheStore(NpgsqlDataSource dataSource)
         await connection.ExecuteAsync(new CommandDefinition(
             """
             insert into llm_window_results (conversation_id, handler, window_index, prompt_version, input_hash, result, created_at)
-            values (@conversationId, @handler, @windowIndex, @promptVersion, @inputHash, cast(@result as jsonb), @now)
+            select @conversationId, @handler, @windowIndex, @promptVersion, @inputHash, cast(@result as jsonb), @now
+            where exists (select 1 from conversations where id = @conversationId)
             on conflict (conversation_id, handler, window_index, prompt_version, input_hash)
             do update set result = excluded.result, created_at = excluded.created_at
             """,

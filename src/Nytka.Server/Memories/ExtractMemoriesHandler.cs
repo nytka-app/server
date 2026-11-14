@@ -163,6 +163,8 @@ public sealed class ExtractMemoriesHandler(
         }
 
         var raw = await llm.CompleteJsonAsync(new LlmRequest(SchemaName, Schema, system, user), ct);
+        // A broken answer is never stored: a retry must ask again, not read the same broken text back.
+        _ = LlmJson.Parse<Answer>(raw);
         await windowCache.StoreAsync(conversationId, Kind, windowIndex, WindowPromptVersion, hash, raw, time.GetUtcNow(), ct);
         return raw;
     }
